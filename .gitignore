@@ -1,0 +1,32 @@
+# Go
+/engine/bin/
+*.test
+*.out
+/api/api
+/engine/engine
+
+# Go workspace (local dev convenience file, not meant to be shared)
+go.work
+go.work.sum
+
+# Python
+agents/.venv/
+agents/**/__pycache__/
+agents/**/*.egg-info/
+*.pyc
+
+# Node/UI
+ui/node_modules/
+ui/dist/
+
+# HiveMind data-plane artifacts (never commit ingested content or engine state)
+/brain/
+*.md.v*
+
+# OS
+.DS_Store
+
+# Env/secrets
+.env
+.env.*
+!*.env.example
