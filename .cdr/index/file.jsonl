@@ -1,0 +1,14 @@
+{"path": "README.md", "module": "root", "features": ["navigation"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "AGENT.md", "module": "root", "features": ["ai-operating-procedures"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/HLD.md", "module": "system", "features": ["hld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/catalog.md", "module": "engine/catalog", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/btree.md", "module": "engine/btree", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/mvcc.md", "module": "engine/mvcc", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/split.md", "module": "engine/split", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/graph.md", "module": "engine/graph", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/wal.md", "module": "engine/wal", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/rpc.md", "module": "engine/rpc", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/ingestion-agent.md", "module": "agents/ingestion", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/query-agent.md", "module": "agents/query", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/llm-provider.md", "module": "agents/llm", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
+{"path": "docs/LLD/eval.md", "module": "agents/eval + engine/loadtest", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}

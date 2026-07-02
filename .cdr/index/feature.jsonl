@@ -1,0 +1,1 @@
+{"feature": "canonical-docs-init", "module": "docs", "docs": ["README.md", "AGENT.md", "docs/HLD.md", "docs/LLD/*.md"], "subtask": "init", "commit": "699105baec69c1feff075a58e5ab8d2b054db317"}
