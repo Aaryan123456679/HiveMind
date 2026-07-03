@@ -1,0 +1,84 @@
+{
+  "subtask": "1.2.4",
+  "reverify_of": ".cdr/runs/2026-07-04/028-verification/verification.json",
+  "commit_reviewed": "631c81307be44470eb3b99f0e118e3f424d06f6e",
+  "head_at_review": "4a7c2142b3e88442381f9cea5a22c600e71047a8",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "The critical silent data-loss bug identified in 028-verification (repairEmptyLeaf discarding store.ReadNode's isLeaf bool and blindly decoding a same-parent internal sibling as a zero-valued LeafNode, then splicing that sibling's entire live subtree out of the parent) is genuinely fixed. Independently re-derived the diff (git diff between pre-fix c21c21f and fix 631c813) and confirmed it is narrowly scoped to repairEmptyLeaf plus one new test; root collapse, empty-tree convention, and same-type leaf borrow/merge logic are byte-for-byte untouched. Read the isLeaf guard directly and confirmed all four sibling-inspection call sites (left-borrow, right-borrow, left-merge, right-merge) now gate on isLeaf via shared haveLeft/haveRight booleans computed from a single ReadNode call per side -- there is no fifth path and no way to reach the borrow/merge write logic with an unchecked sibling. Independently checked out the pre-fix commit's delete.go against the fix commit's delete_test.go (isolating only the new regression test) and confirmed it fails deterministically with 'expected found=true, got false' -- not trusting the implementer's claim. Restored the fix commit's delete.go and confirmed the same test passes. Ran the full suite myself (go build ./engine/..., go vet ./engine/..., go test ./engine/btree/... -race -v -count=1): all pass, no regressions to 1.2.1-1.2.3, and the new TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss subtest passes as part of both its standalone run and the TestDelete dispatcher (exercised via the issue's literal -run TestDelete spec). One residual non-blocking design gap is flagged below (not a bug, but worth tracking): the 'leave the empty leaf tombstoned forever' fallback has no upper bound and no path back to a leaf-only sibling state, so a leaf in this pathological shape can never be reclaimed by the current 1.2.4 code -- consistent with, and no worse than, the already-accepted tombstone/abandoned-node-ID gaps documented for 1.2.5/1.2.6.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Issue #2 subtask 1.2.4 acceptance criteria ('tree remains internally consistent ... after interleaved insert/delete sequences') is now met for the previously-failing shape. Re-ran the exact reproduction methodology from 028 (40,000 sequential inserts, then sequential delete of keys 0..39899) via the new committed regression test and confirmed all remaining keys are found via Lookup with correct fileIDs -- no silent subtree loss."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "git diff c21c21f..631c813 -- engine/btree/delete.go confirms the change touches only repairEmptyLeaf: (1) an added len(parent.Children)<2 defensive guard moved earlier, (2) a single up-front ReadNode per existing sibling with isLeaf captured into haveLeft/haveRight, (3) all four borrow/merge branches now gated on those booleans, (4) a new fallback branch when neither sibling is usable. shrinkParentAfterMerge, root collapse, empty-tree-after-delete convention, and the doc comment's two-hop bound reasoning are unmodified (confirmed via diff -- zero lines changed in shrinkParentAfterMerge). No changes to insert.go, lookup.go, or node.go."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go test ./engine/btree/... -race -v -count=1 on HEAD (4a7c214) shows all prior subtask tests unchanged and passing: TestNodeSerialization (1.2.1), TestLookup (1.2.2), TestInsertEmptyTree/TestInsertUpsert/TestInsertLeafSplit/TestInsertInternalSplit/TestInsertSplit/TestInsertOutOfOrder (1.2.3), and all TestDelete* tests (1.2.4) including TestDeleteInternalMerge, TestDeleteLeafMerge, TestDeleteInsertLookupIntegration, TestDeleteEmptiesSingleLeafTree, and the new TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss. No test was weakened, skipped, or had assertions removed to make it pass."
+    },
+    "edge_cases": {
+      "status": "pass_with_comments",
+      "evidence": "The four-call-site guard is complete: left-borrow only proceeds if haveLeft, right-borrow only if haveRight, left-merge only if haveLeft, right-merge only if haveRight (verified by direct code read, not just the diff). The new fallback path (neither sibling usable -- both same-parent siblings are internal) leaves the emptied leaf in place as a 0-key LeafNode, unchanged from what Delete's caller already wrote, and does not touch the parent at all -- correct, since the parent's child pointer to this leaf and its bounding separator key(s) are still structurally valid regardless of the leaf's key count. Traced descendToLeaf and Lookup: a 0-key leaf reached via descent correctly returns found=false via sort.SearchStrings on an empty slice (i==0, 0<len(leaf.Keys) is false), no panic, no special-casing needed. NextLeaf linkage is untouched in this fallback (the leaf's own NextLeaf field is whatever Delete's caller already wrote), so a subsequent range/NextLeaf-chain scan (not yet implemented in this subtask, but referenced by the doc comment) would pass through a 0-key leaf harmlessly, contributing zero keys but not breaking the chain -- this was checked by direct code reading since no NextLeaf-scan API exists yet to test against."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new external attack surface. The fix removes a data-integrity/availability hazard rather than introducing one."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "The fix adds a fixed, small number of extra field reads (isLeaf booleans already returned by the existing ReadNode calls -- no new I/O) per repairEmptyLeaf invocation. No new O(n) scans. The fallback path is O(1). Not a concern."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "The doc comment in repairEmptyLeaf now explicitly explains why a leaf can end up beside internal siblings (grandparent-splice promotion), why the previous code was wrong, and why the current guard is correct -- this is a meaningful improvement over 028's finding that the old doc comment understated the abandoned-node-ID gap. The new fallback's tombstone-forever behavior is documented inline as 'consistent with this subtask's own tombstone policy for non-empty underflow,' which is an honest characterization, not an overclaim."
+    },
+    "test_coverage": {
+      "status": "pass_with_comments",
+      "evidence": "TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss reuses 028's own reproduction parameters (40,000 inserts, delete prefix of 39,900) and asserts via assertAllLookupable/assertStructuralInvariants/assertNoOrphanedPointers over the full remaining key set, not a spot check -- confirmed by direct read of the test and by independently reproducing the fail-then-pass behavior against pre-fix/post-fix delete.go myself. One coverage gap remains, tracked as non-blocking below: no test exercises the new fallback branch (neither sibling usable) in isolation with a targeted assertion that the specific leaf remains reachable-but-empty and that a *subsequent* insert/delete against that same subtree still behaves correctly; the current test only proves the fix avoids data loss in the reproduction scenario, which is sufficient to close the critical bug but does not prove the tombstoned-leaf state is exercised further (e.g. via more inserts that later re-populate it, or repeated delete/insert cycles hitting the same node)."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Verified independently at every step called for: read the diff myself (not just the commit message), read the isLeaf guard code directly for all four call sites, checked out the pre-fix commit's delete.go paired with the fix commit's new test and watched it fail with the exact same class of symptom (found=false for a never-deleted key) as 028's original reproduction, then restored the fix and watched it pass, then ran the entire suite fresh myself. Nothing here was taken on the implementer's word alone."
+    }
+  },
+  "explicit_determinations": {
+    "diff_scope_check": "git diff c21c21faf76d4b4a0fbfb4448255b427aa94829e 631c81307be44470eb3b99f0e118e3f424d06f6e -- engine/btree/delete.go shows changes confined to repairEmptyLeaf (guard restructuring + new isLeaf-gated branches + new tombstone-fallback branch). shrinkParentAfterMerge, Delete's main body, removeFromLeaf, and the doc comment's root-collapse/empty-tree/two-hop-bound sections are unchanged (0 diff lines in those regions). No changes to insert.go, lookup.go, node.go, or nodestore.go.",
+    "isLeaf_guard_completeness": "Read repairEmptyLeaf line-by-line post-fix. Two ReadNode calls total (one per existing sibling, guarded by j>0 / j<len(parent.Children)-1), each producing haveLeft/haveRight booleans plus the decoded LeafNode value only when isLeaf==true. All four downstream branches (left-borrow: `if haveLeft && len(left.Keys) > 1`; right-borrow: `if haveRight && len(right.Keys) > 1`; left-merge: `if haveLeft`; right-merge: `if haveRight`) are strictly gated on these booleans -- there is no code path that reaches a LeafNode-typed write/merge operation using an unchecked ReadNode result. This is a complete fix for the reported bug class.",
+    "tombstone_fallback_safety": "The final fallback (`return chain[0], nil` when neither haveLeft nor haveRight) makes no parent modification. Confirmed via lookup.go's descendToLeaf/Lookup that a reachable 0-key leaf is handled correctly (sort.SearchStrings on an empty Keys slice returns i=0, 0 < len(leaf.Keys) is false, found=false, no panic). No downstream code path (Lookup, descendToLeaf) special-cases or mishandles a zero-key leaf; it behaves identically to the already-accepted 'root is a lone empty leaf' case from TestDeleteEmptiesSingleLeafTree, just at a non-root position.",
+    "pre_fix_repro_confirmed_independently": "Isolated the new test (TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss) by checking out delete.go from c21c21f (pre-fix) paired with delete_test.go from 631c813 (fix, which is the only file containing the new test and is a pure superset/addition over the pre-fix version). Ran `go test -run TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss -v`: FAILS with 'Delete(\"topic15526/page\"): expected found=true, got false' -- the exact key and exact symptom (a live, never-deleted key becoming unreachable) as 028's original manual reproduction. Restored delete.go to 631c813: same test PASSES. This was NOT taken on the implementer's word; it was independently reproduced.",
+    "full_suite_rerun": "go build ./engine/... -> exit 0. go vet ./engine/... -> exit 0. go test ./engine/btree/... -race -v -count=1 -> PASS, 31.4s, every test listed (TestNodeSerialization, TestLookup, TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertSplit, TestInsertOutOfOrder, TestDeleteEmptyTree, TestDeleteAbsentKey, TestDeleteSingleLeaf, TestDeleteLeafMerge, TestDeleteInternalMerge, TestDeleteInsertLookupIntegration, TestDeleteEmptiesSingleLeafTree, TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss, and the TestDelete dispatcher covering the issue's literal -run TestDelete spec) -- no regressions across 1.2.1-1.2.4.",
+    "bookkeeping_commit_check": "4a7c214 (current HEAD) touches only .cdr/index/task.jsonl and adds .cdr/runs/2026-07-04/029-implementation-fix/handoff.json -- no production code. Confirmed via git show --stat."
+  },
+  "commands_run": [
+    "git show --stat 631c81307be44470eb3b99f0e118e3f424d06f6e",
+    "git diff c21c21faf76d4b4a0fbfb4448255b427aa94829e 631c81307be44470eb3b99f0e118e3f424d06f6e -- engine/btree/delete.go",
+    "git diff c21c21faf76d4b4a0fbfb4448255b427aa94829e 631c81307be44470eb3b99f0e118e3f424d06f6e -- engine/btree/delete_test.go",
+    "Read engine/btree/delete.go and engine/btree/lookup.go in full at HEAD",
+    "git stash push -u (protect uncommitted .cdr artifacts before checkout experiments)",
+    "git checkout c21c21faf76d4b4a0fbfb4448255b427aa94829e -- engine/btree/delete.go engine/btree/delete_test.go",
+    "git checkout 631c81307be44470eb3b99f0e118e3f424d06f6e -- engine/btree/delete_test.go (isolate pre-fix delete.go + fix-version test file)",
+    "go test ./engine/btree/... -run TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss -v -count=1 -> FAIL against pre-fix delete.go, confirming the reproduction",
+    "git checkout 631c81307be44470eb3b99f0e118e3f424d06f6e -- engine/btree/delete.go (restore fix)",
+    "go build ./engine/... -> exit 0",
+    "go vet ./engine/... -> exit 0",
+    "go test ./engine/btree/... -race -v -count=1 -> PASS, all tests, no regressions",
+    "git status --short && git diff --stat HEAD -- engine/btree/ -> confirmed clean, matches HEAD exactly before restoring stash",
+    "git stash pop -> restored pre-existing uncommitted .cdr/index/regression.jsonl change and 028-verification/ untracked dir"
+  ],
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    {
+      "risk": "low",
+      "summary": "The new fallback in repairEmptyLeaf (neither same-parent sibling is a leaf) tombstones the empty leaf permanently with no mechanism to ever reclaim it, merge it, or restore it to a leaf-only-sibling shape within 1.2.4's own code. This is a narrower, strictly-safer version of the already-documented tombstone/abandoned-node-ID gap (not a new bug), but is worth tracking explicitly since it is a new, distinct trigger condition (post-grandparent-splice mixed-type siblings) rather than the original 'leaf holds 1+ keys, under capacity' tombstone case.",
+      "recommendation": "When 1.2.5/1.2.6 revisit persist/reload and any real rebalancing beyond the current merge-or-tombstone strategy, ensure this mixed-type-sibling shape is included in the design discussion -- e.g. whether a later pass should walk up and re-attempt repair against a differently-shaped sibling set, or whether it remains permanently accepted as a rare, low-cost underflow."
+    },
+    {
+      "risk": "low",
+      "summary": "No test directly exercises the new tombstone-fallback branch (neither sibling usable) with an assertion targeted specifically at that code path in isolation (e.g. asserting via a smaller, hand-constructed tree that the fallback is reached and that a subsequent operation against the same tombstoned leaf still behaves correctly). The shipped regression test proves the fix closes the original data-loss bug (which is the critical requirement), but does not separately prove out the tombstone-fallback branch's long-term behavior under further inserts/deletes.",
+      "recommendation": "Optional: add a smaller, targeted test that hand-constructs (or otherwise deterministically forces) the neither-sibling-is-a-leaf shape, confirms the fallback is reached, and then performs a further Insert/Delete against that subtree to confirm no lingering issue. Not required to close 1.2.4 given the critical bug is fixed and covered."
+    }
+  ],
+  "recommendation": "PASS_WITH_COMMENTS: the critical silent data-loss bug from 028-verification is genuinely and completely fixed -- independently re-derived and reproduced (fail pre-fix, pass post-fix), diff scope confirmed narrow, all four call sites confirmed gated, full suite re-run clean with no regressions across 1.2.1-1.2.4. Safe to mark 1.2.4 verified. Two low-risk, non-blocking observations recorded for future tracking (tombstone-fallback permanence; targeted test for the fallback branch itself) -- neither blocks closing this subtask."
+}

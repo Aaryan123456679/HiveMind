@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "030-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "1.2.4",
+  "git_head": "4a7c2142b3e88442381f9cea5a22c600e71047a8",
+  "run_key": "bd4766b7b45de120",
+  "status": "completed",
+  "last_completed_step": "write_verification_and_regression",
+  "started_at": "2026-07-04T00:00:00+05:30",
+  "ended_at": "2026-07-04T00:30:00+05:30"
+}
