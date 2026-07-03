@@ -45,4 +45,4 @@
 {"id": "task-1.2.4", "state": "verified", "runs": ["2026-07-04-027-implementation", "2026-07-04-029-implementation-fix", "2026-07-04-028-verification", "2026-07-04-030-verification"], "commit": "631c81307be44470eb3b99f0e118e3f424d06f6e", "verification": "PASS_WITH_COMMENTS"}
 {"id": "task-1.2.5", "state": "verified", "runs": ["2026-07-04-031-implementation", "2026-07-04-032-verification"], "commit": "91d150d4c85aba4287edf62f08773b6d1cd022a4", "verification": "PASS_WITH_COMMENTS"}
 {"id": "task-1.2.6", "state": "verified", "runs": ["2026-07-04-033-implementation", "2026-07-04-034-verification"], "commit": "49f023c4c6217d1d17b45d896b11d207b2889939", "verification": "PASS_WITH_COMMENTS"}
-{"id": "task-1.3.1", "state": "implemented", "runs": ["2026-07-04-035-implementation"], "commit": "1a12643cfadd40610afa690d32672e6c59928870"}
+{"id": "task-1.3.1", "state": "verified", "runs": ["2026-07-04-035-implementation", "2026-07-04-036-verification"], "commit": "1a12643cfadd40610afa690d32672e6c59928870", "verification": "PASS_WITH_COMMENTS"}

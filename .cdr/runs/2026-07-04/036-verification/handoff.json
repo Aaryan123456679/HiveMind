@@ -1,0 +1,27 @@
+{
+  "run_id": "2026-07-04-036-verification",
+  "subtask": "1.3.1",
+  "verdict": "PASS_WITH_COMMENTS",
+  "task_1_3_status": "in_progress (1 of 5 subtasks verified)",
+  "pointers": {
+    "verification_report": ".cdr/runs/2026-07-04/036-verification/verification.json",
+    "commit_reviewed": "1a12643cfadd40610afa690d32672e6c59928870",
+    "files_reviewed": [
+      "engine/wal/writer.go",
+      "engine/wal/writer_test.go",
+      "engine/catalog/file.go (WriteAt+Sync idiom cross-reference)",
+      "engine/catalog/idalloc.go (WriteAt+Sync idiom cross-reference)",
+      "engine/btree/node.go (hard-error-not-truncate idiom cross-reference, lines ~110-155)",
+      "docs/LLD/wal.md (confirmed stale/scaffold-level, non-blocking)"
+    ],
+    "regression_entries_appended": [".cdr/index/regression.jsonl (4 new entries, run=036-verification: 1 medium-risk resume/torn-tail, 3 low-risk)"],
+    "task_index_updated": ".cdr/index/task.jsonl (task-1.3.1 -> state=verified, verification=2026-07-04-036-verification)"
+  },
+  "next_steps": [
+    "1.3.2 (record types + fsync-before-apply write path) can build directly on writer.go's established record framing (8-byte header: uint32 LE length + uint32 LE CRC32) and wal-<N>.log segment convention.",
+    "MEDIUM-RISK, should be addressed by 1.3.4/1.3.5: OpenWriter's resume path does not currently validate a resumed segment's tail for torn/partial records before appending further writes -- explicitly deferred by the implementer but flagged here so it isn't silently skipped when those subtasks land.",
+    "Optional follow-up (non-blocking): LLD-sync pass on docs/LLD/wal.md (record format, segment naming, rotation semantics) -- this package's LLD is the most stale of any active package.",
+    "Optional follow-up (non-blocking): tighten writer.go's doc-comment/commit-message claim of matching catalog's 'WriteAt+Sync' idiom (writer.go actually uses sequential Write+Sync, not WriteAt).",
+    "Optional follow-up (non-blocking): add exact-boundary (record landing exactly at maxSegmentBytes) and multi-segment-resume tests."
+  ]
+}
