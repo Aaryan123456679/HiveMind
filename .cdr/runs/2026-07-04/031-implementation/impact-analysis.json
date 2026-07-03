@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.2.5",
+  "risk_level": "medium",
+  "risk_rationale": "Adds a new read-path (prefix scan) that leverages an existing invariant (NextLeaf sibling chain + tree-wide sorted key order) established and exercised by 1.2.1-1.2.4, but does not modify any existing insert/delete/lookup internals. Elevated from low to medium because: (a) this is the module's first consumer of NextLeaf for anything other than local leaf-split wiring, so any latent NextLeaf-wiring bug from 1.2.3/1.2.4 (including edge cases around the 1.2.4 tombstone-leaf gap) would first become externally observable here; (b) this run also surfaced and had to resolve a scope-correction (the issue's actual 1.2.5 is prefix-scan-only; persist/reload is a separate, not-yet-started 1.2.6), which if missed would have produced an out-of-scope commit spanning two checklist items.",
+  "new_files": [
+    "engine/btree/scan.go",
+    "engine/btree/scan_test.go"
+  ],
+  "modified_files": [],
+  "unmodified_but_read_in_full": [
+    "engine/btree/node.go",
+    "engine/btree/lookup.go",
+    "engine/btree/insert.go"
+  ],
+  "unmodified_but_skimmed": [
+    "engine/btree/delete.go"
+  ],
+  "downstream_consumers_not_yet_wired": [
+    "agents/ingestion (per docs/LLD/btree.md: prefix-scan candidate-shortlisting consumer, not yet implemented)"
+  ],
+  "known_gaps_confirmed_out_of_scope_for_this_subtask": [
+    "No persisted 'current root node ID' across process restarts (belongs to 1.2.6, not this subtask; PrefixScan takes rootNodeID as an explicit caller-supplied parameter, exactly like Lookup and Insert already do)",
+    "1.2.4's unreclaimed tombstoned-leaf / abandoned-merged-node-ID gap (verified not to affect scan correctness, since PrefixScan only ever reaches nodes via root-to-leaf descent or NextLeaf, both of which only point at live reachable nodes; reclamation itself remains a distinct, separately-tracked gap)"
+  ],
+  "regression_surface": {
+    "existing_tests_rerun": "go test ./engine/btree/... -race -v -count=1 (full package)",
+    "existing_tests_affected": "none (new file only; no existing function signatures changed)"
+  }
+}

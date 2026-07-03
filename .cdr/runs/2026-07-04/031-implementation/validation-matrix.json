@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.2.5",
+  "rows": [
+    {
+      "requirement": "Prefix scan over a topic path returns exactly the set of inserted paths sharing that prefix, in sorted order.",
+      "test": "TestPrefixScan",
+      "covered": true
+    },
+    {
+      "requirement": "Exact required test-run command matches issue verbatim (go test ./engine/btree/... -run TestPrefixScan)",
+      "test": "TestPrefixScan (exact function name, verified via `go test ./engine/btree/... -run TestPrefixScan -v`)",
+      "covered": true
+    },
+    {
+      "requirement": "Prefix matching zero keys returns empty result, nil error (not an error)",
+      "test": "TestPrefixScan/nonexistent/, TestPrefixScanNoMatches",
+      "covered": true
+    },
+    {
+      "requirement": "Prefix matching keys split across multiple leaves via NextLeaf",
+      "test": "TestPrefixScanAcrossLeafBoundary (400 keys sharing one prefix, forcing multiple leaf splits, plus trailing differently-prefixed keys to confirm no spill-over)",
+      "covered": true
+    },
+    {
+      "requirement": "Prefix that is itself a complete key, plus other keys extending it",
+      "test": "TestPrefixScanPrefixIsCompleteKey",
+      "covered": true
+    },
+    {
+      "requirement": "Empty-string prefix matches everything (implicit sanity, not explicitly required but a natural boundary of 'string prefix')",
+      "test": "TestPrefixScan/#00 (empty-string subtest)",
+      "covered": true
+    },
+    {
+      "requirement": "No regression in 1.2.1-1.2.4's existing tests",
+      "test": "full go test ./engine/btree/... -race -v -count=1",
+      "covered": true
+    },
+    {
+      "requirement": "Root-node-ID persistence / close-reopen round-trip",
+      "test": "N/A -- explicitly out of scope for 1.2.5 (belongs to 1.2.6 per issue's actual checklist; see requirement.md)",
+      "covered": "not_applicable"
+    }
+  ],
+  "all_in_scope_rows_covered": true
+}

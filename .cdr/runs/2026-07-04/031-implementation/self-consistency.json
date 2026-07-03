@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.2.5",
+  "note": "Internal sanity only, per I4 -- this is NOT verification. Verification is delegated to /cdr:verify.",
+  "checks": [
+    {"check": "go build ./engine/...", "result": "PASS"},
+    {"check": "go vet ./engine/...", "result": "PASS"},
+    {"check": "gofmt -l engine/btree/scan.go engine/btree/scan_test.go", "result": "PASS (no output = clean)"},
+    {"check": "go test ./engine/btree/... -run TestPrefixScan -race -v -count=1", "result": "PASS", "detail": "exact required test name TestPrefixScan and its subtests all pass"},
+    {"check": "go test ./engine/btree/... -race -v -count=1 (full package)", "result": "PASS", "detail": "21 passed, 0 failed, 22.0s; includes all prior 1.2.1-1.2.4 tests (TestNodeSerialization, TestLookup, TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertSplit, TestInsertOutOfOrder, TestDelete and its subtests, TestDeleteEmptyTree, TestDeleteAbsentKey, TestDeleteSingleLeaf, TestDeleteLeafMerge, TestDeleteInternalMerge, TestDeleteInsertLookupIntegration, TestDeleteEmptiesSingleLeafTree, TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss) plus new TestPrefixScan, TestPrefixScanNoMatches, TestPrefixScanAcrossLeafBoundary, TestPrefixScanPrefixIsCompleteKey"},
+    {"check": "validation-matrix.json all in-scope rows covered", "result": "PASS", "detail": "all_in_scope_rows_covered: true"}
+  ],
+  "no_regressions": true,
+  "self_verification_performed": false,
+  "note_on_i4": "This agent does not verify its own work; /cdr:verify is responsible for independent verification of correctness/design/security concerns."
+}
