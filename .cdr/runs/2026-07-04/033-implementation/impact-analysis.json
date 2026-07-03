@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.2.6",
+  "risk_level": "medium",
+  "risk_rationale": "Closes a known cross-cutting gap ('no persisted root node ID across restarts') referenced in insert.go's NodeAllocator doc comment and implicitly relevant to 1.2.3/1.2.4/1.2.5's regression notes about persist/reload being deferred. However, the change is purely additive: a new sidecar file (<index-path>.root) and two new exported functions (SaveRoot, LoadRoot). It does not modify the internals, signatures, or return values of Insert, Delete, Lookup, or PrefixScan, so no existing test or caller is affected.",
+  "new_files": [
+    "engine/btree/persist.go",
+    "engine/btree/btree_test.go"
+  ],
+  "modified_files": [],
+  "modified_functions": [],
+  "new_exported_symbols": [
+    "SaveRoot(store *NodeStore, rootNodeID uint64) error",
+    "LoadRoot(store *NodeStore) (rootNodeID uint64, err error)"
+  ],
+  "affected_modules": ["engine/btree"],
+  "downstream_consumers_checked": [
+    "engine/btree/insert.go (Insert) - unchanged, still returns newRootNodeID only, does not call SaveRoot",
+    "engine/btree/delete.go (Delete) - unchanged, still returns newRootNodeID only, does not call SaveRoot",
+    "engine/btree/lookup.go (Lookup, NodeStore, descendToLeaf) - unchanged",
+    "engine/btree/scan.go (PrefixScan) - unchanged"
+  ],
+  "backward_compatibility": "Fully additive. No on-disk format change to existing node encoding (node.go untouched). New sidecar file convention (<index-path>.root) mirrors the existing <index-path>.nodealloc convention introduced in 1.2.3, so it is consistent with an established pattern rather than introducing a new one.",
+  "test_impact": {
+    "existing_tests_expected_unaffected": [
+      "engine/btree/node_test.go",
+      "engine/btree/lookup_test.go",
+      "engine/btree/insert_test.go",
+      "engine/btree/delete_test.go",
+      "engine/btree/scan_test.go"
+    ],
+    "new_tests_added": [
+      "engine/btree/btree_test.go: TestPersistReload",
+      "engine/btree/btree_test.go: TestLoadRootFreshIndexFile"
+    ]
+  },
+  "rollback_plan": "Revert the single commit; no other module depends on SaveRoot/LoadRoot yet, so rollback has zero blast radius outside engine/btree."
+}

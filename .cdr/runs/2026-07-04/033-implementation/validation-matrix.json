@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.2.6",
+  "rows": [
+    {
+      "id": "V1",
+      "criterion": "Tree built, written to index/name.idx, closed, and reopened yields identical Lookup results",
+      "test": "engine/btree/btree_test.go:TestPersistReload",
+      "status": "covered"
+    },
+    {
+      "id": "V2",
+      "criterion": "Tree built, written to index/name.idx, closed, and reopened yields identical PrefixScan results",
+      "test": "engine/btree/btree_test.go:TestPersistReload",
+      "status": "covered"
+    },
+    {
+      "id": "V3",
+      "criterion": "Reopen simulates a real process restart (new *os.File, new NodeStore, not reuse of in-memory tree)",
+      "test": "engine/btree/btree_test.go:TestPersistReload",
+      "status": "covered"
+    },
+    {
+      "id": "V4",
+      "criterion": "Root ID is recoverable after reopen via LoadRoot, previously saved via SaveRoot",
+      "test": "engine/btree/btree_test.go:TestPersistReload",
+      "status": "covered"
+    },
+    {
+      "id": "V5",
+      "criterion": "Fresh/never-persisted index file: LoadRoot returns reservedNodeID (0) with no error, not a crash",
+      "test": "engine/btree/btree_test.go:TestLoadRootFreshIndexFile",
+      "status": "covered"
+    },
+    {
+      "id": "V6",
+      "criterion": "Tree exercises real multi-leaf structure (not a trivial single-node tree)",
+      "test": "engine/btree/btree_test.go:TestPersistReload (300+ keys forcing multiple splits)",
+      "status": "covered"
+    },
+    {
+      "id": "V7",
+      "criterion": "No regression in prior subtasks (1.2.1-1.2.5) test suites",
+      "test": "go test ./engine/btree/... -race -v -count=1 (full suite)",
+      "status": "covered"
+    },
+    {
+      "id": "V8",
+      "criterion": "Build and vet clean",
+      "test": "go build ./engine/...; go vet ./engine/...",
+      "status": "covered"
+    }
+  ],
+  "gaps": []
+}

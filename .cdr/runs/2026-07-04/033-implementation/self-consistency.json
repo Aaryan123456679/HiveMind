@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.2.6",
+  "build": {"command": "go build ./engine/...", "result": "pass"},
+  "vet": {"command": "go vet ./engine/...", "result": "pass"},
+  "tests": {
+    "command": "go test ./engine/btree/... -race -v -count=1",
+    "result": "pass",
+    "total_duration": "21.756s",
+    "new_tests": ["TestPersistReload", "TestLoadRootFreshIndexFile"],
+    "prior_tests_all_pass": true,
+    "notes": "All prior subtask tests (1.2.1 TestNodeSerialization, 1.2.2 TestLookup, 1.2.3 TestInsertSplit/TestInsertEmptyTree/TestInsertUpsert/TestInsertOutOfOrder, 1.2.4 TestDelete and subtests, 1.2.5 TestPrefixScan and subtests) pass alongside the two new tests, no regressions."
+  },
+  "validation_matrix_coverage": "8/8 rows covered, 0 gaps (see validation-matrix.json)",
+  "scope_note": "This is internal sanity only (I4): build green + tests green + matrix covered. This is NOT independent verification; /cdr:verify performs that separately."
+}
