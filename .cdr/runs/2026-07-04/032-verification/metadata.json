@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "032-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "1.2.5",
+  "git_head": "e09a85c4feea8f66f8bae03300edf06757e634e6",
+  "run_key": "sha256:1.2.5:91d150d4c85aba4287edf62f08773b6d1cd022a4:prefix-scan-verify",
+  "status": "completed",
+  "last_completed_step": "verification.json written",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:30:00Z"
+}
