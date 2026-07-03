@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-03-002-planner",
+  "macro": "cdr-plan",
+  "macro_version": "1",
+  "agent": "cdr-planner",
+  "subtask": null,
+  "git_head": "e749bb938b585c09660ed0d694c68fb836cb2372",
+  "run_key": "aa87e298f4aca530ead992d8ef152376be3e9a56a07434ea57a131bd5d924ee5",
+  "status": "completed",
+  "last_completed_step": "created_github_milestones_and_issues_and_wrote_plan",
+  "started_at": "2026-07-02T19:59:53Z",
+  "ended_at": "2026-07-02T20:07:48Z"
+}

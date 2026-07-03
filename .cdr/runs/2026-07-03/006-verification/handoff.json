@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "run_id": "006-verification",
+  "subtask": "1.1.1",
+  "verdict": "PASS",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-03/006-verification/verification.json",
+    "diff": ".cdr/runs/2026-07-03/006-verification/files-changed.diff",
+    "source": ["engine/catalog/record.go", "engine/catalog/record_test.go"],
+    "regression_index": ".cdr/index/regression.jsonl (prior high-severity entry marked resolved)"
+  }
+}

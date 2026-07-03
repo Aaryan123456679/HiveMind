@@ -1,0 +1,1686 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-03-002-planner",
+  "macro": "cdr-plan",
+  "generated_at": "2026-07-02T20:05:59Z",
+  "source_docs": [
+    "AGENT.md",
+    "docs/HLD.md",
+    "docs/LLD/catalog.md",
+    "docs/LLD/btree.md",
+    "docs/LLD/mvcc.md",
+    "docs/LLD/split.md",
+    "docs/LLD/graph.md",
+    "docs/LLD/wal.md",
+    "docs/LLD/rpc.md",
+    "docs/LLD/ingestion-agent.md",
+    "docs/LLD/query-agent.md",
+    "docs/LLD/llm-provider.md",
+    "docs/LLD/eval.md"
+  ],
+  "open_questions": [
+    {
+      "id": "OQ-1",
+      "phase": 5,
+      "question": "Synthetic policy/manual PDF corpus generation approach is unspecified: what tool/library renders the PDFs (e.g. reportlab/weasyprint/pandoc), and is the underlying text hand-authored or LLM-generated then rendered? This determines the concrete implementation of the '5.1.2 synthetic corpus generation' subtask.",
+      "blocks": [
+        "task-5.1",
+        "subtask-5.1.2"
+      ]
+    },
+    {
+      "id": "OQ-2",
+      "phase": 5,
+      "question": "Ground-truth topic/query finalization process is unspecified: who curates/verifies the ~30-50 predefined ground-truth topics and their deliberate cross-topic references (manual authorship vs. LLM-assisted drafting + human review), and what format do topic/query labels take for the recall/precision harness?",
+      "blocks": [
+        "task-5.1",
+        "subtask-5.1.3"
+      ]
+    },
+    {
+      "id": "OQ-3",
+      "phase": 6,
+      "question": "Demo deployment target is unspecified beyond 'small VM/container': which specific host/provider (e.g. a particular cloud VM, Fly.io, Railway, self-hosted box) and container orchestration (plain Docker Compose vs. something else), including domain/TLS requirements if any.",
+      "blocks": [
+        "task-6.2",
+        "subtask-6.2.3"
+      ]
+    }
+  ],
+  "epics": [
+    {
+      "id": "epic-1",
+      "phase": "1",
+      "title": "Phase 1: Storage core (single-threaded)",
+      "github_milestone_number": 2,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/2",
+      "tasks": [
+        {
+          "id": "task-1.1",
+          "title": "Catalog slotted-page implementation (engine/catalog/)",
+          "modules": [
+            "engine/catalog/"
+          ],
+          "github_issue_number": 1,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/1",
+          "subtasks": [
+            {
+              "id": "1.1.1",
+              "title": "Catalog record struct + fixed-size binary encode/decode",
+              "ac": "CatalogRecord{fileID, pathHash, currentVersion, sizeBytes, status, redirectTargetIDs, parentTopicID, lastModified} encodes to and decodes from a fixed-size byte layout with no data loss for all fields, including empty/zero redirectTargetIDs.",
+              "test": "go test ./engine/catalog/... -run TestRecordEncodeDecode -race covering round-trip encode->decode equality for populated and zero-value records.",
+              "modules": [
+                "engine/catalog/record.go",
+                "engine/catalog/record_test.go"
+              ]
+            },
+            {
+              "id": "1.1.2",
+              "title": "Slotted 4KB page implementation (header, slot array, insert/read/delete slot, free-space tracking)",
+              "ac": "A page supports InsertSlot/ReadSlot/DeleteSlot within a 4KB buffer, tracks free space correctly, and rejects inserts that would overflow the page.",
+              "test": "go test ./engine/catalog/... -run TestSlottedPage -race: insert until full then assert overflow error; delete then reinsert reuses freed slot space.",
+              "modules": [
+                "engine/catalog/page.go",
+                "engine/catalog/page_test.go"
+              ]
+            },
+            {
+              "id": "1.1.3",
+              "title": "Catalog file manager: .meta/catalog.dat open/create + page allocation + free-list page",
+              "ac": "Opening a non-existent catalog.dat creates it with an initial free-list page; allocating a new page marks it used in the free-list; deleting/merging a slot returns its page to the free-list for reclamation.",
+              "test": "go test ./engine/catalog/... -run TestCatalogFileManager -race: create fresh catalog file, allocate N pages, delete some records, verify free-list reclaims and reuses page slots on next allocation.",
+              "modules": [
+                "engine/catalog/file.go",
+                "engine/catalog/file_test.go"
+              ]
+            },
+            {
+              "id": "1.1.4",
+              "title": "Monotonic fileID allocator persisted across restarts",
+              "ac": "fileID is an atomically-incrementing counter with no reuse/gaps semantics that matter; after process restart, the next allocated fileID continues strictly after the highest previously allocated ID.",
+              "test": "go test ./engine/catalog/... -run TestFileIDAllocator -race: allocate concurrently from many goroutines and assert all IDs unique; simulate restart (reopen file manager) and assert monotonicity preserved.",
+              "modules": [
+                "engine/catalog/idalloc.go",
+                "engine/catalog/idalloc_test.go"
+              ]
+            },
+            {
+              "id": "1.1.5",
+              "title": "Catalog CRUD API with striped-mutex layer (~256 stripes hashed by fileID)",
+              "ac": "Get/Put/Delete-by-fileID API exists; two fileIDs hashing to different stripes never block each other (verified by holding one stripe's lock and confirming an operation on a different stripe proceeds without waiting).",
+              "test": "go test ./engine/catalog/... -run TestStripedLocking -race: verify no cross-stripe blocking and correct CRUD results under single-threaded and light-concurrency (functional, not the full race-test suite - that lands in Epic 2A once MVCC/split exercise it more heavily).",
+              "modules": [
+                "engine/catalog/catalog.go",
+                "engine/catalog/catalog_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-1.2",
+          "title": "B+Tree index implementation, single-threaded (engine/btree/)",
+          "modules": [
+            "engine/btree/"
+          ],
+          "github_issue_number": 2,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/2",
+          "subtasks": [
+            {
+              "id": "1.2.1",
+              "title": "On-disk B+Tree node layout + serialization at index/name.idx",
+              "ac": "Leaf and internal node formats are defined and serialize/deserialize round-trip losslessly; index/name.idx file is created on first use.",
+              "test": "go test ./engine/btree/... -run TestNodeSerialization -race: encode/decode leaf and internal nodes with varying key counts, assert equality.",
+              "modules": [
+                "engine/btree/node.go",
+                "engine/btree/node_test.go"
+              ]
+            },
+            {
+              "id": "1.2.2",
+              "title": "Point lookup (path -> fileID)",
+              "ac": "Lookup returns the correct fileID for an inserted path and a defined not-found result for an absent path.",
+              "test": "go test ./engine/btree/... -run TestLookup: insert fixed set of paths, assert lookup correctness for present and absent keys.",
+              "modules": [
+                "engine/btree/lookup.go",
+                "engine/btree/lookup_test.go"
+              ]
+            },
+            {
+              "id": "1.2.3",
+              "title": "Insert with node splitting on overflow",
+              "ac": "Inserting keys beyond a node's capacity triggers a correct split (median promoted to parent, keys partitioned correctly); tree remains balanced and all previously inserted keys remain lookup-able after many splits.",
+              "test": "go test ./engine/btree/... -run TestInsertSplit: insert enough keys to force multiple levels of splitting, assert full-tree lookup correctness afterward and structural invariants (sorted keys, correct fanout).",
+              "modules": [
+                "engine/btree/insert.go",
+                "engine/btree/insert_test.go"
+              ]
+            },
+            {
+              "id": "1.2.4",
+              "title": "Delete with simplified rebalancing (merge-or-tombstone strategy, documented choice)",
+              "ac": "Deleting a key removes it from lookups; tree remains internally consistent (no orphaned child pointers) after interleaved insert/delete sequences.",
+              "test": "go test ./engine/btree/... -run TestDelete: interleaved insert/delete sequence, assert deleted keys absent, remaining keys correct, and tree passes a structural-invariant checker.",
+              "modules": [
+                "engine/btree/delete.go",
+                "engine/btree/delete_test.go"
+              ]
+            },
+            {
+              "id": "1.2.5",
+              "title": "Prefix scan (list topic subtree)",
+              "ac": "Prefix scan over a topic path (e.g. `auth/`) returns exactly the set of inserted paths sharing that prefix, in sorted order.",
+              "test": "go test ./engine/btree/... -run TestPrefixScan: insert a mixed set of topic paths, assert prefix scan returns exact expected subset.",
+              "modules": [
+                "engine/btree/scan.go",
+                "engine/btree/scan_test.go"
+              ]
+            },
+            {
+              "id": "1.2.6",
+              "title": "Persisted reload correctness test (disk round-trip)",
+              "ac": "A tree built, written to index/name.idx, closed, and reopened yields identical lookup/prefix-scan results as before closing.",
+              "test": "go test ./engine/btree/... -run TestPersistReload: build tree, close, reopen file, assert lookup/prefix-scan parity.",
+              "modules": [
+                "engine/btree/btree_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-1.3",
+          "title": "WAL + crash recovery (engine/wal/)",
+          "modules": [
+            "engine/wal/"
+          ],
+          "github_issue_number": 3,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/3",
+          "subtasks": [
+            {
+              "id": "1.3.1",
+              "title": "Append-only WAL segment writer + segment rotation",
+              "ac": "Log records append to wal/wal-<segment>.log; a new segment is created once the current one exceeds a configured size, with no record ever split across segments.",
+              "test": "go test ./engine/wal/... -run TestSegmentWriter -race: write enough records to force rotation, assert segment boundaries and record integrity.",
+              "modules": [
+                "engine/wal/writer.go",
+                "engine/wal/writer_test.go"
+              ]
+            },
+            {
+              "id": "1.3.2",
+              "title": "WAL record types for catalog/index mutations + fsync-before-apply write path",
+              "ac": "A mutation is durably fsynced to the WAL before the caller's Append call returns, and before the corresponding in-memory/on-disk state change is considered committed.",
+              "test": "go test ./engine/wal/... -run TestFsyncBeforeApply -race: assert WAL append completes (and fsync observed) prior to a simulated apply callback firing.",
+              "modules": [
+                "engine/wal/record.go",
+                "engine/wal/record_test.go"
+              ]
+            },
+            {
+              "id": "1.3.3",
+              "title": "Checkpoint manifest (manifest.json) tracking checkpoint pointer",
+              "ac": "Checkpointing records the WAL offset up to which state is durably applied; segments fully before the checkpoint pointer are eligible for truncation/archival.",
+              "test": "go test ./engine/wal/... -run TestCheckpointManifest: write records, checkpoint, assert manifest.json reflects correct offset and old segments are archivable.",
+              "modules": [
+                "engine/wal/checkpoint.go",
+                "engine/wal/checkpoint_test.go"
+              ]
+            },
+            {
+              "id": "1.3.4",
+              "title": "Recovery replay from last checkpoint pointer forward",
+              "ac": "On startup, replay reapplies every logged-but-not-yet-checkpointed mutation, in order, exactly once, and is a no-op if the checkpoint pointer already covers all segments.",
+              "test": "go test ./engine/wal/... -run TestRecoveryReplay: pre-populate WAL with mutations past the checkpoint, run recovery, assert final state matches applying the same mutations directly.",
+              "modules": [
+                "engine/wal/recovery.go",
+                "engine/wal/recovery_test.go"
+              ]
+            },
+            {
+              "id": "1.3.5",
+              "title": "Crash-injection recovery test (mid-write crash simulation)",
+              "ac": "Simulating a crash after a partial/torn record write does not corrupt recovery; the torn record is detected and discarded, and recovery proceeds from the last valid record.",
+              "test": "go test ./engine/wal/... -run TestCrashInjectionRecovery -race: truncate/corrupt the tail of a segment mid-record, run recovery, assert clean state with no panic and no corrupted-record replay.",
+              "modules": [
+                "engine/wal/recovery_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-1.4",
+          "title": "Single-version .md content read/write (engine/catalog/ content I/O, pre-MVCC)",
+          "modules": [
+            "engine/catalog/"
+          ],
+          "github_issue_number": 4,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/4",
+          "subtasks": [
+            {
+              "id": "1.4.1",
+              "title": "Content store layout: content/<fileID>.v1.md create/write path, WAL-before-apply",
+              "ac": "Creating a new topic file writes content/<fileID>.v1.md and logs the corresponding catalog mutation to the WAL before the file is considered committed.",
+              "test": "go test ./engine/catalog/... -run TestContentCreate -race: create file, assert WAL record precedes catalog visibility, assert content bytes on disk match input.",
+              "modules": [
+                "engine/catalog/content.go",
+                "engine/catalog/content_test.go"
+              ]
+            },
+            {
+              "id": "1.4.2",
+              "title": "Full-file read path (single-threaded, no snapshot semantics yet)",
+              "ac": "Reading a file by fileID returns its current full markdown content exactly as last written.",
+              "test": "go test ./engine/catalog/... -run TestContentRead: write then read, assert byte-for-byte equality.",
+              "modules": [
+                "engine/catalog/content.go",
+                "engine/catalog/content_test.go"
+              ]
+            },
+            {
+              "id": "1.4.3",
+              "title": "Append path (PutSegment-equivalent) + sizeBytes update + threshold-check stub",
+              "ac": "Appending markdown content to an existing file updates its stored content and the catalog's sizeBytes field; if resulting size exceeds the configured split threshold (~8KB/~2000 tokens default), a threshold-crossing signal is emitted (actual auto-split execution is out of scope until Epic 2B).",
+              "test": "go test ./engine/catalog/... -run TestContentAppend: append repeatedly, assert sizeBytes tracks content length and threshold signal fires exactly once when crossing the configured limit.",
+              "modules": [
+                "engine/catalog/content.go",
+                "engine/catalog/content_test.go"
+              ]
+            },
+            {
+              "id": "1.4.4",
+              "title": "Durability round-trip test across simulated restart",
+              "ac": "After writing/appending content and simulating a process restart (reopen WAL + catalog + content store), a read returns the same content as before restart.",
+              "test": "go test ./engine/catalog/... -run TestContentDurabilityRestart -race: write/append, close all stores, reopen, replay WAL, assert read parity.",
+              "modules": [
+                "engine/catalog/content_test.go",
+                "engine/wal/recovery.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-1.5",
+          "title": "Single-threaded end-to-end integration & smoke test",
+          "modules": [
+            "engine/ (cross-package integration test, no new package)"
+          ],
+          "github_issue_number": 5,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/5",
+          "subtasks": [
+            {
+              "id": "1.5.1",
+              "title": "Cross-package integration test: catalog + btree + wal + content, single-threaded happy path",
+              "ac": "A single test wires catalog, btree, wal, and content together to create several topic files, append to them, look them up by path, and read them back, all single-threaded, with correct results end-to-end.",
+              "test": "go test ./engine/... -run TestStorageCoreIntegration -race (single-threaded workload): create N files via btree-insert+catalog+content, append, prefix-scan, full-read, assert consistency across all four modules.",
+              "modules": [
+                "engine/integration_test.go"
+              ]
+            },
+            {
+              "id": "1.5.2",
+              "title": "End-to-end crash-recovery integration test across all four modules",
+              "ac": "Killing the process mid-append (simulated) and restarting reconstructs a consistent catalog+btree+content state via WAL replay, with no partial/corrupted file visible.",
+              "test": "go test ./engine/... -run TestStorageCoreCrashRecovery -race: interrupt an append mid-way, reopen all stores, run WAL recovery, assert consistent end state across catalog/btree/content.",
+              "modules": [
+                "engine/integration_test.go"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epic-2a",
+      "phase": "2a",
+      "title": "Phase 2a: Concurrency primitives (MVCC + striped locking + latch-crabbing B+Tree + epoch GC)",
+      "github_milestone_number": 3,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/3",
+      "tasks": [
+        {
+          "id": "task-2a.1",
+          "title": "MVCC versioned write/read path (engine/mvcc/)",
+          "modules": [
+            "engine/mvcc/"
+          ],
+          "github_issue_number": 6,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/6",
+          "subtasks": [
+            {
+              "id": "2a.1.1",
+              "title": "Version file writer: content/<fileID>.vN.md creation with monotonic version numbering",
+              "ac": "Each write creates a new immutable version file with N strictly increasing per fileID; prior version files are left untouched.",
+              "test": "go test ./engine/mvcc/... -run TestVersionWriter -race: perform sequential and concurrent writes to the same fileID, assert version numbers are strictly increasing with no collisions.",
+              "modules": [
+                "engine/mvcc/write.go",
+                "engine/mvcc/write_test.go"
+              ]
+            },
+            {
+              "id": "2a.1.2",
+              "title": "Atomic CAS swap of catalog's current-version pointer post-durable-write",
+              "ac": "The catalog's currentVersion field is updated via CAS only after the new version file is durably written; a failed CAS (concurrent writer won) retries without corrupting state.",
+              "test": "go test ./engine/mvcc/... -run TestCurrentVersionCAS -race: concurrent writers race to CAS, assert exactly the expected final currentVersion and no lost updates.",
+              "modules": [
+                "engine/mvcc/write.go",
+                "engine/mvcc/write_test.go"
+              ]
+            },
+            {
+              "id": "2a.1.3",
+              "title": "Snapshot-read path: capture pointer at request start, read that version to completion",
+              "ac": "A reader that starts before a concurrent write commits continues to see its originally-snapshotted version for the entire read, even after the pointer advances.",
+              "test": "go test ./engine/mvcc/... -run TestSnapshotRead -race: start a read, trigger a concurrent write mid-read, assert the read completes against the pre-write version content.",
+              "modules": [
+                "engine/mvcc/read.go",
+                "engine/mvcc/read_test.go"
+              ]
+            },
+            {
+              "id": "2a.1.4",
+              "title": "WAL integration for version-pointer CAS",
+              "ac": "Every version-pointer CAS is logged to the WAL before being applied, consistent with the catalog-mutation invariant in wal.md.",
+              "test": "go test ./engine/mvcc/... -run TestVersionCASWAL -race: assert WAL record precedes pointer visibility; crash-inject mid-CAS and confirm recovery reconstructs a valid pointer.",
+              "modules": [
+                "engine/mvcc/write.go",
+                "engine/mvcc/write_test.go"
+              ]
+            },
+            {
+              "id": "2a.1.5",
+              "title": "Concurrent writer/reader race test (no torn reads)",
+              "ac": "Many concurrent writers and readers against the same fileID never produce a torn read (partial/mixed-version content) and never lose a committed write.",
+              "test": "go test ./engine/mvcc/... -race -run TestConcurrentReadersWriters: N writer goroutines + M reader goroutines against shared fileIDs, assert every read is a complete single version's content.",
+              "modules": [
+                "engine/mvcc/mvcc_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-2a.2",
+          "title": "Epoch-based garbage collection (engine/mvcc/)",
+          "modules": [
+            "engine/mvcc/"
+          ],
+          "github_issue_number": 7,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/7",
+          "subtasks": [
+            {
+              "id": "2a.2.1",
+              "title": "Snapshot epoch refcounting (increment on start, decrement on completion)",
+              "ac": "Each snapshot increments its epoch's refcount on creation and decrements on completion; refcounts never go negative and reach zero once all referencing readers finish.",
+              "test": "go test ./engine/mvcc/... -run TestEpochRefcount -race: open/close overlapping snapshots across epochs, assert refcount bookkeeping is correct at every step.",
+              "modules": [
+                "engine/mvcc/gc.go",
+                "engine/mvcc/gc_test.go"
+              ]
+            },
+            {
+              "id": "2a.2.2",
+              "title": "Background compactor reclaiming eligible old versions",
+              "ac": "A version file is deleted only once its epoch's refcount is zero and it is not the current version; the current version is never reclaimed regardless of refcount.",
+              "test": "go test ./engine/mvcc/... -run TestCompactor -race: create several old versions, hold some snapshots open, run compactor, assert only eligible versions are removed.",
+              "modules": [
+                "engine/mvcc/gc.go",
+                "engine/mvcc/gc_test.go"
+              ]
+            },
+            {
+              "id": "2a.2.3",
+              "title": "GC correctness test under concurrent reader/writer/compactor load",
+              "ac": "Running writers, readers, and the compactor concurrently never reclaims a version still referenced by an in-flight snapshot.",
+              "test": "go test ./engine/mvcc/... -race -run TestGCUnderConcurrency: long-running readers holding old snapshots concurrently with writers advancing versions and the compactor running, assert no active snapshot's version is ever deleted.",
+              "modules": [
+                "engine/mvcc/gc_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-2a.3",
+          "title": "Catalog concurrent-correctness hardening (engine/catalog/)",
+          "modules": [
+            "engine/catalog/"
+          ],
+          "github_issue_number": 8,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/8",
+          "subtasks": [
+            {
+              "id": "2a.3.1",
+              "title": "Concurrent stress test across many fileIDs verifying stripe isolation",
+              "ac": "Many goroutines performing Put/Get/Delete across many distinct fileIDs complete with correct final state and no lock contention across unrelated stripes causing incorrect results.",
+              "test": "go test ./engine/catalog/... -race -run TestStripedConcurrencyStress: high-goroutine-count CRUD workload across a wide fileID range, assert final catalog state matches a serial-execution oracle.",
+              "modules": [
+                "engine/catalog/catalog_test.go"
+              ]
+            },
+            {
+              "id": "2a.3.2",
+              "title": "Contention benchmark: striped mutex vs. single global-lock baseline",
+              "ac": "A benchmark demonstrates the striped-mutex implementation sustains meaningfully higher concurrent throughput than a naive single-global-lock baseline under many-fileID contention.",
+              "test": "go test ./engine/catalog/... -bench BenchmarkStripedVsGlobalLock -benchmem: report throughput numbers for both implementations side by side.",
+              "modules": [
+                "engine/catalog/catalog_bench_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-2a.4",
+          "title": "Latch-crabbing B+Tree concurrency (engine/btree/)",
+          "modules": [
+            "engine/btree/"
+          ],
+          "github_issue_number": 9,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/9",
+          "subtasks": [
+            {
+              "id": "2a.4.1",
+              "title": "Per-node latch (mutex) + version counter fields added to node layout",
+              "ac": "Every node carries a latch and a version counter that increments on any structural mutation to that node.",
+              "test": "go test ./engine/btree/... -run TestNodeLatchFields -race: mutate a node, assert its version counter increments exactly once per mutation.",
+              "modules": [
+                "engine/btree/node.go",
+                "engine/btree/node_test.go"
+              ]
+            },
+            {
+              "id": "2a.4.2",
+              "title": "Latch-crabbing insert (lock parent, lock child, release parent, propagate splits)",
+              "ac": "Concurrent inserts into disjoint subtrees proceed without blocking each other; inserts into the same subtree remain correct and no writer ever holds more than a parent+child latch pair at once.",
+              "test": "go test ./engine/btree/... -race -run TestCrabbingInsert: concurrent inserts across disjoint and overlapping subtrees, assert final tree contains all inserted keys with correct structure.",
+              "modules": [
+                "engine/btree/insert.go",
+                "engine/btree/insert_test.go"
+              ]
+            },
+            {
+              "id": "2a.4.3",
+              "title": "Latch-crabbing delete with lock hand-over",
+              "ac": "Concurrent deletes correctly remove keys without corrupting sibling/parent pointers, using the same crabbing discipline as insert.",
+              "test": "go test ./engine/btree/... -race -run TestCrabbingDelete: concurrent deletes interleaved with concurrent inserts, assert final tree matches a serial-execution oracle.",
+              "modules": [
+                "engine/btree/delete.go",
+                "engine/btree/delete_test.go"
+              ]
+            },
+            {
+              "id": "2a.4.4",
+              "title": "Optimistic lock-free read path with version-counter retry",
+              "ac": "A reader never blocks a writer or another reader; if a node's version counter changed mid-read, the reader retries and eventually returns a consistent result.",
+              "test": "go test ./engine/btree/... -race -run TestOptimisticRead: concurrent readers running alongside writers that mutate the exact nodes being read, assert every read either returns a consistent snapshot or retries (no torn reads observed).",
+              "modules": [
+                "engine/btree/lookup.go",
+                "engine/btree/lookup_test.go"
+              ]
+            },
+            {
+              "id": "2a.4.5",
+              "title": "Full concurrent race-test suite (mixed insert/delete/lookup, disjoint + overlapping subtrees)",
+              "ac": "Under `go test -race`, a mixed workload of many concurrent inserters, deleters, and readers across both disjoint and overlapping subtrees produces a final tree state matching a serial-execution oracle, with zero data races reported.",
+              "test": "go test ./engine/btree/... -race -run TestConcurrentMixedWorkload -count=5 (repeat runs to catch flakiness): assert zero race detector reports and oracle-matching final state across all 5 runs.",
+              "modules": [
+                "engine/btree/btree_test.go"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epic-2b",
+      "phase": "2b",
+      "title": "Phase 2b: Auto-split (engine/split/) \u2014 highest-risk correctness surface",
+      "github_milestone_number": 4,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/4",
+      "tasks": [
+        {
+          "id": "task-2b.1",
+          "title": "Split trigger + per-file CAS guard (engine/split/)",
+          "modules": [
+            "engine/split/"
+          ],
+          "github_issue_number": 10,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/10",
+          "subtasks": [
+            {
+              "id": "2b.1.1",
+              "title": "Size-threshold detection hook on the append path (default ~8KB/~2000 tokens, tunable)",
+              "ac": "An append that pushes a file's sizeBytes over the configured threshold triggers exactly one split-eligibility signal; appends that stay under threshold trigger none.",
+              "test": "go test ./engine/split/... -run TestThresholdDetection: append content crossing/not-crossing the threshold in various increments, assert signal fires only on the crossing append.",
+              "modules": [
+                "engine/split/trigger.go",
+                "engine/split/trigger_test.go"
+              ]
+            },
+            {
+              "id": "2b.1.2",
+              "title": "Per-file CAS `splitInProgress` flag ensuring exactly one split wins per threshold crossing",
+              "ac": "When many goroutines concurrently trigger a threshold crossing on the same file, exactly one CAS succeeds and initiates the split; all others observe the flag already set and back off without initiating a duplicate split.",
+              "test": "go test ./engine/split/... -race -run TestSplitInProgressCAS: many goroutines racing to CAS the flag on the same fileID, assert exactly one winner via atomic counter of split-initiation calls.",
+              "modules": [
+                "engine/split/guard.go",
+                "engine/split/guard_test.go"
+              ]
+            },
+            {
+              "id": "2b.1.3",
+              "title": "Mark file SPLITTING in catalog; queue new writers; verify existing readers unaffected via MVCC",
+              "ac": "Once a split begins, the catalog record transitions to SPLITTING, new writer requests to that file are queued rather than applied, and readers holding a pre-split MVCC snapshot continue to see the old version undisturbed.",
+              "test": "go test ./engine/split/... -race -run TestSplittingStatusIsolation: start a split, assert new writes queue, assert an in-flight reader's snapshot content is unaffected by the SPLITTING transition.",
+              "modules": [
+                "engine/split/orchestrate.go",
+                "engine/split/orchestrate_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-2b.2",
+          "title": "SplitProposer abstraction + deterministic mock (engine/split/)",
+          "modules": [
+            "engine/split/"
+          ],
+          "github_issue_number": 11,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/11",
+          "subtasks": [
+            {
+              "id": "2b.2.1",
+              "title": "Define local `SplitProposer` interface decoupling split from the real ProposeSplit RPC transport",
+              "ac": "`engine/split/` depends only on a `SplitProposer` interface (ProposeSplit(fileContent) -> plan); no direct gRPC/agent dependency exists yet (real gRPC wiring happens in Epic 3 once proto/ and agents/ingestion exist).",
+              "test": "go build ./engine/split/... succeeds with zero imports of a gRPC client package; go test ./engine/split/... -run TestSplitProposerInterface asserts the interface contract via a trivial fake.",
+              "modules": [
+                "engine/split/proposer.go"
+              ]
+            },
+            {
+              "id": "2b.2.2",
+              "title": "Deterministic mock SplitProposer with fixture split plans",
+              "ac": "A test-only mock implementation returns fixed, deterministic `[{newPath, sectionRanges}]` + redirect-summary fixtures, unblocking split-sequence testing before the real Python ProposeSplit exists.",
+              "test": "go test ./engine/split/... -run TestMockSplitProposer: assert the mock returns the expected fixed plan for known fixture input.",
+              "modules": [
+                "engine/split/proposer_mock.go",
+                "engine/split/proposer_mock_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-2b.3",
+          "title": "Atomic split-transaction execution (engine/split/, engine/graph/ minimal writer)",
+          "modules": [
+            "engine/split/",
+            "engine/graph/",
+            "engine/btree/",
+            "engine/catalog/",
+            "engine/wal/"
+          ],
+          "github_issue_number": 12,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/12",
+          "subtasks": [
+            {
+              "id": "2b.3.1",
+              "title": "Allocate new fileIDs + write new .md files for split-off content per the split plan",
+              "ac": "For each `{newPath, sectionRanges}` entry, a new fileID is allocated and a new content file is written containing exactly the specified section range's content.",
+              "test": "go test ./engine/split/... -run TestSplitAllocateAndWrite: given a fixture plan, assert new files exist with correct content matching the specified section ranges.",
+              "modules": [
+                "engine/split/execute.go",
+                "engine/split/execute_test.go"
+              ]
+            },
+            {
+              "id": "2b.3.2",
+              "title": "Write redirect/stub at old path + update catalog entries (status SPLIT/REDIRECT, redirectTargetIDs)",
+              "ac": "After split, the original file's catalog record has status REDIRECT (or SPLIT, per the two-step transition) with redirectTargetIDs pointing at the new fileIDs, and a stub file replaces the original content at the old path.",
+              "test": "go test ./engine/split/... -run TestSplitRedirectStub: run a split, assert old-path catalog record's status/redirectTargetIDs and stub file content.",
+              "modules": [
+                "engine/split/execute.go",
+                "engine/split/execute_test.go"
+              ]
+            },
+            {
+              "id": "2b.3.3",
+              "title": "Insert new topic paths into B+Tree; repoint old path's entry to the redirect stub",
+              "ac": "Each new topic path resolves via B+Tree lookup to its new fileID; the old path still resolves, but now to the redirect-stub fileID rather than being deleted.",
+              "test": "go test ./engine/split/... -run TestSplitBtreeRepoint: run a split, assert btree lookups for new paths and the repointed old path.",
+              "modules": [
+                "engine/split/execute.go",
+                "engine/split/execute_test.go"
+              ]
+            },
+            {
+              "id": "2b.3.4",
+              "title": "Minimal graph edge-append primitive (engine/graph/) sufficient for SPLIT_SIBLING/REDIRECT edges",
+              "ac": "A minimal append-only edge writer exists supporting adding `{targetFileID, edgeType, weight, lastUpdated}` edges for at least SPLIT_SIBLING and REDIRECT edge types (full CSR storage/compaction/traversal API is deferred to Epic 3's graph store task).",
+              "test": "go test ./engine/graph/... -run TestMinimalEdgeAppend: append edges of both types, assert they are retrievable by source fileID.",
+              "modules": [
+                "engine/graph/edge_append.go",
+                "engine/graph/edge_append_test.go"
+              ]
+            },
+            {
+              "id": "2b.3.5",
+              "title": "Add SPLIT_SIBLING edges between new files; re-point inbound edges to the redirect stub",
+              "ac": "All pairs of newly split-off files gain a SPLIT_SIBLING edge; any edge that previously pointed at the old path is retargeted to the redirect stub rather than rewriting the full inbound-edge list.",
+              "test": "go test ./engine/split/... -run TestSplitGraphEdges: run a split with pre-existing inbound edges to the old path, assert SPLIT_SIBLING edges among new files and inbound edges now pointing at the stub.",
+              "modules": [
+                "engine/split/execute.go",
+                "engine/split/execute_test.go"
+              ]
+            },
+            {
+              "id": "2b.3.6",
+              "title": "Commit entire split as a single WAL-covered, fsynced transaction; release queued writers on commit",
+              "ac": "All of allocation, content writes, catalog updates, btree updates, and graph edge writes commit atomically under one WAL-covered transaction that is fsynced before the split becomes visible; writers queued during SPLITTING are released only after commit.",
+              "test": "go test ./engine/split/... -race -run TestSplitAtomicCommit: crash-inject mid-transaction, assert recovery yields either the pre-split or fully-post-split state, never a partial split.",
+              "modules": [
+                "engine/split/execute.go",
+                "engine/split/execute_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-2b.4",
+          "title": "Section-index staleness invalidation (engine/split/, engine/catalog/)",
+          "modules": [
+            "engine/split/",
+            "engine/catalog/"
+          ],
+          "github_issue_number": 13,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/13",
+          "subtasks": [
+            {
+              "id": "2b.4.1",
+              "title": "Invalidate markdown header-offset cache atomically within the same split/append transaction",
+              "ac": "Any transaction that changes file boundaries (split or append) invalidates the affected file's header-offset cache in the same atomic transaction, so `ReadPartial` never serves offsets against stale content.",
+              "test": "go test ./engine/split/... -race -run TestSectionIndexInvalidation: perform a split, then immediately issue a ReadPartial-style offset read against the old and new files, assert offsets reflect post-split content only.",
+              "modules": [
+                "engine/split/execute.go",
+                "engine/catalog/content.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-2b.5",
+          "title": "Auto-split concurrent race-test suite (mandatory highest-risk gate)",
+          "modules": [
+            "engine/split/",
+            "engine/loadtest/"
+          ],
+          "github_issue_number": 14,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/14",
+          "subtasks": [
+            {
+              "id": "2b.5.1",
+              "title": "Many-goroutine concurrent-append race test: no data loss, exactly-one split, no dangling edges",
+              "ac": "Many goroutines append to the same file simultaneously, crossing the split threshold multiple times in aggregate; the test asserts no appended data is lost, exactly one split executes per threshold crossing, and no graph edge references a nonexistent fileID afterward.",
+              "test": "go test ./engine/split/... -race -run TestConcurrentAppendSplitRace -count=10: assert content completeness, split-count invariant, and graph-edge referential integrity across repeated runs.",
+              "modules": [
+                "engine/split/split_race_test.go"
+              ]
+            },
+            {
+              "id": "2b.5.2",
+              "title": "Reader-during-split test: pre-split MVCC snapshot readers see consistent old content throughout",
+              "ac": "A reader that snapshots the file immediately before a split begins continues to read fully consistent pre-split content for the duration of its read, regardless of the split completing concurrently.",
+              "test": "go test ./engine/split/... -race -run TestReaderDuringSplit: start a long read, trigger a concurrent split, assert the reader's returned content matches the pre-split snapshot exactly.",
+              "modules": [
+                "engine/split/split_race_test.go"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epic-3",
+      "phase": "3",
+      "title": "Phase 3: Graph store + ingestion agents (end-to-end)",
+      "github_milestone_number": 5,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/5",
+      "tasks": [
+        {
+          "id": "task-3.1",
+          "title": "Full graph adjacency store + traversal API (engine/graph/)",
+          "modules": [
+            "engine/graph/"
+          ],
+          "github_issue_number": 15,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/15",
+          "subtasks": [
+            {
+              "id": "3.1.1",
+              "title": "CSR-like compact adjacency array format persisted to graph.dat",
+              "ac": "Adjacency data for all fileIDs persists to graph.dat in a CSR-like compact array format that reloads correctly after a process restart.",
+              "test": "go test ./engine/graph/... -run TestCSRFormat: write adjacency data, reopen graph.dat, assert identical adjacency on reload.",
+              "modules": [
+                "engine/graph/csr.go",
+                "engine/graph/csr_test.go"
+              ]
+            },
+            {
+              "id": "3.1.2",
+              "title": "Append-only per-node edge log writer (avoids locking a shared adjacency array)",
+              "ac": "Concurrent edge appends to different source fileIDs never block each other because each writes to its own per-node log rather than a shared array.",
+              "test": "go test ./engine/graph/... -race -run TestPerNodeEdgeLog: concurrent appenders across many distinct fileIDs, assert no cross-blocking and correct per-node log contents.",
+              "modules": [
+                "engine/graph/edgelog.go",
+                "engine/graph/edgelog_test.go"
+              ]
+            },
+            {
+              "id": "3.1.3",
+              "title": "Periodic compaction of edge logs into the compacted CSR adjacency array",
+              "ac": "Compaction merges accumulated per-node edge-log entries into the CSR array without losing or duplicating edges, including weight increments on repeated ENTITY_COOCCUR edges.",
+              "test": "go test ./engine/graph/... -run TestCompaction: append many edges including repeated ENTITY_COOCCUR pairs, compact, assert resulting CSR array has correct merged/weighted edges.",
+              "modules": [
+                "engine/graph/compact.go",
+                "engine/graph/compact_test.go"
+              ]
+            },
+            {
+              "id": "3.1.4",
+              "title": "Edge-type support: ENTITY_COOCCUR (weighted), LLM_ASSERTED, SPLIT_SIBLING, REDIRECT",
+              "ac": "All four edge types can be created, weighted (for ENTITY_COOCCUR), and filtered on by type in traversal queries.",
+              "test": "go test ./engine/graph/... -run TestEdgeTypes: create one edge of each type, assert type-filtered queries return the correct subset.",
+              "modules": [
+                "engine/graph/edge.go",
+                "engine/graph/edge_test.go"
+              ]
+            },
+            {
+              "id": "3.1.5",
+              "title": "GraphNeighbors(fileID, depth, edgeTypeFilter, maxNodes) traversal API, hard-capped at k+2k",
+              "ac": "Traversal expands 0-2 hops from a source fileID, respects the edgeTypeFilter, and never returns more than maxNodes (system-wide default k+2k) results even if more are reachable.",
+              "test": "go test ./engine/graph/... -run TestGraphNeighbors: build a graph with >maxNodes reachable nodes within 2 hops, assert traversal result size is capped at maxNodes and respects the type filter.",
+              "modules": [
+                "engine/graph/traverse.go",
+                "engine/graph/traverse_test.go"
+              ]
+            },
+            {
+              "id": "3.1.6",
+              "title": "Graph correctness test: full insert/traversal/compaction round trip",
+              "ac": "A combined workload of edge inserts, compaction, and traversal queries produces results consistent with a serial-execution oracle.",
+              "test": "go test ./engine/graph/... -run TestGraphRoundTrip: interleave inserts/compaction/traversal, assert oracle-matching results at each checkpoint.",
+              "modules": [
+                "engine/graph/graph_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-3.2",
+          "title": "proto/ gRPC contracts + engine/rpc/ server + real ProposeSplit wiring",
+          "modules": [
+            "proto/",
+            "engine/rpc/",
+            "engine/split/"
+          ],
+          "github_issue_number": 16,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/16",
+          "subtasks": [
+            {
+              "id": "3.2.1",
+              "title": "Define shared .proto files (PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates, ProposeSplit)",
+              "ac": "A single set of .proto files under proto/ defines request/response messages and service methods for all six RPCs, compiling cleanly with protoc for both Go and Python targets.",
+              "test": "protoc --go_out=. --go-grpc_out=. proto/*.proto and the Python grpc_tools.protoc equivalent both succeed with zero errors; generated stub signatures match the documented RPC list in docs/LLD/rpc.md.",
+              "modules": [
+                "proto/hivemind.proto"
+              ]
+            },
+            {
+              "id": "3.2.2",
+              "title": "Generate Go stubs; implement engine/rpc/ server for PutSegment/GetFile/ReadPartial/GraphNeighbors/SearchCandidates",
+              "ac": "Each RPC's Go server implementation delegates to the correct underlying module (catalog/content for PutSegment+GetFile+ReadPartial, graph for GraphNeighbors, btree for SearchCandidates) and returns correct results for a fixture request.",
+              "test": "go test ./engine/rpc/... -run TestRPCServerHandlers: issue each RPC against a fixture-populated store, assert responses match direct module calls.",
+              "modules": [
+                "engine/rpc/server.go",
+                "engine/rpc/server_test.go"
+              ]
+            },
+            {
+              "id": "3.2.3",
+              "title": "Generate Python stubs; wire engine/split/'s SplitProposer to call real ProposeSplit gRPC (replacing Epic 2b's mock)",
+              "ac": "engine/split/ can be configured to use a real gRPC-backed SplitProposer implementation that calls the Python agent service's ProposeSplit RPC instead of the deterministic mock from task-2b.2.",
+              "test": "go test ./engine/split/... -run TestGRPCSplitProposer (with a local test gRPC server standing in for the agent service): assert the real client correctly marshals requests and unmarshals the plan response.",
+              "modules": [
+                "engine/split/proposer_grpc.go",
+                "engine/split/proposer_grpc_test.go"
+              ]
+            },
+            {
+              "id": "3.2.4",
+              "title": "Per-call latency/cost interceptors on both Go and Python gRPC sides",
+              "ac": "Every RPC call logs per-call latency on both sides, and the Python side additionally logs LLM token cost where applicable, in a format the future benchmark harness (Epic 5) can consume.",
+              "test": "go test ./engine/rpc/... -run TestLatencyInterceptor and a corresponding pytest for the Python interceptor: assert a latency record is emitted for every call.",
+              "modules": [
+                "engine/rpc/interceptor.go",
+                "agents/llm/interceptor.py (or agents/rpc interceptor module)"
+              ]
+            },
+            {
+              "id": "3.2.5",
+              "title": "gRPC integration test: engine <-> agent round trip for ProposeSplit and PutSegment",
+              "ac": "A real end-to-end gRPC call from the Go engine to a running Python agent service correctly executes ProposeSplit and PutSegment with matching request/response semantics.",
+              "test": "An integration test (Go test or a scripted smoke test) starts the Python gRPC server, issues ProposeSplit and PutSegment from the Go client, asserts expected responses.",
+              "modules": [
+                "engine/rpc/integration_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-3.3",
+          "title": "Per-doc-type normalization (agents/ingestion/)",
+          "modules": [
+            "agents/ingestion/"
+          ],
+          "github_issue_number": 17,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/17",
+          "subtasks": [
+            {
+              "id": "3.3.1",
+              "title": "PDF normalizer via pymupdf -> plain text with page markers",
+              "ac": "Given a PDF file, the normalizer produces plain text with page-boundary markers preserved and no page content dropped.",
+              "test": "pytest agents/ingestion/test_normalize_pdf.py: run against a fixture PDF, assert output text contains expected per-page markers and content.",
+              "modules": [
+                "agents/ingestion/normalize_pdf.py",
+                "agents/ingestion/test_normalize_pdf.py"
+              ]
+            },
+            {
+              "id": "3.3.2",
+              "title": "Email normalizer (Enron-specific) -> sender/subject/thread/body fields",
+              "ac": "Given a raw Enron-format email file, the normalizer extracts sender, subject, thread id, and body correctly.",
+              "test": "pytest agents/ingestion/test_normalize_email.py: run against fixture Enron emails, assert extracted fields match expected values.",
+              "modules": [
+                "agents/ingestion/normalize_email.py",
+                "agents/ingestion/test_normalize_email.py"
+              ]
+            },
+            {
+              "id": "3.3.3",
+              "title": "Support-ticket normalizer (structured JSON/CSV) -> labeled text blob",
+              "ac": "Given a structured support-ticket record (JSON or CSV row), the normalizer produces a labeled text blob preserving all structured fields as labeled sections.",
+              "test": "pytest agents/ingestion/test_normalize_ticket.py: run against fixture ticket records, assert labeled output matches expected format.",
+              "modules": [
+                "agents/ingestion/normalize_ticket.py",
+                "agents/ingestion/test_normalize_ticket.py"
+              ]
+            },
+            {
+              "id": "3.3.4",
+              "title": "Common RawDocument record + normalizer dispatch by sourceType",
+              "ac": "A single RawDocument{id, sourceType, text, structuredFields, timestamp} record type is produced by all three normalizers, and a dispatch function selects the correct normalizer given a sourceType.",
+              "test": "pytest agents/ingestion/test_dispatch.py: feed one fixture of each sourceType through the dispatcher, assert correct normalizer invoked and RawDocument shape is consistent across all three.",
+              "modules": [
+                "agents/ingestion/rawdoc.py",
+                "agents/ingestion/dispatch.py",
+                "agents/ingestion/test_dispatch.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-3.4",
+          "title": "Segmentation agent + ProposeSplit + LLM client (agents/ingestion/, agents/llm/)",
+          "modules": [
+            "agents/ingestion/",
+            "agents/llm/"
+          ],
+          "github_issue_number": 18,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/18",
+          "subtasks": [
+            {
+              "id": "3.4.1",
+              "title": "LLMClient protocol/ABC + Ollama implementation (agents/llm/)",
+              "ac": "A common LLMClient interface is defined; an Ollama-backed implementation (default e.g. Llama 3.1 8B) satisfies it and no other agent module calls the Ollama SDK directly.",
+              "test": "pytest agents/llm/test_ollama_client.py: mock the Ollama HTTP call, assert LLMClient.complete()-style call shape and response parsing.",
+              "modules": [
+                "agents/llm/client.py",
+                "agents/llm/ollama_client.py",
+                "agents/llm/test_ollama_client.py"
+              ]
+            },
+            {
+              "id": "3.4.2",
+              "title": "Candidate topic shortlisting: local embedding pre-filter + btree SearchCandidates",
+              "ac": "Given a document, the shortlister returns a bounded candidate topic list (not the full catalog) using a cheap embedding/BM25 pre-filter against SearchCandidates, reducing segmentation prompt size and topic-name drift.",
+              "test": "pytest agents/ingestion/test_shortlist.py (SearchCandidates mocked): assert shortlist size is bounded and relevant fixture topics are included ahead of irrelevant ones.",
+              "modules": [
+                "agents/ingestion/shortlist.py",
+                "agents/ingestion/test_shortlist.py"
+              ]
+            },
+            {
+              "id": "3.4.3",
+              "title": "Segmentation prompt + structured JSON output parsing",
+              "ac": "Given document text + shortlist, the segmentation call returns and correctly parses `{topic_action, target_topic, new_topic_path, content_markdown, entities, related_topics}` for each segment, rejecting malformed LLM output with a clear error.",
+              "test": "pytest agents/ingestion/test_segment.py (LLMClient mocked with fixture responses, including one malformed-response case): assert correct parse and correct error handling.",
+              "modules": [
+                "agents/ingestion/segment.py",
+                "agents/ingestion/test_segment.py"
+              ]
+            },
+            {
+              "id": "3.4.4",
+              "title": "Wiring: execute segments via PutSegment; entities -> ENTITY_COOCCUR edges; related_topics -> LLM_ASSERTED edges",
+              "ac": "Each parsed segment's APPEND_EXISTING/CREATE_NEW action is executed via the engine's PutSegment RPC; entities feed entity.idx and increment ENTITY_COOCCUR edge weights; related_topics create LLM_ASSERTED edges.",
+              "test": "pytest agents/ingestion/test_segment_wiring.py (engine RPC client mocked): assert correct PutSegment calls and correct edge-creation calls for a fixture segment set.",
+              "modules": [
+                "agents/ingestion/wiring.py",
+                "agents/ingestion/test_segment_wiring.py"
+              ]
+            },
+            {
+              "id": "3.4.5",
+              "title": "Real ProposeSplit implementation (replaces Epic 2b's deterministic mock)",
+              "ac": "ProposeSplit(fileContent) produces a topic-coherent `[{newPath, sectionRanges}]` plan plus a redirect summary using the same segmentation LLM pathway, and is served over the gRPC contract from task-3.2.",
+              "test": "pytest agents/ingestion/test_propose_split.py (LLMClient mocked with a fixture over-threshold document): assert the returned plan's section ranges partition the source content without gaps or overlaps.",
+              "modules": [
+                "agents/ingestion/propose_split.py",
+                "agents/ingestion/test_propose_split.py"
+              ]
+            },
+            {
+              "id": "3.4.6",
+              "title": "Segmentation agent fixture test suite + optional live-Ollama smoke test",
+              "ac": "A fixture-document test suite verifies expected structured output shape across representative doc types; an optional (skippable if Ollama isn't running locally) smoke test exercises the real Ollama model end-to-end.",
+              "test": "pytest agents/ingestion/test_segment_fixtures.py (mocked, always runs in CI) and pytest agents/ingestion/test_segment_live.py (marked skip-if-no-ollama, run manually).",
+              "modules": [
+                "agents/ingestion/test_segment_fixtures.py",
+                "agents/ingestion/test_segment_live.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-3.5",
+          "title": "Real dataset ingestion end-to-end (data/, agents/ingestion/)",
+          "modules": [
+            "data/",
+            "agents/ingestion/"
+          ],
+          "github_issue_number": 19,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/19",
+          "subtasks": [
+            {
+              "id": "3.5.1",
+              "title": "Dataset loader scripts for Bitext support tickets + Enron email subsample",
+              "ac": "Loader scripts fetch/read the Bitext support-ticket dataset and an Enron email subsample from local/downloaded sources and yield RawDocument-ready inputs for the normalizers.",
+              "test": "pytest data/test_loaders.py: run loaders against a small local fixture subset of each dataset, assert expected record counts and field presence.",
+              "modules": [
+                "data/load_bitext.py",
+                "data/load_enron.py",
+                "data/test_loaders.py"
+              ]
+            },
+            {
+              "id": "3.5.2",
+              "title": "Full end-to-end ingestion smoke run against a real dataset sample",
+              "ac": "Running the full pipeline (dataset loader -> normalize -> segment -> PutSegment) against a real (non-fixture) dataset sample populates the catalog, btree, and graph with a plausible topic set with no unhandled errors.",
+              "test": "A scripted smoke run (e.g. `python -m agents.ingestion.run_ingest --dataset bitext --limit 100`) executed manually/CI, asserting exit code 0 and a post-run catalog/btree/graph sanity check (non-zero file count, no orphaned btree entries).",
+              "modules": [
+                "agents/ingestion/run_ingest.py"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epic-4",
+      "phase": "4",
+      "title": "Phase 4: Query pipeline",
+      "github_milestone_number": 6,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/6",
+      "tasks": [
+        {
+          "id": "task-4.1",
+          "title": "Query-time LLM providers: OpenRouter + Gemini (agents/llm/)",
+          "modules": [
+            "agents/llm/"
+          ],
+          "github_issue_number": 20,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/20",
+          "subtasks": [
+            {
+              "id": "4.1.1",
+              "title": "OpenRouter (GPT-4o-mini) LLMClient implementation",
+              "ac": "An OpenRouter-backed LLMClient implementation satisfies the same interface as the Ollama client and correctly performs a completion call.",
+              "test": "pytest agents/llm/test_openrouter_client.py (HTTP call mocked): assert request shape and response parsing.",
+              "modules": [
+                "agents/llm/openrouter_client.py",
+                "agents/llm/test_openrouter_client.py"
+              ]
+            },
+            {
+              "id": "4.1.2",
+              "title": "Gemini API (2.5/3.5 Flash) LLMClient implementation",
+              "ac": "A Gemini-backed LLMClient implementation satisfies the same interface and correctly performs a completion call.",
+              "test": "pytest agents/llm/test_gemini_client.py (SDK call mocked): assert request shape and response parsing.",
+              "modules": [
+                "agents/llm/gemini_client.py",
+                "agents/llm/test_gemini_client.py"
+              ]
+            },
+            {
+              "id": "4.1.3",
+              "title": "Config-driven provider selection (no call-site code changes)",
+              "ac": "Switching the active provider for a given agent role (ingestion vs. query-time) is a config change only; no call sites in agents/ingestion/ or agents/query/ import a provider SDK directly.",
+              "test": "pytest agents/llm/test_provider_selection.py: assert config value X yields client type X for each supported provider; grep-based test asserting no provider SDK imports outside agents/llm/.",
+              "modules": [
+                "agents/llm/factory.py",
+                "agents/llm/test_provider_selection.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-4.2",
+          "title": "SearchCandidates RPC (engine/rpc/, engine/btree/)",
+          "modules": [
+            "engine/rpc/",
+            "engine/btree/"
+          ],
+          "github_issue_number": 21,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/21",
+          "subtasks": [
+            {
+              "id": "4.2.1",
+              "title": "SearchCandidates implementation (non-LLM candidate topic search)",
+              "ac": "Given a query string/terms, SearchCandidates returns a ranked candidate topic list via btree prefix-scan + simple term-overlap ranking, suitable for both ingestion shortlisting (task-3.4.2) and query-time topic selection.",
+              "test": "go test ./engine/rpc/... -run TestSearchCandidates: fixture-populated btree, assert ranked candidate results for known query terms match expected ordering.",
+              "modules": [
+                "engine/rpc/search_candidates.go",
+                "engine/rpc/search_candidates_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-4.3",
+          "title": "intent_refiner.py (agents/query/)",
+          "modules": [
+            "agents/query/"
+          ],
+          "github_issue_number": 22,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/22",
+          "subtasks": [
+            {
+              "id": "4.3.1",
+              "title": "Intent-refiner input/output contract + prompt",
+              "ac": "Given raw query + short history, produces `{refined_intent, entities, query_type}` via the LLMClient interface.",
+              "test": "pytest agents/query/test_intent_refiner.py (LLMClient mocked): assert output shape for representative fixture queries.",
+              "modules": [
+                "agents/query/intent_refiner.py",
+                "agents/query/test_intent_refiner.py"
+              ]
+            },
+            {
+              "id": "4.3.2",
+              "title": "Unit tests covering query_type variants",
+              "ac": "The refiner correctly differentiates at least the query_type categories the topic-selector depends on (e.g. factual/lookup vs. broad/exploratory), verified across multiple fixture queries.",
+              "test": "pytest agents/query/test_intent_refiner_types.py: assert correct query_type classification per fixture, with mocked LLM responses covering each category.",
+              "modules": [
+                "agents/query/test_intent_refiner_types.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-4.4",
+          "title": "topic_selector.py (agents/query/)",
+          "modules": [
+            "agents/query/"
+          ],
+          "github_issue_number": 23,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/23",
+          "subtasks": [
+            {
+              "id": "4.4.1",
+              "title": "Candidate consumption + top-k selection (k default 3, tunable)",
+              "ac": "Given a SearchCandidates result, the selector picks the top-k topics by relevance, where k is a configurable parameter defaulting to 3.",
+              "test": "pytest agents/query/test_topic_selector.py: assert top-k selection correctness for k=1,3,5 against a fixture candidate list.",
+              "modules": [
+                "agents/query/topic_selector.py",
+                "agents/query/test_topic_selector.py"
+              ]
+            },
+            {
+              "id": "4.4.2",
+              "title": "Graph-traversal expansion decision (0-2 hop) delegating to GraphNeighbors",
+              "ac": "For any selected topic judged insufficient alone, the selector requests a 0-2 hop GraphNeighbors expansion via the engine RPC.",
+              "test": "pytest agents/query/test_topic_selector_expansion.py (GraphNeighbors mocked): assert expansion is requested only for topics flagged insufficient, with correct hop-depth parameter.",
+              "modules": [
+                "agents/query/topic_selector.py",
+                "agents/query/test_topic_selector_expansion.py"
+              ]
+            },
+            {
+              "id": "4.4.3",
+              "title": "Hard-cap enforcement: combined result capped at k+2k total files",
+              "ac": "Regardless of how many candidates/expansions are available, the final selected-file set never exceeds k+2k total files (system-wide invariant).",
+              "test": "pytest agents/query/test_topic_selector_cap.py: feed an oversized candidate+expansion set, assert final result length == min(available, k+2k).",
+              "modules": [
+                "agents/query/topic_selector.py",
+                "agents/query/test_topic_selector_cap.py"
+              ]
+            },
+            {
+              "id": "4.4.4",
+              "title": "Integration test: k-selection + expansion + cap working together",
+              "ac": "An end-to-end test of topic_selector.py (with SearchCandidates/GraphNeighbors mocked) demonstrates correct top-k selection, correct expansion triggering, and correct cap enforcement in a single combined scenario.",
+              "test": "pytest agents/query/test_topic_selector_integration.py: single fixture scenario exercising all three behaviors together, assert final output set and composition.",
+              "modules": [
+                "agents/query/test_topic_selector_integration.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-4.5",
+          "title": "synthesizer.py (agents/query/)",
+          "modules": [
+            "agents/query/"
+          ],
+          "github_issue_number": 24,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/24",
+          "subtasks": [
+            {
+              "id": "4.5.1",
+              "title": "Prompt assembly + citation-annotated answer generation",
+              "ac": "Given refined intent + concatenated selected markdown with file-path headers, the synthesizer produces an answer whose inline citations reference the actual file paths provided in the input set.",
+              "test": "pytest agents/query/test_synthesizer.py (LLMClient mocked with a fixture citation-containing response): assert prompt includes file-path headers and output parsing extracts citations correctly.",
+              "modules": [
+                "agents/query/synthesizer.py",
+                "agents/query/test_synthesizer.py"
+              ]
+            },
+            {
+              "id": "4.5.2",
+              "title": "Citation-format validation test (citations resolve to real provided files only)",
+              "ac": "Any citation in the synthesized answer must reference a file path that was actually present in the selected-file input set; citations to unknown paths are flagged/rejected.",
+              "test": "pytest agents/query/test_synthesizer_citations.py: fixture LLM response containing one valid and one hallucinated citation, assert the hallucinated one is detected/flagged.",
+              "modules": [
+                "agents/query/test_synthesizer_citations.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-4.6",
+          "title": "Full query-pipeline wiring + end-to-end test (agents/query/, api/)",
+          "modules": [
+            "agents/query/",
+            "api/"
+          ],
+          "github_issue_number": 25,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/25",
+          "subtasks": [
+            {
+              "id": "4.6.1",
+              "title": "Wire query -> intent_refiner -> topic_selector -> synthesizer -> answer, exposed via api/'s /query route",
+              "ac": "A single pipeline function/class chains all three agents in order and is reachable through the api/ gateway's `/query` HTTP route.",
+              "test": "go test ./api/... -run TestQueryRoute (agents/query pipeline mocked at the gRPC boundary) plus pytest agents/query/test_pipeline.py for the Python-side chain: assert correct call order and response shape end-to-end.",
+              "modules": [
+                "agents/query/pipeline.py",
+                "api/routes/query.go"
+              ]
+            },
+            {
+              "id": "4.6.2",
+              "title": "End-to-end query test against a small seeded corpus with citation resolution",
+              "ac": "Running a real (or local-Ollama-backed) query against a small seeded corpus returns an answer whose citations resolve to real files that exist in the corpus.",
+              "test": "An end-to-end test/script seeds a handful of topic files, runs a query through the full pipeline, asserts returned citations are valid file paths with matching content.",
+              "modules": [
+                "agents/query/test_pipeline_e2e.py"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epic-5",
+      "phase": "5",
+      "title": "Phase 5: Benchmark suite",
+      "github_milestone_number": 7,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/7",
+      "tasks": [
+        {
+          "id": "task-5.1",
+          "title": "Dataset + ground-truth preparation (data/, agents/eval/)",
+          "modules": [
+            "data/",
+            "agents/eval/"
+          ],
+          "github_issue_number": 26,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/26",
+          "subtasks": [
+            {
+              "id": "5.1.1",
+              "title": "Support-ticket + Enron dataset loaders wired into agents/eval/'s dataset interface",
+              "ac": "agents/eval/ can load the Bitext and Enron datasets (via task-3.5.1's loaders) through a common dataset-loader interface used by all three benchmark arms.",
+              "test": "pytest agents/eval/test_dataset_interface.py: load both datasets through the common interface, assert consistent record shape.",
+              "modules": [
+                "agents/eval/datasets.py",
+                "agents/eval/test_dataset_interface.py"
+              ]
+            },
+            {
+              "id": "5.1.2",
+              "title": "[BLOCKED on OQ-1] Synthetic policy/manual PDF corpus generation",
+              "ac": "BLOCKED pending decision on PDF-generation tooling and content-authoring approach (see OPEN_QUESTIONS OQ-1). Once decided: generate a synthetic corpus of policy/manual PDFs seeded with predefined topics and deliberate cross-topic references.",
+              "test": "Deferred until OQ-1 is resolved; test spec to be written alongside the implementation decision.",
+              "modules": [
+                "data/gen_synthetic_pdfs.py (path pending tooling decision)"
+              ]
+            },
+            {
+              "id": "5.1.3",
+              "title": "[BLOCKED on OQ-2] Ground-truth topic/query finalization (~30-50 topics + cross-topic references)",
+              "ac": "BLOCKED pending decision on the curation/verification process (see OPEN_QUESTIONS OQ-2). Once decided: finalize ~30-50 ground-truth topics and a query set with recall/precision labels attached to the combined dataset.",
+              "test": "Deferred until OQ-2 is resolved; test spec (e.g. schema validation for the ground-truth label file) to be written alongside the implementation decision.",
+              "modules": [
+                "agents/eval/ground_truth.py (schema pending curation-process decision)"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-5.2",
+          "title": "Baseline retrieval implementations (agents/eval/)",
+          "modules": [
+            "agents/eval/"
+          ],
+          "github_issue_number": 27,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/27",
+          "subtasks": [
+            {
+              "id": "5.2.1",
+              "title": "Classic vector-RAG baseline: tuned chunker + embedding index + retrieval",
+              "ac": "A fixed-size-chunk baseline with real (non-strawman) chunk size/overlap tuning and an embedding-based retrieval step is implemented, per the system-wide benchmark-fairness risk.",
+              "test": "pytest agents/eval/test_vector_rag_baseline.py: run retrieval against a fixture corpus + fixture queries, assert reasonable recall on known-relevant chunks.",
+              "modules": [
+                "agents/eval/baselines/vector_rag.py",
+                "agents/eval/test_vector_rag_baseline.py"
+              ]
+            },
+            {
+              "id": "5.2.2",
+              "title": "Optional reranking stage for the vector-RAG baseline (time-permitting)",
+              "ac": "A reranking step (e.g. cross-encoder) can be toggled on for the vector-RAG baseline and measurably improves precision@k on a fixture set when enabled.",
+              "test": "pytest agents/eval/test_vector_rag_rerank.py: compare precision@k with reranking on vs. off on a fixture set.",
+              "modules": [
+                "agents/eval/baselines/vector_rag_rerank.py",
+                "agents/eval/test_vector_rag_rerank.py"
+              ]
+            },
+            {
+              "id": "5.2.3",
+              "title": "Simplified GraphRAG-style baseline: entity-graph retrieval",
+              "ac": "An entity-graph-based retrieval baseline (extract entities, build/query an entity graph, retrieve associated chunks/summaries) is implemented as the second baseline arm.",
+              "test": "pytest agents/eval/test_graphrag_baseline.py: run against a fixture corpus + fixture queries, assert plausible entity-graph-driven retrieval results.",
+              "modules": [
+                "agents/eval/baselines/graphrag_lite.py",
+                "agents/eval/test_graphrag_baseline.py"
+              ]
+            },
+            {
+              "id": "5.2.4",
+              "title": "Shared final-answer LLM call wired identically across all three arms",
+              "ac": "HiveMind, vector-RAG, and GraphRAG-lite all produce their final answer via the exact same agents/llm/ call path, so only the retrieval step varies between arms.",
+              "test": "pytest agents/eval/test_shared_final_llm.py: assert all three arms invoke the same LLMClient call signature/model config for final-answer generation.",
+              "modules": [
+                "agents/eval/pipeline.py",
+                "agents/eval/test_shared_final_llm.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-5.3",
+          "title": "Metrics pipeline (agents/eval/)",
+          "modules": [
+            "agents/eval/"
+          ],
+          "github_issue_number": 28,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/28",
+          "subtasks": [
+            {
+              "id": "5.3.1",
+              "title": "Topic-level recall/precision@k computation against ground truth",
+              "ac": "Given retrieval results and ground-truth labels, recall/precision@k is computed correctly for each arm.",
+              "test": "pytest agents/eval/test_metrics_recall_precision.py: compute against a hand-verified fixture ground-truth set, assert exact expected values.",
+              "modules": [
+                "agents/eval/metrics.py",
+                "agents/eval/test_metrics_recall_precision.py"
+              ]
+            },
+            {
+              "id": "5.3.2",
+              "title": "LLM-judge answer-quality scoring + manual spot-check calibration harness",
+              "ac": "An LLM-judge scoring pass rates answer quality on a defined rubric, with a manual spot-check harness allowing a human to compare judge scores against a sample of manually-rated answers for calibration.",
+              "test": "pytest agents/eval/test_llm_judge.py (LLM-judge call mocked): assert scoring pipeline produces expected score structure; a manual calibration script is runnable and produces a comparison report.",
+              "modules": [
+                "agents/eval/llm_judge.py",
+                "agents/eval/test_llm_judge.py",
+                "agents/eval/calibrate_judge.py"
+              ]
+            },
+            {
+              "id": "5.3.3",
+              "title": "Per-stage latency + $/1000-query cost aggregation",
+              "ac": "Latency and cost data from the agents/llm/ and engine/rpc/ interceptors (task-3.2.4) is aggregated per pipeline stage and rolled up into a $/1000-query figure per arm.",
+              "test": "pytest agents/eval/test_cost_latency_aggregation.py: feed fixture interceptor logs, assert correct per-stage latency and $/1000-query rollups.",
+              "modules": [
+                "agents/eval/cost_latency.py",
+                "agents/eval/test_cost_latency_aggregation.py"
+              ]
+            },
+            {
+              "id": "5.3.4",
+              "title": "Corpus-growth-checkpoint degradation chart (20%/50%/100% ingested)",
+              "ac": "Running all three arms at 20%, 50%, and 100% of the corpus ingested produces a degradation chart of recall/precision over corpus growth, the key novelty result of the project.",
+              "test": "A scripted benchmark run (agents/eval/run_benchmark.py --checkpoints 20,50,100) executed manually/CI-gated, producing a chart/data file; assert the output data file contains exactly three checkpoints with well-formed metrics for all three arms.",
+              "modules": [
+                "agents/eval/run_benchmark.py",
+                "agents/eval/chart.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-5.4",
+          "title": "Benchmark fairness + traversal-precision checks (agents/eval/)",
+          "modules": [
+            "agents/eval/"
+          ],
+          "github_issue_number": 29,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/29",
+          "subtasks": [
+            {
+              "id": "5.4.1",
+              "title": "Explicit check: does graph-traversal expansion ever hurt precision vs. no-expansion",
+              "ac": "The benchmark explicitly compares HiveMind's precision with vs. without graph-traversal expansion at each corpus-growth checkpoint, and reports any checkpoint where expansion decreases precision.",
+              "test": "pytest agents/eval/test_traversal_precision_check.py: fixture scenario where expansion adds a low-relevance neighbor, assert the comparison correctly flags a precision decrease.",
+              "modules": [
+                "agents/eval/traversal_precision.py",
+                "agents/eval/test_traversal_precision_check.py"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epic-6",
+      "phase": "6",
+      "title": "Phase 6: Demo + deployment + load tests",
+      "github_milestone_number": 8,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/8",
+      "tasks": [
+        {
+          "id": "task-6.1",
+          "title": "React dashboard (ui/)",
+          "modules": [
+            "ui/"
+          ],
+          "github_issue_number": 30,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/30",
+          "subtasks": [
+            {
+              "id": "6.1.1",
+              "title": "Dashboard scaffold + routes mirroring api/'s /ingest /query /graph /files /admin",
+              "ac": "A React app scaffold exists with routed pages/views corresponding to each of the five api/ gateway routes.",
+              "test": "UI build succeeds (`npm run build`) and a router test asserts all five routes render without error using mocked API responses.",
+              "modules": [
+                "ui/src/App.tsx",
+                "ui/src/routes/"
+              ]
+            },
+            {
+              "id": "6.1.2",
+              "title": "Query view: submit query, display synthesized answer + cited file paths",
+              "ac": "Submitting a query calls the /query API and renders the returned answer with clickable/visible cited file paths.",
+              "test": "Component test (e.g. React Testing Library) mocking the /query response, asserting the answer text and citation list render correctly.",
+              "modules": [
+                "ui/src/routes/QueryView.tsx",
+                "ui/src/routes/QueryView.test.tsx"
+              ]
+            },
+            {
+              "id": "6.1.3",
+              "title": "Graph view: visualize topic adjacency/traversal for a selected file",
+              "ac": "Selecting a file shows its graph neighbors (from /graph) as a visual adjacency/traversal view.",
+              "test": "Component test mocking a /graph response, asserting the expected number of neighbor nodes render.",
+              "modules": [
+                "ui/src/routes/GraphView.tsx",
+                "ui/src/routes/GraphView.test.tsx"
+              ]
+            },
+            {
+              "id": "6.1.4",
+              "title": "Files/admin view: browse catalog, ingestion status, corpus stats",
+              "ac": "The files/admin view lists catalog entries with status and shows basic corpus-level stats (file count, ingestion status).",
+              "test": "Component test mocking /files and /admin responses, asserting catalog rows and stats render correctly.",
+              "modules": [
+                "ui/src/routes/FilesAdminView.tsx",
+                "ui/src/routes/FilesAdminView.test.tsx"
+              ]
+            },
+            {
+              "id": "6.1.5",
+              "title": "Basic end-to-end UI smoke test",
+              "ac": "A smoke test loads the app against a running (or mocked) backend and confirms the happy path: submit a query, see an answer, navigate to graph and files views without errors.",
+              "test": "An e2e test (e.g. Playwright/Cypress) covering the query -> answer -> graph -> files navigation happy path.",
+              "modules": [
+                "ui/e2e/smoke.spec.ts"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-6.2",
+          "title": "Deployment (deploy/)",
+          "modules": [
+            "deploy/"
+          ],
+          "github_issue_number": 31,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/31",
+          "subtasks": [
+            {
+              "id": "6.2.1",
+              "title": "Dockerfiles for engine (Go), api (Go), and agents (Python) services",
+              "ac": "Each of the three services builds a working container image via its Dockerfile, and the container starts and responds to a basic health check.",
+              "test": "`docker build` succeeds for each Dockerfile; `docker run` + a basic health-check curl/script confirms each service starts.",
+              "modules": [
+                "deploy/engine.Dockerfile",
+                "deploy/api.Dockerfile",
+                "deploy/agents.Dockerfile"
+              ]
+            },
+            {
+              "id": "6.2.2",
+              "title": "Compose wiring (engine + api + agents + ui) for local/demo run",
+              "ac": "A single compose command brings up all four services networked together, and the UI can successfully reach the api/ gateway.",
+              "test": "`docker compose up` followed by a scripted smoke check (curl the api/ health route, load the ui/ root page) confirms all services are reachable.",
+              "modules": [
+                "deploy/docker-compose.yml"
+              ]
+            },
+            {
+              "id": "6.2.3",
+              "title": "[BLOCKED on OQ-3] Deploy to target host",
+              "ac": "BLOCKED pending decision on the specific hosting target/platform (see OPEN_QUESTIONS OQ-3). Once decided: deploy the composed stack to that target and confirm public reachability.",
+              "test": "Deferred until OQ-3 is resolved; test spec (e.g. uptime/health-check script against the public URL) to be written alongside the implementation decision.",
+              "modules": [
+                "deploy/ (target-specific config pending hosting decision)"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-6.3",
+          "title": "Go load tests (engine/loadtest/)",
+          "modules": [
+            "engine/loadtest/"
+          ],
+          "github_issue_number": 32,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/32",
+          "subtasks": [
+            {
+              "id": "6.3.1",
+              "title": "Load-generation harness (goroutines + sync.WaitGroup + results channel + hdrhistogram)",
+              "ac": "A reusable harness spins up a configurable number of goroutines, collects results via a channel, and produces latency histograms via hdrhistogram.",
+              "test": "go test ./engine/loadtest/... -run TestHarness: run a trivial workload through the harness, assert histogram output has the expected sample count.",
+              "modules": [
+                "engine/loadtest/harness.go",
+                "engine/loadtest/harness_test.go"
+              ]
+            },
+            {
+              "id": "6.3.2",
+              "title": "Concurrent ingestion throughput benchmark (LLM calls mocked)",
+              "ac": "A `testing.B` benchmark measures concurrent ingestion throughput through the storage engine with LLM/segmentation calls mocked out, isolating storage-engine performance.",
+              "test": "go test ./engine/loadtest/... -bench BenchmarkIngestionThroughput -benchmem: report throughput and allocation numbers.",
+              "modules": [
+                "engine/loadtest/ingestion_bench_test.go"
+              ]
+            },
+            {
+              "id": "6.3.3",
+              "title": "Concurrent query latency under concurrent ingestion load (p50/p95/p99)",
+              "ac": "Query latency percentiles (p50/p95/p99) remain flat under concurrent ingestion load, consistent with the MVCC-driven no-reader-blocking expectation.",
+              "test": "go test ./engine/loadtest/... -run TestQueryLatencyUnderLoad: run concurrent queries alongside concurrent ingestion, assert p50/p95/p99 stay within an acceptable flat-latency bound.",
+              "modules": [
+                "engine/loadtest/query_latency_test.go"
+              ]
+            },
+            {
+              "id": "6.3.4",
+              "title": "Auto-split race-correctness test run at load-test scale",
+              "ac": "The Epic 2b auto-split race-test suite (task-2b.5) passes when run at load-test scale (higher goroutine counts, sustained duration) through the load-test harness.",
+              "test": "go test ./engine/loadtest/... -race -run TestAutoSplitRaceAtScale (building on task-2b.5.1's scenario at higher concurrency): assert the same no-data-loss / exactly-one-split / no-dangling-edges invariants hold.",
+              "modules": [
+                "engine/loadtest/split_race_scale_test.go"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-6.4",
+          "title": "README polish",
+          "modules": [
+            "README.md"
+          ],
+          "github_issue_number": 33,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/33",
+          "subtasks": [
+            {
+              "id": "6.4.1",
+              "title": "Update README.md with final architecture, setup instructions, and benchmark results summary",
+              "ac": "README.md accurately reflects the final architecture, includes working setup/run instructions, and summarizes the benchmark results (including the corpus-growth-degradation chart) with a link to the live demo.",
+              "test": "Manual verification: follow the README setup instructions on a clean checkout and confirm the described commands work as written.",
+              "modules": [
+                "README.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "epic-7",
+      "phase": "7",
+      "title": "Phase 7: Buffer/polish",
+      "github_milestone_number": 9,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/9",
+      "tasks": [
+        {
+          "id": "task-7.1",
+          "title": "Demo video",
+          "modules": [
+            "docs/ (or repo root, e.g. demo/ link in README)"
+          ],
+          "github_issue_number": 34,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/34",
+          "subtasks": [
+            {
+              "id": "7.1.1",
+              "title": "Record + edit demo video walking through ingestion, query, graph view, and benchmark results",
+              "ac": "A recorded video demonstrates document ingestion, a live query with cited answer, the graph view, and a walkthrough of the benchmark degradation chart, linked from README.md.",
+              "test": "Manual verification: video plays back correctly and covers all four required segments; README link resolves to it.",
+              "modules": [
+                "README.md"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-7.2",
+          "title": "Technical write-up",
+          "modules": [
+            "docs/"
+          ],
+          "github_issue_number": 35,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/35",
+          "subtasks": [
+            {
+              "id": "7.2.1",
+              "title": "Write-up: architecture, novelty vs. prior art, benchmark results, lessons learned",
+              "ac": "A written document covers the system architecture, novelty vs. GraphRAG/RAPTOR/MemGPT (per HLD.md section 6), summarized benchmark results, and lessons learned/known limitations.",
+              "test": "Manual review: document covers all four required sections and accurately reflects the implemented system and actual benchmark numbers (not aspirational placeholders).",
+              "modules": [
+                "docs/WRITEUP.md"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "task-7.3",
+          "title": "Soak-test fixes",
+          "modules": [
+            "engine/loadtest/",
+            "engine/",
+            "agents/"
+          ],
+          "github_issue_number": 36,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/36",
+          "subtasks": [
+            {
+              "id": "7.3.1",
+              "title": "Extended soak test (long-duration concurrent ingestion + query) with fixes for surfaced issues",
+              "ac": "A soak test run over an extended duration (e.g. hours) under sustained concurrent ingestion+query load surfaces no unrecovered crashes, leaks, or correctness violations; any issues found are fixed.",
+              "test": "go test ./engine/loadtest/... -run TestSoak -timeout <extended> (or a standalone soak script): run for the extended duration, assert no crashes/panics and stable memory/goroutine counts at the end.",
+              "modules": [
+                "engine/loadtest/soak_test.go"
+              ]
+            },
+            {
+              "id": "7.3.2",
+              "title": "Final regression pass: full engine -race suite + full agents pytest suite",
+              "ac": "The complete `go test ./... -race` suite across engine/ and api/, and the complete `pytest` suite across agents/, pass cleanly before project freeze.",
+              "test": "go test ./... -race (from repo root, across both Go modules per go.work) and pytest (from agents/) both exit 0 with zero failures/skips-without-reason.",
+              "modules": [
+                "engine/",
+                "api/",
+                "agents/"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "epics": 8,
+    "tasks": 36,
+    "subtasks": 117,
+    "open_questions": 3
+  },
+  "open_questions_tracking_issue": "https://github.com/Aaryan123456679/HiveMind/issues/37"
+}

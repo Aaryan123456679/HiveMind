@@ -1,0 +1,20 @@
+{
+  "from_agent": "cdr-planner",
+  "to_agent": "cdr-implementer",
+  "run_id": "2026-07-03-002-planner",
+  "subtask": null,
+  "context_pointers": {
+    "plan": ".cdr/runs/2026-07-03/002-planner/plan.json",
+    "task_index": ".cdr/index/task.jsonl",
+    "hld": "docs/HLD.md",
+    "lld_dir": "docs/LLD/",
+    "github_milestones": "https://github.com/Aaryan123456679/HiveMind/milestones",
+    "github_issues_range": "https://github.com/Aaryan123456679/HiveMind/issues/1-37",
+    "open_questions_tracking_issue": "https://github.com/Aaryan123456679/HiveMind/issues/37"
+  },
+  "exclusions": [
+    "task-5.1 subtask 5.1.2 (blocked on OQ-1)",
+    "task-5.1 subtask 5.1.3 (blocked on OQ-2)",
+    "task-6.2 subtask 6.2.3 (blocked on OQ-3)"
+  ]
+}

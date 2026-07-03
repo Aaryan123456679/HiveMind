@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "run_id": "006-verification",
+  "subtask": "1.1.1",
+  "verdict": "PASS",
+  "summary": "The prior CHANGES_REQUESTED finding (silent truncation of RedirectTargetIDs in Encode()) is fully resolved. Encode() now returns ([]byte, error) and hard-errors (nil buffer, non-nil error) when len(RedirectTargetIDs) > MaxRedirectTargets, symmetric with Decode()'s existing bounds check. No truncation code path remains. New tests cover both the overflow-rejection case and the exact-MaxRedirectTargets boundary case. All specified and full-package tests pass with -race, go vet is clean, and go build succeeds. No other file in the repo references the old Encode() []byte signature.",
+  "commands_run": [
+    "go test ./engine/catalog/... -run TestRecordEncodeDecode -race -v  (from repo root)",
+    "go test ./catalog/... -race -v  (from engine/ module)",
+    "go vet ./catalog/...  (from engine/ module)",
+    "go build ./engine/...  (from repo root)",
+    "go build ./...  (from engine/ module)",
+    "grep -rn '\\.Encode(' --include='*.go' .  (repo-wide, to check for stale callers of old signature)"
+  ],
+  "test_results": {
+    "TestRecordEncodeDecode": "PASS (4/4 subtests: zero value, populated w/ 3 redirects, max redirect targets=8, active w/ zero redirects), including new reserved-padding-bytes-stay-zero assertion",
+    "TestEncodeRejectsTooManyRedirectTargets": "PASS - Encode() with 10 redirect targets (> MaxRedirectTargets=8) returns non-nil error and nil buffer",
+    "TestEncodeAcceptsExactlyMaxRedirectTargets": "PASS - Encode() with exactly 8 redirect targets succeeds and returns full RecordEncodedSize buffer",
+    "TestDecodeRejectsWrongLength": "PASS",
+    "TestDecodeRejectsOutOfRangeRedirectCount": "PASS",
+    "go_vet": "clean",
+    "go_build_engine_module": "clean",
+    "go_build_repo_root_engine_path": "clean (go.work resolves ./engine/... correctly)",
+    "repo_wide_grep_for_stale_Encode_callers": "no matches outside engine/catalog/record_test.go; all four call sites already use the new (buf, err) two-value form"
+  },
+  "findings": [
+    {
+      "dimension": "requirements_conformance",
+      "severity": "none",
+      "title": "Encode()/Decode() are now symmetric on the overflow bounds check; no data-loss path remains",
+      "detail": "Encode() computes count := len(r.RedirectTargetIDs) and returns (nil, fmt.Errorf(...)) before allocating or writing the buffer when count > MaxRedirectTargets. This mirrors Decode()'s existing 'count > MaxRedirectTargets -> error' check. Verified by reading the full current record.go: the old 'count = MaxRedirectTargets' truncation assignment has been removed entirely (buf[offRedirectCount] = byte(count) now uses the validated, un-clamped count). Manually traced the buffer-writing loop (writes count*8 bytes into the fixed redirectIDsWidth = 8*MaxRedirectTargets region) and confirmed no other place performs clamping, silent slicing, or index-bound truncation of RedirectTargetIDs.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "test_coverage",
+      "severity": "none",
+      "title": "Both required new test cases present and passing",
+      "detail": "TestEncodeRejectsTooManyRedirectTargets (10 targets > 8, asserts non-nil error and nil buffer) and TestEncodeAcceptsExactlyMaxRedirectTargets (exactly 8 targets, asserts success and correct buffer length) were added and both pass under -race. As a bonus, the round-trip test now also asserts the reserved padding bytes stay zero, tightening coverage beyond what the prior finding required.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "regression_risk",
+      "severity": "none",
+      "title": "Signature change from Encode() []byte to Encode() ([]byte, error) has zero blast radius",
+      "detail": "Repo-wide grep for '.Encode(' across all *.go files (excluding the search itself) finds only the four call sites inside engine/catalog/record_test.go, and all four already destructure two return values (encoded, err := ... or buf, err := ...). No production code, no other package, and no other module (api/) calls CatalogRecord.Encode(). engine/catalog remains otherwise just a doc.go placeholder package per the prior verification pass, so there is no wider blast radius to check.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "architecture_conformance",
+      "severity": "none",
+      "title": "Fixed-size layout, offsets, and struct fields unchanged and still conform to LLD",
+      "detail": "Only the Encode() body and its signature changed; RecordEncodedSize, all offXxx constants, and CatalogRecord's field set are identical to the previously-approved layout in docs/LLD/catalog.md.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "security",
+      "severity": "none",
+      "title": "No new panics or unchecked-bounds paths introduced by the fix",
+      "detail": "The added early-return on overflow happens before any slicing/indexing into buf, so it cannot introduce an out-of-bounds panic; it strictly reduces risk relative to the prior truncating implementation.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "maintainability",
+      "severity": "none",
+      "title": "Doc comment updated to match new behavior",
+      "detail": "Encode()'s doc comment was updated from '...Encode truncates defensively rather than panicking' to '...returns an error if len(RedirectTargetIDs) exceeds MaxRedirectTargets rather than silently dropping targets', keeping documentation in sync with the corrected implementation.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "performance",
+      "severity": "none",
+      "title": "No performance regression",
+      "detail": "The added bounds check is an O(1) comparison performed before allocation; no additional allocations or copies were introduced.",
+      "recommendation": "none"
+    }
+  ],
+  "confidence": "high — verdict is based on a full read of the current record.go/record_test.go source (not the diff alone), a repo-wide grep confirming no stale callers of the old signature, and actual execution of every specified test/vet/build command with all passing.",
+  "missing_context": false,
+  "prior_finding_resolution": {
+    "run_id": "004-verification",
+    "finding": "Encode() silently truncated RedirectTargetIDs beyond MaxRedirectTargets instead of erroring",
+    "resolved": true
+  }
+}

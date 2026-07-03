@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "run_id": "004-verification",
+  "subtask": "1.1.1",
+  "verdict": "CHANGES_REQUESTED",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-03/004-verification/verification.json",
+    "regression_index": ".cdr/index/regression.jsonl (last entry)",
+    "diff_reviewed": ".cdr/runs/2026-07-03/004-verification/files-changed.diff",
+    "primary_finding_location": "engine/catalog/record.go:77-103 (Encode func, truncation at lines 87-89)",
+    "test_gap_location": "engine/catalog/record_test.go (no case with len(RedirectTargetIDs) > MaxRedirectTargets)"
+  }
+}
