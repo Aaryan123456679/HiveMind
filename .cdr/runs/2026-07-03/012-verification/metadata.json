@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "012-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "1.1.4",
+  "git_head": "0503b189d49a22891d024bf6915064f161c3fd8d",
+  "run_key": "1.1.4|0503b189d49a22891d024bf6915064f161c3fd8d|idalloc",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-03T00:00:00Z",
+  "ended_at": "2026-07-03T00:20:00Z"
+}

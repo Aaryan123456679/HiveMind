@@ -1,0 +1,54 @@
+{
+  "run_id": "2026-07-03-011-implementation",
+  "subtask": "1.1.4",
+  "status": "implemented",
+  "commit_sha": "0503b189d49a22891d024bf6915064f161c3fd8d",
+  "commit_summary": "feat(catalog): implement monotonic fileID allocator (subtask 1.1.4)",
+  "not_verified_by_this_agent": true,
+  "next_step": "/cdr:verify against task-1.1.4",
+  "pointers": {
+    "new_files": [
+      {
+        "path": "engine/catalog/idalloc.go",
+        "symbols": [
+          { "name": "InvalidFileID", "kind": "const", "line": 14, "detail": "sentinel value 0 for invalid/unset fileID" },
+          { "name": "idAllocSuffix", "kind": "const", "line": 40, "detail": "sidecar filename suffix '.idalloc'" },
+          { "name": "idAllocStateSize", "kind": "const", "detail": "8 bytes (single little-endian uint64)" },
+          { "name": "IDAllocator", "kind": "type", "line": 62 },
+          { "name": "NewIDAllocator", "kind": "func", "line": 77, "signature": "func NewIDAllocator(fm *FileManager) (*IDAllocator, error)" },
+          { "name": "IDAllocator.Next", "kind": "method", "line": 121, "signature": "func (a *IDAllocator) Next() (uint64, error)" },
+          { "name": "IDAllocator.Close", "kind": "method", "line": 141 }
+        ]
+      },
+      {
+        "path": "engine/catalog/idalloc_test.go",
+        "symbols": [
+          { "name": "TestFileIDAllocator", "kind": "func", "subtests": [
+            "sequential allocation is strictly increasing from 1",
+            "concurrent allocation yields unique IDs, no duplicates",
+            "high-water-mark survives reopen, no collision"
+          ] }
+        ]
+      }
+    ],
+    "high_water_mark_persistence": {
+      "mechanism": "sidecar file",
+      "location": "<catalog-path>.idalloc (e.g. .meta/catalog.dat.idalloc), sibling to the main catalog data file, derived via fm.file.Name() + idAllocSuffix",
+      "format": "8 raw bytes, little-endian uint64, offset 0",
+      "durability": "WriteAt(offset 0) + Sync on every Next() call, before the new value is returned to the caller",
+      "not_touched": ["engine/catalog/file.go page-0 bitmap layout", "engine/catalog/page.go"]
+    },
+    "acceptance_criteria_status": {
+      "strictly_increasing_from_1_zero_reserved": "met (InvalidFileID = 0, Next() first call returns 1)",
+      "no_reuse_after_delete": "met (allocator never decrements/recycles; deletion is out of scope for this narrow allocator and is a 1.1.5 CRUD concern)",
+      "concurrency_safe": "met (sync.Mutex-guarded critical section around increment+persist)",
+      "durable_across_reopen": "met (sidecar file WriteAt+Sync per call, restored in NewIDAllocator)"
+    },
+    "test_spec_command": "go test ./engine/catalog/... -run TestFileIDAllocator -race",
+    "self_consistency_results": ".cdr/runs/2026-07-03/011-implementation/self-consistency.json (all PASS: go build ./engine/..., go test -run TestFileIDAllocator -race -v, full go test ./engine/catalog/... -race -v)",
+    "explicitly_out_of_scope": [
+      "striped-mutex catalog CRUD API (task-1.1.5, engine/catalog/catalog.go)",
+      "MVCC versioning (engine/mvcc, Phase 2A)"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "run_id": "012-verification",
+  "subtask": "1.1.4",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "implementation": ["engine/catalog/idalloc.go"],
+    "tests": ["engine/catalog/idalloc_test.go"],
+    "verification_json": ".cdr/runs/2026-07-03/012-verification/verification.json",
+    "regression_entry": ".cdr/index/regression.jsonl (last line, subtask 1.1.4)"
+  },
+  "open_followups": [
+    "cross-validate .idalloc sidecar high-water-mark against catalog.dat's actual max FileID when catalog CRUD is wired (later subtask)",
+    "consider -short mode for the 100x100 concurrent fsync test (~45s runtime)"
+  ]
+}

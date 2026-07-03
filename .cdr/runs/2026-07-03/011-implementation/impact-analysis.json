@@ -1,0 +1,45 @@
+{
+  "subtask": "1.1.4",
+  "risk_level": "medium",
+  "risk_rationale": "This allocator is the sole source of fileID uniqueness that engine/catalog CRUD (1.1.5), engine/mvcc, and engine/split will all depend on for correctness; a bug here (duplicate fileID under concurrency, or a high-water-mark that regresses on reopen) would silently corrupt catalog integrity system-wide rather than fail loudly. Concurrency-sensitive: must be verified with -race.",
+  "new_files": [
+    "engine/catalog/idalloc.go",
+    "engine/catalog/idalloc_test.go"
+  ],
+  "modified_files": [],
+  "files_explicitly_not_touched": [
+    "engine/catalog/file.go",
+    "engine/catalog/page.go",
+    "engine/catalog/record.go"
+  ],
+  "downstream_consumers": [
+    {
+      "module": "engine/catalog (1.1.5 striped-mutex CRUD)",
+      "dependency": "will call IDAllocator.Next() when creating a new CatalogRecord to populate CatalogRecord.FileID"
+    },
+    {
+      "module": "engine/mvcc",
+      "dependency": "assumes fileID uniqueness/no-reuse per docs/LLD/catalog.md and docs/LLD/mvcc.md"
+    },
+    {
+      "module": "engine/split",
+      "dependency": "redirectTargetIDs reference fileIDs; must never collide with a reused ID"
+    }
+  ],
+  "on_disk_format_impact": {
+    "new_artifact": "<catalog-path>.idalloc sidecar file (8 bytes, little-endian uint64 high-water-mark)",
+    "existing_format_changed": false,
+    "compat_note": "Sidecar approach chosen specifically to avoid changing file.go's already-verified (task-1.1.3, PASS_WITH_COMMENTS) page-0 bitmap on-disk layout."
+  },
+  "concurrency_impact": {
+    "locking_added": "sync.Mutex scoped entirely within IDAllocator (not global catalog lock)",
+    "interacts_with_striped_mutex_design": false,
+    "note": "Per task brief: a mutex here is a narrow allocator-internal lock, not a violation of catalog.md's 'no global lock' CRUD design principle (1.1.5 scope)."
+  },
+  "test_impact": {
+    "new_test_file": "engine/catalog/idalloc_test.go",
+    "existing_tests_affected": [],
+    "command": "go test ./engine/catalog/... -run TestFileIDAllocator -race"
+  },
+  "rollback_plan": "Single isolated commit adding two new files only; revert is a clean single-commit revert with zero blast radius on other engine/catalog files."
+}
