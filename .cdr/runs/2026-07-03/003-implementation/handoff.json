@@ -1,0 +1,26 @@
+{
+  "from_agent": "cdr-implementer",
+  "to_agent": "cdr-verify",
+  "run_id": "2026-07-03-003-implementation",
+  "subtask": "1.1.1",
+  "issue": 1,
+  "commit": "76306268b289d3bacad852c6302df32ac3d2bbe2",
+  "pushed": false,
+  "acceptance_criterion": "CatalogRecord{fileID, pathHash, currentVersion, sizeBytes, status, redirectTargetIDs, parentTopicID, lastModified} encodes to and decodes from a fixed-size byte layout with no data loss for all fields, including empty/zero redirectTargetIDs.",
+  "test_spec_command": "go test ./engine/catalog/... -run TestRecordEncodeDecode -race",
+  "context_pointers": {
+    "record_struct": "engine/catalog/record.go:29-51 (CatalogRecord struct definition)",
+    "status_enum": "engine/catalog/record.go:9-20 (RecordStatus type + constants)",
+    "layout_constants": "engine/catalog/record.go:60-77 (fixed byte offsets, RecordEncodedSize)",
+    "encode_func": "engine/catalog/record.go:81-106 (Encode)",
+    "decode_func": "engine/catalog/record.go:111-142 (Decode)",
+    "test_file": "engine/catalog/record_test.go (TestRecordEncodeDecode table-driven cases + TestDecodeRejectsWrongLength + TestDecodeRejectsOutOfRangeRedirectCount)",
+    "requirement": ".cdr/runs/2026-07-03/003-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-03/003-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-03/003-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-03/003-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-03/003-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-03/003-implementation/self-consistency.json"
+  },
+  "notes_for_verifier": "Design judgment calls made (documented in architecture-discovery.md): pathHash as uint64 (not [32]byte); status as typed uint8 enum; redirectTargetIDs capped at MaxRedirectTargets=8 with a count byte; lastModified as int64 Unix nanoseconds; little-endian encoding.LittleEndian throughout. No concurrency or I/O in scope for this subtask (deferred to 1.1.2-1.1.5). Self-consistency only confirmed build/tests/matrix coverage; independent verification per invariant I4 is still required."
+}
