@@ -1,0 +1,45 @@
+{
+  "subtask": "1.2.4",
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "text": "Deleting a key removes it from lookups.",
+      "covered_by": ["TestDeleteSingleLeaf", "TestDeleteLeafMerge", "TestDeleteInternalMerge", "TestDeleteInsertLookupIntegration", "TestDeleteEmptiesSingleLeafTree"],
+      "status": "covered"
+    },
+    {
+      "id": "AC2",
+      "text": "Tree remains internally consistent (no orphaned child pointers) across interleaved insert/delete sequences.",
+      "covered_by": ["assertNoOrphanedPointers (all delete tests)", "assertStructuralInvariants (all delete tests)", "TestDeleteInsertLookupIntegration"],
+      "status": "covered"
+    },
+    {
+      "id": "TEST_SPEC",
+      "text": "go test ./engine/btree/... -run TestDelete",
+      "covered_by": ["TestDelete (dispatches all subtests via t.Run)"],
+      "status": "covered",
+      "verbatim_match_confirmed": true
+    }
+  ],
+  "derived_scenarios": [
+    {"id": "S1", "text": "Delete from empty tree (not-found, no panic)", "covered_by": "TestDeleteEmptyTree", "status": "covered"},
+    {"id": "S2", "text": "Delete a key that doesn't exist from a non-empty tree (not-found)", "covered_by": "TestDeleteAbsentKey", "status": "covered"},
+    {"id": "S3", "text": "Delete down to a single leaf (no rebalancing needed)", "covered_by": "TestDeleteSingleLeaf", "status": "covered"},
+    {"id": "S4", "text": "Delete triggering at least one leaf merge/redistribute", "covered_by": "TestDeleteLeafMerge", "status": "covered"},
+    {"id": "S5", "text": "Delete triggering at least one internal-node merge/redistribute", "covered_by": "TestDeleteInternalMerge", "status": "covered"},
+    {"id": "S6", "text": "Full integration: after inserts+deletes, remaining keys found via Lookup with correct fileID, deleted keys not-found", "covered_by": "TestDeleteInsertLookupIntegration", "status": "covered"},
+    {"id": "S7", "text": "Empty-tree-after-delete convention (deleting last key of a single-leaf tree)", "covered_by": "TestDeleteEmptiesSingleLeafTree", "status": "covered"}
+  ],
+  "self_consistency_checks": [
+    {"cmd": "go build ./engine/...", "status": "pass"},
+    {"cmd": "go vet ./engine/...", "status": "pass"},
+    {"cmd": "go test ./engine/btree/... -race -v -count=1", "status": "pass", "notes": "All prior tests from 1.2.1/1.2.2/1.2.3 plus new 1.2.4 tests pass, no regressions."},
+    {"cmd": "go test ./engine/btree/... -run TestDelete -v", "status": "pass", "notes": "Confirms the issue's literal -run TestDelete command exercises real coverage, not zero tests."}
+  ],
+  "regressions_checked": [
+    "TestNodeSerialization (1.2.1)",
+    "TestLookup (1.2.2)",
+    "TestInsertSplit / TestInsertEmptyTree / TestInsertUpsert / TestInsertOutOfOrder (1.2.3)"
+  ],
+  "overall_status": "fully_covered"
+}

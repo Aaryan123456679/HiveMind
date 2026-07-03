@@ -1,0 +1,36 @@
+{
+  "subtask": "1.2.4",
+  "risk_level": "high",
+  "rationale": "Structural mutation of a persistent, shared on-disk data structure (B+Tree). Delete's rebalancing (merge/redistribute/splice/root-collapse) touches multiple nodes across levels in a single logical operation; any bug risks silent data loss (orphaned/dangling child pointers, broken NextLeaf chains, lost keys) that would not necessarily surface until a later Lookup/scan/persist subtask. No prior subtask in this epic performed multi-node structural rewrites in one operation (Insert's split only ever adds nodes and appends one key per ancestor level; Delete can remove nodes/keys and re-point pointers).",
+  "files_touched": [
+    {
+      "path": "engine/btree/delete.go",
+      "change_type": "add",
+      "reason": "New Delete implementation: leaf key removal, leaf-level borrow/merge repair, internal-level grandparent-splice repair, root collapse."
+    },
+    {
+      "path": "engine/btree/delete_test.go",
+      "change_type": "add",
+      "reason": "Test coverage per issue's TestDelete acceptance spec, plus a no-orphaned-pointers structural checker built on real Insert-built trees."
+    }
+  ],
+  "files_read_only": [
+    "engine/btree/node.go",
+    "engine/btree/lookup.go",
+    "engine/btree/insert.go",
+    "engine/btree/insert_test.go",
+    "docs/LLD/btree.md",
+    ".cdr/index/file.jsonl",
+    ".cdr/index/task.jsonl"
+  ],
+  "downstream_dependents": [
+    "engine/btree/scan.go (subtask 1.2.5, prefix scan) will rely on NextLeaf chain integrity that Delete's merge/splice logic must preserve",
+    "engine/btree/btree_test.go (subtask 1.2.6, persist/reload) will need to account for Delete's documented known gap: abandoned node IDs are never reclaimed by NodeAllocator's free-list-less monotonic allocator"
+  ],
+  "backward_compatibility": "Purely additive: no existing exported symbol's signature or behavior changed. Insert, Lookup, NodeStore, NodeAllocator, node encode/decode all untouched.",
+  "known_gaps_documented_in_code": [
+    "Abandoned/merged-away node IDs are never reused or reclaimed (no free-list); expected to be revisited alongside 1.2.5/1.2.6 persist/reload work.",
+    "Leaf-level key-borrow can, in principle, replace a parent's separator key with a longer string than the original, which could theoretically overflow the parent's encoded size; not handled (accepted as out of scope for this subtask's uniform-length-key test spec).",
+    "Underflow threshold is 'completely empty of keys' (tombstone-until-empty policy) rather than a numeric half-full threshold, since docs/LLD/btree.md does not specify one and the issue explicitly permits a 'documented simplified' strategy."
+  ]
+}

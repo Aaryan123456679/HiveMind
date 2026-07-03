@@ -1,0 +1,26 @@
+{
+  "run_id": "2026-07-04-027-implementation",
+  "subtask": "task-1.2.4",
+  "status": "completed",
+  "commit": "c21c21faf76d4b4a0fbfb4448255b427aa94829e",
+  "new_files": ["engine/btree/delete.go", "engine/btree/delete_test.go"],
+  "modified_files": [],
+  "pointers": {
+    "Delete_signature": "engine/btree/delete.go: func Delete(store *NodeStore, alloc *NodeAllocator, rootNodeID uint64, path string) (newRootNodeID uint64, found bool, err error)",
+    "rebalancing_policy_doc": "engine/btree/delete.go: Delete's doc comment, section 'Simplified rebalancing strategy (documented choice, per subtask 1.2.4)'",
+    "leaf_repair": "engine/btree/delete.go: repairEmptyLeaf (borrow-from-left, borrow-from-right, merge-left, merge-right)",
+    "internal_repair": "engine/btree/delete.go: shrinkParentAfterMerge (parent shrink, grandparent splice, root collapse)",
+    "shared_descent": "engine/btree/lookup.go: descendToLeaf (reused verbatim, same helper Insert already uses)",
+    "tests": "engine/btree/delete_test.go: TestDeleteEmptyTree, TestDeleteAbsentKey, TestDeleteSingleLeaf, TestDeleteLeafMerge, TestDeleteInternalMerge, TestDeleteInsertLookupIntegration, TestDeleteEmptiesSingleLeafTree, TestDelete (literal acceptance entry point, -run TestDelete)",
+    "structural_checker": "engine/btree/delete_test.go: assertNoOrphanedPointers (new), reuses assertStructuralInvariants/assertAllLookupable from insert_test.go"
+  },
+  "known_gaps_for_downstream": [
+    "Abandoned/merged-away node IDs are never reused or reclaimed by NodeAllocator (no free-list); expected to be revisited alongside persist/reload (1.2.5/1.2.6).",
+    "Leaf-level key-borrow replaces a parent's separator key string in place without re-checking internalEncodedSize; a pathological case with highly variable key lengths could in principle overflow the parent node. Not handled (accepted as out of scope; this subtask's test spec uses uniform-length keys).",
+    "Underflow threshold is 'completely empty of keys' (tombstone-until-empty policy), not a numeric half-full threshold -- docs/LLD/btree.md does not specify one, and this is a documented, deliberate simplification per the issue's own suggested wording."
+  ],
+  "self_consistency": ".cdr/runs/2026-07-04/027-implementation/self-consistency.json (build/vet/test all PASS; internal sanity only, NOT independent verification per invariant I4)",
+  "no_push_confirmed": true,
+  "no_self_verification_confirmed": true,
+  "next_step": "Hand off to /cdr:verify for independent verification of task-1.2.4."
+}

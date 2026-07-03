@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-027-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "1.2.4",
+  "git_head": "86b445cfc79504bbb01fde79f5ddecebf2eab49e",
+  "run_key": "sha256(cdr:implement|1|1.2.4|86b445cfc79504bbb01fde79f5ddecebf2eab49e|delete.go+delete_test.go)",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:00:00Z"
+}
