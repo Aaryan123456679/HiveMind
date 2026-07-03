@@ -19,11 +19,12 @@ func TestNodeSerialization(t *testing.T) {
 			{Keys: nil, FileIDs: nil, NextLeaf: 0},
 			// one key
 			{Keys: []string{"auth/login"}, FileIDs: []uint64{42}, NextLeaf: 7},
-			// many keys, rightmost leaf (no sibling)
+			// many keys, rightmost leaf (no sibling), non-zero version counter
 			{
 				Keys:     []string{"auth/login", "auth/logout", "auth/oauth", "billing/invoice", "billing/refund"},
 				FileIDs:  []uint64{1, 2, 3, 4, 5},
 				NextLeaf: 0,
+				Version:  99,
 			},
 		}
 
@@ -53,10 +54,11 @@ func TestNodeSerialization(t *testing.T) {
 			{Keys: nil, Children: []uint64{1}},
 			// one key, two children
 			{Keys: []string{"billing/invoice"}, Children: []uint64{1, 2}},
-			// many keys
+			// many keys, non-zero version counter
 			{
 				Keys:     []string{"auth/oauth", "billing/invoice", "billing/refund", "support/ticket"},
 				Children: []uint64{1, 2, 3, 4, 5},
+				Version:  7,
 			},
 		}
 
@@ -116,6 +118,26 @@ func TestNodeSerialization(t *testing.T) {
 		mismatchedInternal := InternalNode{Keys: []string{"a"}, Children: []uint64{1, 2, 3}}
 		if _, err := mismatchedInternal.Encode(); err == nil {
 			t.Fatalf("InternalNode.Encode() with mismatched Children/Keys length = nil error, want non-nil error")
+		}
+	})
+
+	t.Run("decode rejects mismatched node type", func(t *testing.T) {
+		leaf := LeafNode{Keys: []string{"auth/login"}, FileIDs: []uint64{1}, NextLeaf: 0}
+		encodedLeaf, err := leaf.Encode()
+		if err != nil {
+			t.Fatalf("LeafNode.Encode() error = %v, want nil", err)
+		}
+		if _, err := DecodeInternalNode(encodedLeaf); err == nil {
+			t.Fatalf("DecodeInternalNode() on a leaf-tagged buffer = nil error, want non-nil error")
+		}
+
+		internal := InternalNode{Keys: []string{"auth/login"}, Children: []uint64{1, 2}}
+		encodedInternal, err := internal.Encode()
+		if err != nil {
+			t.Fatalf("InternalNode.Encode() error = %v, want nil", err)
+		}
+		if _, err := DecodeLeafNode(encodedInternal); err == nil {
+			t.Fatalf("DecodeLeafNode() on an internal-tagged buffer = nil error, want non-nil error")
 		}
 	})
 
