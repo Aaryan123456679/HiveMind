@@ -1,0 +1,26 @@
+{
+  "subtask": "task-1.2.1",
+  "test_command": "go test ./engine/btree/... -run TestNodeSerialization -race -v",
+  "rows": [
+    {
+      "requirement": "Leaf node round-trip losslessly, varying key counts (0, 1, many)",
+      "test": "TestNodeSerialization/leaf_round-trip",
+      "status": "covered"
+    },
+    {
+      "requirement": "Internal node round-trip losslessly, varying key counts (0, 1, many)",
+      "test": "TestNodeSerialization/internal_round-trip",
+      "status": "covered"
+    },
+    {
+      "requirement": "Encoding more keys/data than fixed node capacity hard-errors rather than truncating",
+      "test": "TestNodeSerialization/overflow_rejected",
+      "status": "covered"
+    },
+    {
+      "requirement": "index/name.idx file is created on first use",
+      "test": "TestNodeSerialization/file_created_on_first_use",
+      "status": "covered"
+    }
+  ]
+}

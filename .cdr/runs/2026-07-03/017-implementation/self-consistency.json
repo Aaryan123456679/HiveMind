@@ -1,0 +1,27 @@
+{
+  "subtask": "task-1.2.1",
+  "checks": [
+    {
+      "command": "go build ./...  (run from engine/ module dir)",
+      "result": "pass",
+      "notes": "No compile errors across engine module."
+    },
+    {
+      "command": "gofmt -l .  (engine/ module dir)",
+      "result": "pass",
+      "notes": "Initial gofmt found one alignment issue in node.go; fixed via gofmt -w, re-checked clean."
+    },
+    {
+      "command": "go test ./engine/btree/... -run TestNodeSerialization -race -v",
+      "result": "pass",
+      "notes": "All 4 subtests pass: leaf_round-trip, internal_round-trip, overflow_rejected, file_created_on_first_use. Verified runnable both from engine/ module dir (as ./btree/...) and from repo root (as ./engine/btree/..., matching the exact test spec string)."
+    },
+    {
+      "command": "validation-matrix.json cross-check",
+      "result": "pass",
+      "notes": "All 4 rows (leaf round-trip varying key counts, internal round-trip varying key counts, overflow rejection, file-created-on-first-use) map 1:1 to implemented subtests."
+    }
+  ],
+  "scope_boundary_check": "Confirmed no lookup/insert/split/delete/scan logic was implemented -- only node struct definitions, Encode/Decode, and the OpenIndexFile file-creation helper.",
+  "note": "This is internal self-consistency only, per invariant I4. No self-verification of correctness/quality was performed; that is the responsibility of the separate /cdr:verify step."
+}

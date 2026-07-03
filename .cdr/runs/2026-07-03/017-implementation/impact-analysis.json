@@ -1,0 +1,35 @@
+{
+  "subtask": "task-1.2.1",
+  "risk_level": "medium",
+  "risk_rationale": "First subtask in a brand-new package (engine/btree only has a doc.go placeholder). This subtask establishes the on-disk node byte layout (NodeSize, header fields, key/value encoding scheme) that every later btree subtask (1.2.2 lookup, 1.2.3 insert/split, 1.2.4 delete, 1.2.5 prefix scan, 1.2.6 persisted reload) will build directly on top of. A wrong or awkward format choice here would force a breaking rework in a later subtask.",
+  "modules_impacted": [
+    "engine/btree"
+  ],
+  "files_added": [
+    "engine/btree/node.go",
+    "engine/btree/node_test.go"
+  ],
+  "files_modified": [],
+  "files_deleted": [],
+  "downstream_consumers": [
+    {
+      "module": "engine/btree (1.2.2 lookup)",
+      "dependency": "consumes InternalNode/LeafNode struct shapes + Encode/Decode to traverse the tree"
+    },
+    {
+      "module": "engine/btree (1.2.3 insert/split)",
+      "dependency": "consumes node capacity model (NodeSize, error-on-overflow) to decide when to split"
+    },
+    {
+      "module": "engine/btree (1.2.5 prefix scan)",
+      "dependency": "consumes LeafNode.NextLeaf sibling pointer added now specifically for this future use"
+    },
+    {
+      "module": "engine/btree (1.2.6 persisted reload)",
+      "dependency": "consumes OpenIndexFile create-on-first-use helper and the on-disk node byte format"
+    }
+  ],
+  "backward_compatibility": "N/A - new package, no existing on-disk data or callers.",
+  "concurrency_considerations": "None required by this subtask. Node encode/decode is a pure, stateless data transform with no shared mutable state. Latch-crabbing/optimistic-read concurrency (per docs/LLD/btree.md) is deferred to later subtasks that implement tree traversal/mutation.",
+  "rollback_plan": "Single isolated commit adding two new files in a package with no existing consumers; revertable with a single git revert with no ripple effects."
+}

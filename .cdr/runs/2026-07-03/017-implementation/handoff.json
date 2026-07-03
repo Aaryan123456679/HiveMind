@@ -1,0 +1,56 @@
+{
+  "run_id": "2026-07-03-017-implementation",
+  "subtask": "task-1.2.1",
+  "status": "implemented",
+  "commit": "37627403b197803f3196c09c322d5b2d16bf83ee",
+  "commit_pushed": false,
+  "self_verified": false,
+  "next_step": "/cdr:verify against task-1.2.1's acceptance criteria and test spec",
+  "acceptance_criteria": [
+    "Leaf and internal node formats are defined and serialize/deserialize round-trip losslessly",
+    "index/name.idx file is created on first use"
+  ],
+  "test_spec_command": "go test ./engine/btree/... -run TestNodeSerialization -race",
+  "files": [
+    {
+      "path": "engine/btree/node.go",
+      "pointers": {
+        "NodeSize_const": "line 13",
+        "DefaultIndexFileName_const": "line 19",
+        "LeafNode_type": "lines 45-54",
+        "InternalNode_type": "lines 61-67",
+        "LeafNode.Encode": "func (n LeafNode) Encode() ([]byte, error) -- ~line 95",
+        "InternalNode.Encode": "func (n InternalNode) Encode() ([]byte, error) -- ~line 126",
+        "DecodeLeafNode": "func DecodeLeafNode(data []byte) (LeafNode, error)",
+        "DecodeInternalNode": "func DecodeInternalNode(data []byte) (InternalNode, error)",
+        "OpenIndexFile": "func OpenIndexFile(path string) (*os.File, error) -- end of file"
+      }
+    },
+    {
+      "path": "engine/btree/node_test.go",
+      "pointers": {
+        "TestNodeSerialization": "top-level test func, matches required -run TestNodeSerialization",
+        "subtests": ["leaf round-trip", "internal round-trip", "overflow rejected", "file created on first use"]
+      }
+    }
+  ],
+  "artifacts": {
+    "requirement": ".cdr/runs/2026-07-03/017-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-03/017-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-03/017-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-03/017-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-03/017-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-03/017-implementation/self-consistency.json"
+  },
+  "index_updates": {
+    "file_jsonl": ["engine/btree/node.go", "engine/btree/node_test.go"],
+    "task_jsonl": ["task-1.2.1 added as state=implemented"]
+  },
+  "notes_for_verifier": [
+    "This implementation intentionally covers only node struct definitions + Encode/Decode + OpenIndexFile, per explicit scope boundary in the task -- no lookup/insert/split/delete/scan logic.",
+    "NodeSize fixed at 4096 bytes (mirrors engine/catalog.PageSize); no explicit page-size guidance was found in docs/LLD/btree.md, so this was an implementation judgment call worth double-checking against later subtasks' needs (e.g. fanout in 1.2.3 insert/split).",
+    "Key encoding is length-prefixed (uint16 length + raw bytes), sequential -- not a slotted-page/free-list design like engine/catalog/page.go, since there is no delete/reuse concern in this subtask.",
+    "LeafNode.NextLeaf sentinel value 0 means 'no sibling', following engine/catalog's convention that ID/page 0 is reserved; worth confirming this doesn't collide with a real node index 0 once 1.2.3's allocator is implemented.",
+    "gofmt and go vet were run clean on engine/btree after implementation."
+  ]
+}

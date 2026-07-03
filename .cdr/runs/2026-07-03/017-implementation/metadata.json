@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-03-017-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "task-1.2.1",
+  "git_head": "122f63ff49aebfffddbc8ea0f1ddc9941dd6b6e9",
+  "run_key": "sha256:task-1.2.1|v1|122f63ff49aebfffddbc8ea0f1ddc9941dd6b6e9|node-serialization",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-03T00:00:00Z",
+  "ended_at": "2026-07-03T00:30:00Z"
+}
