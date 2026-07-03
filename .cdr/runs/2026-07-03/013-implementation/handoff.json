@@ -1,0 +1,76 @@
+{
+  "subtask": "1.1.5",
+  "commit": "c5bd902b65615303c6cb645d726f4f8b5a841825",
+  "status": "implemented",
+  "note_to_verifier": "This run performed implementation + internal self-consistency only, per invariant I4. No self-verification was performed. Independent adversarial verification (/cdr:verify) is a separate, required next step.",
+  "pointers": {
+    "Catalog_type": {
+      "file": "engine/catalog/catalog.go",
+      "approx_lines": "1-116",
+      "notes": "Doc comment documents the 3-lock model in full: stripes (record-level, per-fileID), indexMu (index map lookup structure), fmMu (all calls into shared *FileManager, added after a real -race failure - see below)."
+    },
+    "Put": {
+      "file": "engine/catalog/catalog.go",
+      "function": "func (c *Catalog) Put(rec CatalogRecord) error",
+      "approx_lines": "155-190",
+      "semantics": "Delete-then-reinsert on every call (documented simplicity-over-efficiency tradeoff, not in-place update). Overwrites the current record for a fileID with no history/versioning."
+    },
+    "Get": {
+      "file": "engine/catalog/catalog.go",
+      "function": "func (c *Catalog) Get(fileID uint64) (CatalogRecord, error)",
+      "approx_lines": "192-217",
+      "semantics": "Takes the record's stripe lock (not strictly required by Page/FileManager's own copy-on-read semantics, but taken anyway for linearizability against a concurrent Put's delete-then-reinsert sequence for the SAME fileID)."
+    },
+    "Delete": {
+      "file": "engine/catalog/catalog.go",
+      "function": "func (c *Catalog) Delete(fileID uint64) error",
+      "approx_lines": "219-241",
+      "semantics": "Removes from index first (under indexMu), returns ErrNotFound if absent, otherwise tombstones the underlying slot."
+    },
+    "not_found_error": {
+      "file": "engine/catalog/catalog.go",
+      "symbol": "var ErrNotFound = errors.New(\"catalog: fileID not found\")",
+      "usage": "Wrapped with fileID context via fmt.Errorf's %w in both Get and Delete; callers should use errors.Is(err, catalog.ErrNotFound)."
+    },
+    "stripe_selection_scheme": {
+      "file": "engine/catalog/catalog.go",
+      "function": "func stripeFor(fileID uint64) uint64",
+      "scheme": "fileID % numStripes (numStripes = 256). Deliberate plain-modulo choice, documented as acceptable because fileIDs are allocated by IDAllocator.Next() as a monotonically increasing counter (already well-distributed by allocation order); a proper hash (fnv/xxhash) would be more robust to adversarial/pathological ID patterns but is not required here."
+    },
+    "put_simplicity_tradeoff": {
+      "file": "engine/catalog/catalog.go",
+      "location": "Put's doc comment, directly above func (c *Catalog) Put",
+      "summary": "Always delete-then-reinsert rather than update-in-place-if-it-fits. Documented as deliberate; in-place update is deferred to a later subtask once the compaction/page-allocation story matures (mirrors page.go's own deferred-compaction language)."
+    },
+    "fmMu_discovered_gap": {
+      "file": "engine/catalog/catalog.go",
+      "location": "Catalog doc comment, locking model item 3",
+      "summary": "FileManager (1.1.3) has no internal locking over its shared state (highestAllocated, free-list bitmap). Initial per-page-only striping caused a real go test -race failure (read/write race on FileManager.highestAllocated between AllocatePage and ReadPage's validDataPageID). Fixed with a single Catalog-level fmMu serializing every fm.* call. See impact-analysis.json's discovered_issue_during_implementation for full detail."
+    },
+    "idalloc_crosscheck_gap_note": {
+      "file": "engine/catalog/catalog.go",
+      "location": "Catalog doc comment, 'Known gap' paragraph",
+      "summary": "Cross-references (not fixes) the 1.1.4-flagged risk that NewIDAllocator has no cross-check against catalog.dat's actual max FileID if the .idalloc sidecar goes missing. Notes Catalog is a natural place a future subtask could close it."
+    },
+    "index_rebuild_limitation": {
+      "file": "engine/catalog/catalog.go",
+      "location": "Catalog doc comment, 'Known gap' paragraph",
+      "summary": "NewCatalog does not scan catalog.dat on load to rebuild the in-memory fileID->location index from existing on-disk records; FileManager exposes no page-enumeration API and adding one was judged out of this subtask's impacted-modules scope. A fresh Catalog starts with an empty index. Underlying page bytes ARE durably persisted; only in-process index rediscovery across restarts is deferred."
+    },
+    "test_file": {
+      "file": "engine/catalog/catalog_test.go",
+      "functions": [
+        "TestCatalogPutGetDeleteRoundTrip (scenario 1)",
+        "TestCatalogConcurrentDistinctFileIDs (scenario 2)",
+        "TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs (scenario 3)",
+        "TestCatalogGetDeleteNotFound (scenario 4)",
+        "TestCatalogStripeForSanity (supporting sanity check)"
+      ]
+    }
+  },
+  "acceptance_criteria_status": "all met, per validation-matrix.json (4/4 scenarios covered and passing)",
+  "test_spec_command": "go test ./engine/catalog/... -run TestCatalog -race",
+  "self_consistency_results": ".cdr/runs/2026-07-03/013-implementation/self-consistency.json - go build ./engine/..., go vet ./engine/catalog/..., go test -run TestCatalog -race -v, and full package go test -race -v all pass.",
+  "no_self_verification_performed": true,
+  "no_push_performed": true
+}

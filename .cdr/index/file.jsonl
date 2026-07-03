@@ -20,3 +20,5 @@
 {"path": "engine/catalog/file_test.go", "module": "engine/catalog", "features": ["file-manager", "free-list-bitmap", "page-allocation"], "last_change_run": "2026-07-03-009-implementation"}
 {"path": "engine/catalog/idalloc.go", "module": "engine/catalog", "features": ["fileid-allocator", "monotonic-counter", "durable-sidecar-file"], "last_change_run": "2026-07-03-011-implementation"}
 {"path": "engine/catalog/idalloc_test.go", "module": "engine/catalog", "features": ["fileid-allocator", "monotonic-counter", "concurrency-test"], "last_change_run": "2026-07-03-011-implementation"}
+{"path": "engine/catalog/catalog.go", "module": "engine/catalog", "features": ["striped-mutex-crud", "catalog-put-get-delete", "fileid-index"], "last_change_run": "2026-07-03-013-implementation"}
+{"path": "engine/catalog/catalog_test.go", "module": "engine/catalog", "features": ["striped-mutex-crud", "concurrency-test", "stripe-contention-test"], "last_change_run": "2026-07-03-013-implementation"}

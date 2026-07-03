@@ -7,8 +7,9 @@
   "subtask": "1.1.5",
   "git_head": "4f29cec74ed148498e064e836ece6c726e8d3093",
   "run_key": "sha256(cdr-implement,1,1.1.5,4f29cec74ed148498e064e836ece6c726e8d3093,catalog-crud-striped-mutex)",
-  "status": "in_progress",
-  "last_completed_step": "started",
+  "status": "completed",
+  "last_completed_step": "handoff",
   "started_at": "2026-07-03T15:31:29Z",
-  "ended_at": null
+  "ended_at": "2026-07-03T15:55:00Z",
+  "implementation_commit": "c5bd902b65615303c6cb645d726f4f8b5a841825"
 }
