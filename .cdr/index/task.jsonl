@@ -34,4 +34,4 @@
 {"id": "task-7.1", "state": "planned", "runs": ["2026-07-03-002-planner"], "commit": null, "verification": null}
 {"id": "task-7.2", "state": "planned", "runs": ["2026-07-03-002-planner"], "commit": null, "verification": null}
 {"id": "task-7.3", "state": "planned", "runs": ["2026-07-03-002-planner"], "commit": null, "verification": null}
-{"id": "task-1.1.1", "state": "implemented", "runs": ["2026-07-03-003-implementation", "2026-07-03-005-implementation-fix"], "commit": "e7f94b554fda9c992c57533111365f15c0557f57", "verification": null}
+{"id": "task-1.1.1", "state": "implemented", "runs": ["2026-07-03-003-implementation", "2026-07-03-005-implementation-fix"], "commit": "f974b495a53f41262f4b4963766c19c94cbfba76", "verification": null}
