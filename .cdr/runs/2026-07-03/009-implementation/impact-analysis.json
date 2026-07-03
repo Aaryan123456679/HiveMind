@@ -1,0 +1,38 @@
+{
+  "subtask": "1.1.3",
+  "risk_level": "medium",
+  "risk_rationale": [
+    "First subtask in engine/catalog doing real file I/O (os.File open/create/WriteAt/Sync/Truncate) rather than pure in-memory byte-buffer logic like record.go/page.go.",
+    "Introduces on-disk durability concerns (free-list persistence across process restart) that engine/wal/ will later formalize with a proper write-ahead log; this subtask's Sync-on-write is a stopgap, not a WAL-backed guarantee.",
+    "Still single-threaded: FileManager has no internal locking and is not safe for concurrent use from multiple goroutines. Striped-mutex CRUD (1.1.5) and the fileID allocator (1.1.4) are separate, later subtasks -- this subtask must not introduce any locking, atomics-based ID allocation, or CRUD API.",
+    "Filesystem-dependent behavior (sparse files, WriteAt semantics, Sync cost) can behave subtly differently across OSes/CI runners; mitigated by using t.TempDir() in tests and avoiding any hardcoded paths."
+  ],
+  "impacted_modules": [
+    {
+      "path": "engine/catalog/file.go",
+      "change_type": "new_file",
+      "description": "FileManager type: Open/Close, AllocatePage, FreePage, ReadPage, WritePage, bitmap free-list on page 0."
+    },
+    {
+      "path": "engine/catalog/file_test.go",
+      "change_type": "new_file",
+      "description": "TestCatalogFileManager: create fresh file, allocate N, free some, reallocate (reuse), reopen and verify persisted state."
+    }
+  ],
+  "dependencies": {
+    "depends_on": ["engine/catalog/page.go (PageSize constant, byte-order convention)"],
+    "depended_on_by": ["engine/catalog/idalloc.go (1.1.4, not yet implemented)", "engine/catalog/catalog.go (1.1.5, not yet implemented)"]
+  },
+  "out_of_scope_confirmed": [
+    "fileID allocator (atomic counter, monotonic, no reuse) -- belongs to 1.1.4 (idalloc.go)",
+    "CRUD API / striped locking -- belongs to 1.1.5 (catalog.go)",
+    "Full WAL-backed durability -- belongs to engine/wal/ (separate later phase)",
+    "Record-delete-triggers-page-free end-to-end flow spanning Page.DeleteSlot + catalog CRUD -- FreePage is exercised directly by the test to simulate that scenario, per the subtask spec"
+  ],
+  "test_impact": {
+    "new_tests": ["TestCatalogFileManager"],
+    "existing_tests_affected": [],
+    "command": "go test ./engine/catalog/... -run TestCatalogFileManager -race"
+  },
+  "rollback_plan": "Single new-file-only change (file.go + file_test.go); revert via git revert of the single commit with no cross-module fallout since no other module yet imports FileManager."
+}

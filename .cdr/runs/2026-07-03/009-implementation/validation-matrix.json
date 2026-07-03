@@ -1,0 +1,37 @@
+{
+  "subtask": "1.1.3",
+  "test_command": "go test ./engine/catalog/... -run TestCatalogFileManager -race",
+  "scenarios": [
+    {
+      "id": "scenario-1",
+      "description": "Open a non-existent catalog file path -> free-list page created/initialized correctly.",
+      "assertion": "os.Stat on the path succeeds after Open (file exists); file size is >= PageSize (at least 1 page, the bitmap page); a freshly-opened FileManager reports highestAllocated == 0 and no page IDs are used yet (other than the reserved bitmap page itself).",
+      "covered_by": "subtest 'creates and initializes free-list' in TestCatalogFileManager"
+    },
+    {
+      "id": "scenario-2",
+      "description": "Allocate N=10 pages -> each gets a distinct pageID and the free-list marks them used.",
+      "assertion": "10 calls to AllocatePage() return 10 distinct, non-zero page IDs; each is confirmed used by attempting FreePage twice (idempotency/negative-path not required) and via a positive assertion that ReadPage/WritePage succeed on each allocated ID.",
+      "covered_by": "subtest 'allocates N distinct pages' in TestCatalogFileManager"
+    },
+    {
+      "id": "scenario-3",
+      "description": "Free some of those pages (simulate delete/merge) -> free-list reports them free.",
+      "assertion": "FreePage called on a subset (e.g. 3 of the 10) returns nil error; a subsequent internal/behavioral check (re-allocation in scenario 4) proves they are now free rather than asserting private bitmap state directly.",
+      "covered_by": "subtest 'frees pages back to the free-list' in TestCatalogFileManager"
+    },
+    {
+      "id": "scenario-4",
+      "description": "Allocate again -> freed pageIDs are reused, not just new pages appended past the end.",
+      "assertion": "After freeing 3 pages, 3 subsequent AllocatePage() calls return exactly the set of previously-freed IDs (order not required to match, but the returned set must equal the freed set, and highestAllocated must not have grown), proving reclaim-before-extend behavior.",
+      "covered_by": "subtest 'reuses freed pages on next allocation' in TestCatalogFileManager"
+    },
+    {
+      "id": "scenario-5",
+      "description": "Re-open the file (close + reopen) -> free/used state persisted correctly on disk.",
+      "assertion": "Close the FileManager, Open a second FileManager instance on the same path, then: (a) allocating from the reopened manager continues from the correct high-water mark (does not reuse still-in-use IDs), and (b) allocating enough new pages to exhaust remaining free pages reuses only the IDs that were free at close time -- proving the bitmap was durably persisted, not reconstructed from a fresh/empty in-memory state.",
+      "covered_by": "subtest 'persists free-list across reopen' in TestCatalogFileManager"
+    }
+  ],
+  "coverage_complete": true
+}

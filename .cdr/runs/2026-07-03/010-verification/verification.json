@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "run_id": "010-verification",
+  "subtask": "1.1.3",
+  "git_head": "f7e9ba1a0ecb35cc0d46728adecbeeaae1e34c1b",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "engine/catalog/file.go implements Open/AllocatePage/FreePage/ReadPage/WritePage over a page-0-resident bitmap free-list, matching docs/LLD/catalog.md. Traced bit-to-pageID mapping, durability, reuse, extension, guard, and reopen logic against source (not comments); all commands run clean. One real gap (double-free is a silent no-op) and one crash-window note (acceptable per subtask scope, but should be tracked for the WAL phase).",
+  "commands_run": [
+    {"cmd": "go build ./engine/...", "result": "pass"},
+    {"cmd": "go vet ./engine/catalog/...", "result": "pass"},
+    {"cmd": "go test ./engine/catalog/... -run TestCatalogFileManager -race -v", "result": "pass, 5/5 subtests"},
+    {"cmd": "go test ./engine/catalog/... -race -v", "result": "pass, full package including page/record tests"}
+  ],
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Open() creates initial free-list page on first open (info.Size()==0 branch, file.go:81-90); AllocatePage marks page used in bitmap + persists (file.go:121-150); FreePage returns page to free-list (file.go:156-166) and next AllocatePage reclaims it (file.go:122-130 lowest-id-first scan). All three acceptance criteria are directly exercised and pass in TestCatalogFileManager's 5 subtests."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches docs/LLD/catalog.md: 4KB slotted pages via existing Page/PageSize (page.go), free-list page for reclaiming deleted/merged slots. Bitmap scheme is a documented design choice (comment cites architecture-discovery.md) not literally in the LLD snippet given, but consistent with its intent."
+    },
+    "correctness_bitmap_mapping": {
+      "status": "pass",
+      "evidence": "bitIndex(pageID) = pageID-1 (file.go:217-219), matching stated 'bit i tracks page i+1' scheme. Page 0 is never bit-indexed (AllocatePage/FreePage/validDataPageID all start scanning/validating at id=1). No off-by-one found; verified boundary at newID == bitmapCapacityBits (file.go:134, bitIndex would yield bitmapCapacityBits-1, in range)."
+    },
+    "durability": {
+      "status": "pass_with_comment",
+      "evidence": "persistBitmap() does WriteAt(bitmap, 0) + Sync() on every AllocatePage/FreePage mutation (file.go:241-251), and Sync() is a full-file fsync (not range-limited), so a newly-zeroed extension page written earlier in the same AllocatePage call is also flushed by the time persistBitmap's Sync returns -- confirmed by tracing, not just the comment. CAVEAT: on crash exactly between the extension WriteAt (file.go:140) and the subsequent setUsed+persistBitmap (file.go:144-148), the file is physically extended but the on-disk bitmap's highestAllocated is stale. This does NOT create a use-after-freed/silent-corruption bug -- Open()'s wantPages/gotPages consistency check (file.go:103-108) will hard-fail on reopen ('is corrupt: free-list reports N pages but file has M') rather than silently accepting bad state. This is safe-but-blunt (denial of open rather than corruption) and is explicitly acceptable for this subtask per the WAL/crash-recovery phase being separate; flagging so the WAL phase (engine/wal/) is aware this file manager will need crash-safe re-derivation (e.g. rescan) rather than trusting the header blindly once WAL lands."
+    },
+    "reuse_after_free": {
+      "status": "pass",
+      "evidence": "AllocatePage's linear lowest-id-first scan (file.go:122-130) was traced for: freeing the highest allocated page (scan reaches it as the sole free bit, returned), freeing a middle page (scan finds it before higher pages), and freeing N pages then reallocating N times (test 'reuses freed pages on next allocation' verifies exactly this: reused set == freed set, highestAllocated unchanged). All pass under -race."
+    },
+    "file_extension": {
+      "status": "pass",
+      "evidence": "Extension path (file.go:132-149) computes newID = highestAllocated+1, guards against exceeding bitmapCapacityBits, writes an explicit zero-initialized [PageSize]byte array via WriteAt at offset newID*PageSize (not relying on sparse-file zero-fill semantics), then updates highestAllocated/bitmap and persists. Data is genuinely zeroed by the written buffer, not by OS sparse-hole behavior."
+    },
+    "page_offset_guard": {
+      "status": "pass",
+      "evidence": "ReadPage/WritePage/FreePage all call validDataPageID / explicit freeListPageID checks (file.go:169-209) before computing pageID*PageSize, rejecting pageID==0 with a clear error. A caller cannot corrupt the free-list bitmap via ReadPage(0)/WritePage(0,...); this guard is present and tested indirectly (test asserts FreePage(freeListPageID) errors, file_test.go:116-118) though there is no direct unit test for ReadPage(0)/WritePage(0,...) rejection specifically -- minor test-coverage gap, not a code defect (traced validDataPageID is called uniformly)."
+    },
+    "persistence_across_reopen": {
+      "status": "pass",
+      "evidence": "Test 'persists free-list across reopen' (file_test.go:160-206) closes fm1 after freeing a page and reopens as fm2, then asserts AllocatePage() returns exactly the previously-freed victim (not a new extension) and that a page still marked used at close time cannot be silently re-freed as already-free -- this is a real round-trip through Close()+Open() reading back the on-disk bitmap (file.go:97-101), not an in-memory-only check."
+    },
+    "test_isolation": {
+      "status": "pass",
+      "evidence": "file_test.go:14-15 uses t.TempDir()/catalog.dat; no hardcoded repo-relative path is used for I/O (DefaultCatalogFileName constant exists but its doc comment explicitly warns tests must not use it directly, file.go:9-13)."
+    },
+    "race_cleanliness": {
+      "status": "pass",
+      "evidence": "go test -race ./engine/catalog/... -run TestCatalogFileManager and full package run both clean; test is single-goroutine/sequential subtests sharing one *os.File serially (no concurrent access), and ReadSlot returns a copy (verified in page.go) so no aliasing between reads."
+    },
+    "regression_risk": {
+      "status": "comment",
+      "evidence": "FreePage(pageID) does not check whether pageID is already free before clearing its bit (file.go:156-166) -- a double-free from a future caller (e.g. mvcc/split logic freeing the same page twice due to a bug) is a silent no-op rather than a surfaced error, which could mask logic bugs in later phases that build on top of this free-list. No test exercises double-free. Recommend a future test + an isUsed(pageID) guard in FreePage before shipping split/mvcc phases that call FreePage from multiple code paths."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "File opened with 0o644 permissions; no injection/path-traversal surface (path is caller-supplied, consistent with rest of engine)."
+    },
+    "performance": {
+      "status": "comment",
+      "evidence": "AllocatePage's free-page scan is O(highestAllocated) bits in the worst case (linear scan of the whole bitmap on every allocation when the file is nearly full of used pages), acceptable for this subtask's scale but will not scale gracefully once catalogs grow toward the ~32724-page (bitmapCapacityBits) ceiling of a single bitmap page; also a single bitmap page hard-caps total catalog pages, worth flagging for whoever designs multi-page free-lists in a later phase."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Clear doc comments, consistent little-endian encoding convention matching record.go/page.go, explicit reserved-page and capacity constants."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Traced every mutation path (Open/AllocatePage/FreePage/ReadPage/WritePage/persistBitmap) line-by-line against the 8 scrutiny points in the request; all commands reproduced independently and pass."
+    }
+  },
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    {
+      "id": "1.1.3-F1",
+      "severity": "low",
+      "description": "FreePage does not detect double-free (freeing an already-free page silently succeeds, no-op on the bitmap).",
+      "recommendation": "Add an isUsed(pageID) check in FreePage that errors on double-free, plus a regression test, before mvcc/split phases start calling FreePage from multiple code paths."
+    },
+    {
+      "id": "1.1.3-F2",
+      "severity": "low",
+      "description": "Single bitmap page hard-caps total catalog pages at bitmapCapacityBits (~32724 pages, ~128MB catalog); crash between file-extension WriteAt and the following persistBitmap leaves Open() unable to reopen the file at all (hard error) rather than silently corrupting -- safe but worth tracking for the WAL/crash-recovery phase.",
+      "recommendation": "Document the capacity ceiling near bitmapCapacityBits (already partially done) and ensure engine/wal/ design accounts for re-deriving free-list state rather than trusting the persisted header unconditionally once true crash recovery is implemented."
+    }
+  ]
+}

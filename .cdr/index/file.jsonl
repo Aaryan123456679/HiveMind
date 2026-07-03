@@ -16,3 +16,5 @@
 {"path": "engine/catalog/record_test.go", "module": "engine/catalog", "features": ["catalog-record", "binary-encoding", "test"], "last_change_run": "2026-07-03-003-implementation"}
 {"path": "engine/catalog/page.go", "module": "engine/catalog", "features": ["slotted-page", "4kb-page", "free-space-tracking"], "last_change_run": "2026-07-03-007-implementation"}
 {"path": "engine/catalog/page_test.go", "module": "engine/catalog", "features": ["slotted-page", "4kb-page", "test"], "last_change_run": "2026-07-03-007-implementation"}
+{"path": "engine/catalog/file.go", "module": "engine/catalog", "features": ["file-manager", "free-list-bitmap", "page-allocation"], "last_change_run": "2026-07-03-009-implementation"}
+{"path": "engine/catalog/file_test.go", "module": "engine/catalog", "features": ["file-manager", "free-list-bitmap", "page-allocation"], "last_change_run": "2026-07-03-009-implementation"}
