@@ -1,0 +1,31 @@
+{
+  "subtask": "1.1.1",
+  "checks": [
+    {
+      "check": "gofmt -l on new files",
+      "result": "clean (no output = already formatted)"
+    },
+    {
+      "check": "go build ./engine/...",
+      "result": "pass"
+    },
+    {
+      "check": "go vet ./engine/catalog/...",
+      "result": "pass"
+    },
+    {
+      "check": "go test ./engine/catalog/... -run TestRecordEncodeDecode -race -v",
+      "result": "pass, 4/4 subtests pass (zero value, populated with several redirect targets, max redirect targets, active status with zero redirect targets)"
+    },
+    {
+      "check": "go test ./engine/catalog/... -race -v (full package incl. negative-path tests)",
+      "result": "pass, 6/6 tests pass"
+    },
+    {
+      "check": "go build ./... && go test ./... (full engine module)",
+      "result": "pass, no regressions in sibling packages (btree/graph/loadtest/mvcc/rpc/split/wal have no test files yet, unaffected)"
+    }
+  ],
+  "validation_matrix_covered": true,
+  "note": "This is internal sanity only (build green, tests pass, acceptance criterion covered by the specified test command). This is NOT the independent verification pass; /cdr:verify must still review this work separately per invariant I4."
+}

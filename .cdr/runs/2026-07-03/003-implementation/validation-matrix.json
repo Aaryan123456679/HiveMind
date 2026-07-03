@@ -1,0 +1,13 @@
+{
+  "subtask": "1.1.1",
+  "criteria": [
+    {
+      "id": "AC-1",
+      "description": "CatalogRecord{fileID, pathHash, currentVersion, sizeBytes, status, redirectTargetIDs, parentTopicID, lastModified} encodes to and decodes from a fixed-size byte layout with no data loss for all fields, including empty/zero redirectTargetIDs.",
+      "planned_check": "TestRecordEncodeDecode table-driven cases: zero-value record (empty RedirectTargetIDs, zero scalars), fully-populated record (non-zero scalars, 3 RedirectTargetIDs), and max-capacity record (MaxRedirectTargets entries). Each asserts Encode() output length == RecordEncodedSize (fixed-size) and Decode(Encode(rec)) deep-equals rec (no data loss) for every field.",
+      "test_command": "go test ./engine/catalog/... -run TestRecordEncodeDecode -race -v",
+      "covered": true
+    }
+  ],
+  "all_criteria_covered": true
+}

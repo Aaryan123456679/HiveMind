@@ -1,0 +1,28 @@
+{
+  "subtask": "1.1.1",
+  "issue": 1,
+  "new_files": [
+    "engine/catalog/record.go",
+    "engine/catalog/record_test.go"
+  ],
+  "modified_files": [],
+  "deleted_files": [],
+  "existing_files_read_only": [
+    "engine/catalog/doc.go",
+    "docs/LLD/catalog.md",
+    "docs/HLD.md"
+  ],
+  "dependents": [],
+  "dependent_note": "No other module imports engine/catalog yet (package is scaffold-only). This subtask introduces a purely additive, self-contained type with no existing callers to break.",
+  "future_dependents_anticipated": [
+    "engine/catalog (subtask 1.1.2 slotted page will embed/reference CatalogRecord's encoded size)",
+    "engine/mvcc (future, CAS on currentVersion)",
+    "engine/split (future, status transitions + redirectTargetIDs)",
+    "engine/btree (future, path -> fileID)",
+    "engine/wal (future, mutation logging)"
+  ],
+  "risk_level": "low",
+  "risk_rationale": "Foundational, isolated struct + fixed-size binary encoding. No concurrency, no I/O, no existing dependents to regress. Only risk is picking an encoding layout that later subtasks must adapt to, which is acceptable/expected at this stage.",
+  "concurrency_in_scope": false,
+  "io_in_scope": false
+}
