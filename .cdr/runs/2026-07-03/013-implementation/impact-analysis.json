@@ -1,0 +1,50 @@
+{
+  "subtask": "1.1.5",
+  "risk_level": "high",
+  "risk_rationale": "First subtask combining ALL previously-verified catalog primitives (CatalogRecord 1.1.1, Page 1.1.2, FileManager 1.1.3, IDAllocator 1.1.4) into one integrated concurrent API. Correctness here is foundational: mvcc/, split/, and btree/ all build directly on Catalog's Put/Get/Delete semantics and its striped-locking guarantees. A subtle concurrency bug here (lost update, torn read, or a silently-corrupted page) would be inherited by every later subtask rather than being caught locally.",
+  "new_files": [
+    "engine/catalog/catalog.go",
+    "engine/catalog/catalog_test.go"
+  ],
+  "modified_files": [],
+  "files_explicitly_not_touched": [
+    "engine/catalog/record.go",
+    "engine/catalog/page.go",
+    "engine/catalog/file.go",
+    "engine/catalog/idalloc.go"
+  ],
+  "dependencies": {
+    "consumes": [
+      "CatalogRecord.Encode/Decode (record.go, task-1.1.1, verified)",
+      "Page.InsertSlot/ReadSlot/DeleteSlot/FreeSpace (page.go, task-1.1.2, verified PASS_WITH_COMMENTS)",
+      "FileManager.AllocatePage/FreePage/ReadPage/WritePage (file.go, task-1.1.3, verified PASS_WITH_COMMENTS)"
+    ],
+    "not_consumed_this_subtask": [
+      "IDAllocator.Next (idalloc.go, task-1.1.4, verified PASS_WITH_COMMENTS) - Catalog.Put accepts a CatalogRecord with FileID already populated by the caller; IDAllocator is a separate concern the caller wires in, not a Catalog-internal dependency"
+    ]
+  },
+  "downstream_consumers": [
+    "engine/mvcc/ (currentVersion CAS on top of Catalog records)",
+    "engine/split/ (status transitions SPLITTING/SPLIT/REDIRECT via Catalog.Put)",
+    "engine/btree/ (path -> fileID resolution feeding Catalog.Get)",
+    "engine/wal/ (catalog mutations must be logged before applied - not implemented yet, noted as a gap)"
+  ],
+  "discovered_issue_during_implementation": {
+    "description": "FileManager (file.go) has no internal locking (explicitly documented in its own doc comment as this subtask's responsibility). Initial design used per-page striped locks (pageStripes) hashed by pageID for insert/tombstone/read operations, but this did NOT protect FileManager's own shared internal state (highestAllocated, the free-list bitmap byte array) which AllocatePage/FreePage/ReadPage/WritePage all read/mutate. `go test -race` caught a genuine data race on FileManager.highestAllocated between a goroutine in AllocatePage and a concurrent goroutine in ReadPage's validDataPageID check during TestCatalogConcurrentDistinctFileIDs.",
+    "resolution": "Replaced per-page pageStripes with a single Catalog-level fmMu sync.Mutex serializing every call into the shared *FileManager. This is documented in catalog.go as locking-model item 3, with an explicit note that it is a deliberate, necessary departure from pure per-fileID striping (FileManager's own internal state is file-wide, not scoped to any one page or fileID), and that it bounds actual disk-I/O throughput to FileManager's current single-threaded design - an accurate reflection of 1.1.3's documented state, not a defect introduced by 1.1.5. The record-level striped mutexes (stripes) and the stripe-contention test remain valid and meaningful: they operate on pure in-memory Go mutexes independent of fmMu, so they still demonstrate the LLD's required property (unrelated fileIDs' record-level critical sections don't serialize behind each other).",
+    "flagged_for_future_subtask": "engine/catalog/file.go (1.1.3) could gain finer-grained internal locking (e.g. an internal mutex over highestAllocated/bitmap, or per-page-region locking) to reduce Catalog's current fmMu bottleneck; out of scope for 1.1.5 per the impacted-modules list (catalog.go, catalog_test.go only)."
+  },
+  "regression_risk_notes": [
+    "IDAllocator (1.1.4) cross-check gap: NewIDAllocator has no cross-check against catalog.dat's actual max FileID if the .idalloc sidecar goes missing. Not fixed in this subtask (explicitly out of scope); a doc-comment cross-reference is left in catalog.go's Catalog type doc noting Catalog is now the natural place a future subtask could add such a cross-check (e.g. during an eventual index-rebuild-from-disk-scan feature)."
+  ],
+  "test_impact": {
+    "new_tests": [
+      "TestCatalogPutGetDeleteRoundTrip",
+      "TestCatalogConcurrentDistinctFileIDs",
+      "TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs",
+      "TestCatalogGetDeleteNotFound",
+      "TestCatalogStripeForSanity"
+    ],
+    "existing_tests_affected": "none (no existing test files modified)"
+  }
+}

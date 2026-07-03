@@ -1,0 +1,59 @@
+{
+  "test_command": "go test ./engine/catalog/... -run TestCatalog -race -v",
+  "scenarios": [
+    {
+      "id": 1,
+      "description": "Single-record Put+Get+Delete round-trip; Get after Delete returns not-found.",
+      "test_function": "TestCatalogPutGetDeleteRoundTrip",
+      "assertions": [
+        "Put(rec) returns nil error",
+        "Get(fileID) after Put returns a record deep-equal to rec",
+        "Put again with changed fields (overwrite) then Get returns the NEW value (proves Put overwrites, no versioning)",
+        "Delete(fileID) returns nil error",
+        "Get(fileID) after Delete returns an error satisfying errors.Is(err, ErrNotFound)"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": 2,
+      "description": "Concurrent Put/Get/Delete across many distinct fileIDs from many goroutines, -race clean, no corruption.",
+      "test_function": "TestCatalogConcurrentDistinctFileIDs",
+      "assertions": [
+        "300 distinct fileIDs (> numStripes=256, exercising every stripe), each with 4 concurrent goroutines doing Put then Get, run under go test -race with no data race reported",
+        "Every concurrent Get (racing against other workers' Puts for the same fileID, all writing an identical value) either errors or returns exactly the expected value - no torn/partial reads",
+        "After all concurrent Puts/Gets complete, a final sequential Get for every one of the 300 fileIDs deep-equals what was Put (no lost updates, no corruption)",
+        "All 300 fileIDs concurrently Deleted from separate goroutines, each returns nil error",
+        "After concurrent Delete, every fileID's Get returns errors.Is(err, ErrNotFound)"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": 3,
+      "description": "Stripe-contention: operations on fileIDs in different stripes must not serialize behind one lock.",
+      "test_function": "TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs",
+      "assertions": [
+        "Directly acquire (in-package test access) the record-stripe mutex for heldFileID and hold it open-ended via a channel signal",
+        "Assertion A: Put on a fileID hashing to a DIFFERENT stripe completes within 2s (does not wait for the held lock's release) - proves cross-stripe non-serialization",
+        "Assertion B (control): Get on a fileID hashing to the SAME stripe as the held lock does NOT complete within 150ms while the lock is held - proves the stripe lock is a real lock (necessary control so Assertion A is meaningful, not vacuously true because stripes do nothing)",
+        "After releasing the held lock, the same-stripe Get completes within 2s"
+      ],
+      "status": "covered"
+    },
+    {
+      "id": 4,
+      "description": "Get/Delete on a nonexistent fileID returns the expected not-found error (not panic, not nil-without-error).",
+      "test_function": "TestCatalogGetDeleteNotFound",
+      "assertions": [
+        "Get(missing fileID) returns a non-nil error satisfying errors.Is(err, ErrNotFound)",
+        "Delete(missing fileID) returns a non-nil error satisfying errors.Is(err, ErrNotFound)",
+        "Neither call panics"
+      ],
+      "status": "covered"
+    }
+  ],
+  "additional_test": {
+    "test_function": "TestCatalogStripeForSanity",
+    "description": "Sanity check that stripeFor(fileID) is deterministic and spans all numStripes=256 distinct stripes across a range of fileIDs; a building-block correctness check supporting scenario 3's test setup, not itself one of the 4 required scenarios."
+  },
+  "overall_coverage": "4/4 required scenarios covered by dedicated test functions; all pass under go test ./engine/catalog/... -run TestCatalog -race -v"
+}

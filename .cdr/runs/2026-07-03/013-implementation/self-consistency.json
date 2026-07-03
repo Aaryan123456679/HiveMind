@@ -1,0 +1,31 @@
+{
+  "note": "Internal sanity check only, per invariant I4. This is NOT verification - /cdr:verify is a separate, later step performed by a different agent.",
+  "checks": [
+    {
+      "command": "go build ./engine/...",
+      "result": "PASS",
+      "details": "No compile errors across the engine module (catalog, and any sibling packages under engine/)."
+    },
+    {
+      "command": "go vet ./engine/catalog/...",
+      "result": "PASS",
+      "details": "Clean after fixing a reflect.DeepEqual usage for the struct-with-slice-field CatalogRecord (== comparison is invalid on a struct containing a slice) and a non-constant Fatalf format string."
+    },
+    {
+      "command": "go test ./engine/catalog/... -run TestCatalog -race -v",
+      "result": "PASS",
+      "details": "TestCatalogPutGetDeleteRoundTrip, TestCatalogConcurrentDistinctFileIDs, TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs, TestCatalogGetDeleteNotFound, TestCatalogStripeForSanity, plus the already-verified TestCatalogFileManager subtests (regex 'TestCatalog' matches both new Catalog tests and the pre-existing FileManager test suite) all pass, ~13s wall time."
+    },
+    {
+      "command": "go test ./engine/catalog/... -race -v -count=1",
+      "result": "PASS",
+      "details": "Full package suite (record.go/page.go/file.go/idalloc.go/catalog.go tests) passes with no regressions, ~59s wall time, run with -count=1 to bypass any test cache."
+    }
+  ],
+  "validation_matrix_coverage": "4/4 required test scenarios covered, see validation-matrix.json",
+  "issue_found_and_fixed_during_self_consistency": "First version of catalog.go used per-page striped locks (pageStripes, hashed by pageID) instead of a single fmMu. go test -race caught a genuine data race on FileManager.highestAllocated between AllocatePage and ReadPage's validDataPageID check, because FileManager itself has no internal locking and its shared state (highestAllocated, bitmap) is not scoped per-page. Fixed by replacing pageStripes with a single Catalog-level fmMu serializing all FileManager calls, documented as a distinct 3rd lock in catalog.go. Re-ran -race afterward: clean.",
+  "not_performed_here": [
+    "No independent/adversarial verification of the design against docs/LLD/catalog.md beyond confirming the tests above pass and match the required test spec command - that is /cdr:verify's job.",
+    "No performance/throughput benchmarking beyond the timing thresholds embedded in the stripe-contention test itself."
+  ]
+}
