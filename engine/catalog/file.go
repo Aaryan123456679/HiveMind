@@ -1,0 +1,251 @@
+package catalog
+
+import (
+	"encoding/binary"
+	"fmt"
+	"os"
+)
+
+// DefaultCatalogFileName is the conventional repo-relative path callers should use
+// for the on-disk catalog file (see docs/LLD/catalog.md). Tests must not use this
+// constant directly for I/O; they should use an isolated t.TempDir() path instead so
+// parallel test runs and CI never collide or leave stray artifacts on disk.
+const DefaultCatalogFileName = ".meta/catalog.dat"
+
+// freeListPageID is the reserved page ID for the free-list bitmap page. Page 0 is
+// never itself allocated as a data page; ReadPage/WritePage/FreePage all reject it.
+const freeListPageID uint64 = 0
+
+// Fixed byte offsets within the free-list bitmap page. All multi-byte integers are
+// little-endian, matching record.go/page.go's on-disk encoding convention.
+const (
+	bitmapOffHighestAllocated = 0
+	bitmapHeaderSize          = bitmapOffHighestAllocated + 8
+	// bitmapBitsOffset is where the actual per-page-ID bitmap bytes begin.
+	bitmapBitsOffset = bitmapHeaderSize
+	// bitmapCapacityBits is the number of page IDs representable by a single bitmap
+	// page. Bit i (0-indexed) tracks page ID (i+1), since page 0 is reserved for the
+	// bitmap itself and is always considered unavailable for allocation.
+	bitmapCapacityBits = (PageSize - bitmapHeaderSize) * 8
+)
+
+// FileManager wraps an *os.File handle to a catalog data file (conventionally
+// .meta/catalog.dat) made up of fixed PageSize-byte pages. Page 0 is a dedicated
+// free-list page: a bitmap where bit i tracks whether page (i+1) is currently
+// allocated (1) or free (0). This is the free-list encoding choice documented in
+// docs/LLD/catalog.md ("free-list page reclaiming deleted/merged slots"); a bitmap
+// was chosen over a linked list of free page IDs because it is simplest to persist
+// atomically as a single fixed-size page for the page-count ranges this phase needs
+// (see architecture-discovery.md for the full rationale and capacity numbers).
+//
+// FileManager has no internal locking. It is safe for use in the single-threaded
+// storage-core phase this subtask targets; a future subtask (striped-mutex CRUD, see
+// docs/LLD/catalog.md) is responsible for synchronizing concurrent access to a
+// shared FileManager from multiple goroutines. FileManager also does not implement a
+// write-ahead log; free-list mutations are made durable via a direct WriteAt+Sync of
+// the bitmap page, which is sufficient for this subtask's acceptance criteria but is
+// not a substitute for the WAL that engine/wal/ will provide for full catalog
+// mutations.
+type FileManager struct {
+	file *os.File
+
+	// bitmap holds the raw bytes of the free-list page (page 0), including its
+	// header, mirrored in memory for fast lookups. It is kept in sync with the
+	// on-disk copy by persistBitmap after every mutation.
+	bitmap [PageSize]byte
+
+	// highestAllocated is the highest page ID ever allocated (i.e. the current
+	// file-extension high-water mark). Page IDs 1..highestAllocated are the only
+	// ones that physically exist in the file; each is either used or free per the
+	// bitmap.
+	highestAllocated uint64
+}
+
+// Open opens the catalog file at path, creating it (and its initial free-list page)
+// if it does not already exist. If the file already exists, its free-list page is
+// read back to restore in-memory free/used state.
+func Open(path string) (*FileManager, error) {
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: open %s: %w", path, err)
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("catalog: stat %s: %w", path, err)
+	}
+
+	fm := &FileManager{file: file}
+
+	if info.Size() == 0 {
+		// Freshly created (or truncated-to-empty) file: initialize a brand-new,
+		// all-free bitmap page as page 0 and persist it immediately.
+		fm.highestAllocated = 0
+		if err := fm.persistBitmap(); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("catalog: initializing free-list page for %s: %w", path, err)
+		}
+		return fm, nil
+	}
+
+	if info.Size()%PageSize != 0 {
+		file.Close()
+		return nil, fmt.Errorf("catalog: %s has invalid size %d bytes: not a multiple of PageSize (%d)", path, info.Size(), PageSize)
+	}
+
+	if _, err := file.ReadAt(fm.bitmap[:], 0); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("catalog: reading free-list page from %s: %w", path, err)
+	}
+	fm.highestAllocated = binary.LittleEndian.Uint64(fm.bitmap[bitmapOffHighestAllocated:])
+
+	wantPages := fm.highestAllocated + 1 // +1 for the bitmap page itself
+	gotPages := uint64(info.Size()) / PageSize
+	if gotPages != wantPages {
+		file.Close()
+		return nil, fmt.Errorf("catalog: %s is corrupt: free-list reports %d pages but file has %d", path, wantPages, gotPages)
+	}
+
+	return fm, nil
+}
+
+// Close closes the underlying file handle.
+func (fm *FileManager) Close() error {
+	return fm.file.Close()
+}
+
+// AllocatePage returns a free page ID, marking it used in the free-list. It prefers
+// reusing a previously-freed page ID over extending the file; only when no free page
+// exists does it extend the file by one page.
+func (fm *FileManager) AllocatePage() (uint64, error) {
+	for id := uint64(1); id <= fm.highestAllocated; id++ {
+		if !fm.isUsed(id) {
+			fm.setUsed(id, true)
+			if err := fm.persistBitmap(); err != nil {
+				return 0, err
+			}
+			return id, nil
+		}
+	}
+
+	// No free page available: extend the file by one page.
+	newID := fm.highestAllocated + 1
+	if newID > bitmapCapacityBits {
+		return 0, fmt.Errorf("catalog: free-list exhausted: cannot allocate beyond page %d bits in a single bitmap page", bitmapCapacityBits)
+	}
+
+	var zeroPage [PageSize]byte
+	offset := int64(newID) * PageSize
+	if _, err := fm.file.WriteAt(zeroPage[:], offset); err != nil {
+		return 0, fmt.Errorf("catalog: extending file for new page %d: %w", newID, err)
+	}
+
+	fm.highestAllocated = newID
+	fm.setUsed(newID, true)
+	if err := fm.persistBitmap(); err != nil {
+		return 0, err
+	}
+	return newID, nil
+}
+
+// FreePage returns pageID to the free-list, making it eligible for reuse by a future
+// AllocatePage call. This is the file-manager-level mechanism behind "deleting/
+// merging a slot returns the page to free-list reclamation": callers that delete or
+// merge catalog records such that a page becomes empty invoke FreePage directly.
+func (fm *FileManager) FreePage(pageID uint64) error {
+	if pageID == freeListPageID {
+		return fmt.Errorf("catalog: cannot free reserved free-list page %d", pageID)
+	}
+	if pageID == 0 || pageID > fm.highestAllocated {
+		return fmt.Errorf("catalog: cannot free page %d: not an allocated page (highest allocated is %d)", pageID, fm.highestAllocated)
+	}
+
+	fm.setUsed(pageID, false)
+	return fm.persistBitmap()
+}
+
+// ReadPage reads the page stored at pageID from disk.
+func (fm *FileManager) ReadPage(pageID uint64) (*Page, error) {
+	if err := fm.validDataPageID(pageID); err != nil {
+		return nil, err
+	}
+
+	p := &Page{}
+	offset := int64(pageID) * PageSize
+	if _, err := fm.file.ReadAt(p.buf[:], offset); err != nil {
+		return nil, fmt.Errorf("catalog: reading page %d: %w", pageID, err)
+	}
+	return p, nil
+}
+
+// WritePage writes p to disk at pageID's offset and durably persists it (WriteAt +
+// Sync).
+func (fm *FileManager) WritePage(pageID uint64, p *Page) error {
+	if err := fm.validDataPageID(pageID); err != nil {
+		return err
+	}
+
+	offset := int64(pageID) * PageSize
+	if _, err := fm.file.WriteAt(p.buf[:], offset); err != nil {
+		return fmt.Errorf("catalog: writing page %d: %w", pageID, err)
+	}
+	if err := fm.file.Sync(); err != nil {
+		return fmt.Errorf("catalog: syncing page %d: %w", pageID, err)
+	}
+	return nil
+}
+
+// validDataPageID reports an error if pageID is the reserved free-list page or does
+// not refer to a page that currently exists in the file.
+func (fm *FileManager) validDataPageID(pageID uint64) error {
+	if pageID == freeListPageID {
+		return fmt.Errorf("catalog: page %d is the reserved free-list page, not a data page", pageID)
+	}
+	if pageID > fm.highestAllocated {
+		return fmt.Errorf("catalog: page %d does not exist (highest allocated is %d)", pageID, fm.highestAllocated)
+	}
+	return nil
+}
+
+// --- bitmap helpers ---
+//
+// Bit i (0-indexed) within the bitmap byte region tracks page ID (i+1). This offset
+// exists because page 0 itself is reserved for the bitmap page and is never a valid
+// allocation target.
+
+func (fm *FileManager) bitIndex(pageID uint64) uint64 {
+	return pageID - 1
+}
+
+func (fm *FileManager) isUsed(pageID uint64) bool {
+	bit := fm.bitIndex(pageID)
+	byteOff := bitmapBitsOffset + bit/8
+	mask := byte(1) << (bit % 8)
+	return fm.bitmap[byteOff]&mask != 0
+}
+
+func (fm *FileManager) setUsed(pageID uint64, used bool) {
+	bit := fm.bitIndex(pageID)
+	byteOff := bitmapBitsOffset + bit/8
+	mask := byte(1) << (bit % 8)
+	if used {
+		fm.bitmap[byteOff] |= mask
+	} else {
+		fm.bitmap[byteOff] &^= mask
+	}
+}
+
+// persistBitmap writes the current in-memory highestAllocated + bitmap bytes to page
+// 0 of the file, followed by an fsync, so the free-list survives process restarts.
+func (fm *FileManager) persistBitmap() error {
+	binary.LittleEndian.PutUint64(fm.bitmap[bitmapOffHighestAllocated:], fm.highestAllocated)
+
+	if _, err := fm.file.WriteAt(fm.bitmap[:], 0); err != nil {
+		return fmt.Errorf("catalog: persisting free-list page: %w", err)
+	}
+	if err := fm.file.Sync(); err != nil {
+		return fmt.Errorf("catalog: syncing free-list page: %w", err)
+	}
+	return nil
+}
