@@ -227,6 +227,14 @@ func assertStructuralInvariants(t *testing.T, store *NodeStore, rootID uint64, w
 // keys of this shape), then verifies every inserted key is lookup-able via
 // the real Insert/Lookup path and that structural invariants hold.
 func TestInsertLeafSplit(t *testing.T) {
+	testInsertLeafSplit(t)
+}
+
+// testInsertLeafSplit holds the actual leaf-split assertions and is shared
+// by TestInsertLeafSplit and TestInsertSplit (the latter runs it as a
+// subtest so that `go test -run TestInsertSplit` exercises real split-path
+// coverage, per the acceptance test spec in subtask 1.2.3).
+func testInsertLeafSplit(t *testing.T) {
 	store, alloc := newTestStoreAndAllocator(t)
 
 	// A single 4096-byte NodeSize leaf holds roughly (NodeSize-offBody)/
@@ -255,6 +263,14 @@ func TestInsertLeafSplit(t *testing.T) {
 // exercised because lookup_test.go's buildTestTree scaffolding only built
 // single-key internal nodes).
 func TestInsertInternalSplit(t *testing.T) {
+	testInsertInternalSplit(t)
+}
+
+// testInsertInternalSplit holds the actual internal-split assertions and is
+// shared by TestInsertInternalSplit and TestInsertSplit (the latter runs it
+// as a subtest so that `go test -run TestInsertSplit` exercises real
+// split-path coverage, per the acceptance test spec in subtask 1.2.3).
+func testInsertInternalSplit(t *testing.T) {
 	store, alloc := newTestStoreAndAllocator(t)
 
 	const n = 2000
@@ -299,6 +315,17 @@ func TestInsertInternalSplit(t *testing.T) {
 
 	assertAllLookupable(t, store, rootID, inserted)
 	assertStructuralInvariants(t, store, rootID, n)
+}
+
+// TestInsertSplit is the acceptance-test entry point named in GitHub issue
+// #2's literal spec for subtask 1.2.3 (`go test ./engine/btree/... -run
+// TestInsertSplit`). It exercises both the leaf-split and internal-split
+// scenarios as subtests, reusing the same assertions as TestInsertLeafSplit
+// and TestInsertInternalSplit so `-run TestInsertSplit` actually runs real
+// split-path assertions instead of matching zero tests.
+func TestInsertSplit(t *testing.T) {
+	t.Run("LeafSplit", testInsertLeafSplit)
+	t.Run("InternalSplit", testInsertInternalSplit)
 }
 
 // TestInsertOutOfOrder inserts keys in a shuffled (non-sequential) order to
