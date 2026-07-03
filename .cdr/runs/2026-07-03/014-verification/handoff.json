@@ -1,0 +1,17 @@
+{
+  "subtask": "1.1.5",
+  "verdict": "CHANGES_REQUESTED",
+  "pointers": {
+    "impl": "engine/catalog/catalog.go",
+    "impl_lock_model_comment": "engine/catalog/catalog.go:38-100",
+    "put": "engine/catalog/catalog.go:152-186",
+    "get": "engine/catalog/catalog.go:195-221",
+    "delete": "engine/catalog/catalog.go:225-249",
+    "fmMu_usages": "engine/catalog/catalog.go:254-263 (readSlot), 267-279 (tombstone), 288-326 (insert), 331-351 (tryInsertInto)",
+    "filemanager_shared_state": "engine/catalog/file.go:49-62 (bitmap, highestAllocated), 121-166 (AllocatePage/FreePage), 168-197 (ReadPage/WritePage), 217-237 (bitmap helpers)",
+    "stripe_contention_test": "engine/catalog/catalog_test.go:169-253",
+    "lld": "docs/LLD/catalog.md (Concurrency section)"
+  },
+  "regression_entry": ".cdr/index/regression.jsonl (subtask 1.1.5, high severity, open)",
+  "verification_json": ".cdr/runs/2026-07-03/014-verification/verification.json"
+}

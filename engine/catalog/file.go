@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"sync"
 )
 
 // DefaultCatalogFileName is the conventional repo-relative path callers should use
@@ -38,27 +39,51 @@ const (
 // atomically as a single fixed-size page for the page-count ranges this phase needs
 // (see architecture-discovery.md for the full rationale and capacity numbers).
 //
-// FileManager has no internal locking. It is safe for use in the single-threaded
-// storage-core phase this subtask targets; a future subtask (striped-mutex CRUD, see
-// docs/LLD/catalog.md) is responsible for synchronizing concurrent access to a
-// shared FileManager from multiple goroutines. FileManager also does not implement a
-// write-ahead log; free-list mutations are made durable via a direct WriteAt+Sync of
-// the bitmap page, which is sufficient for this subtask's acceptance criteria but is
-// not a substitute for the WAL that engine/wal/ will provide for full catalog
-// mutations.
+// FileManager has narrow internal locking (see mu below): it is safe for concurrent
+// use by multiple goroutines out of the box, without requiring any external locking
+// from callers. Only the genuinely shared, file-wide bookkeeping state
+// (highestAllocated and the free-list bitmap) is guarded; the actual page I/O
+// (pread/pwrite/fsync) is NOT serialized by FileManager, so concurrent
+// ReadPage/WritePage calls to different, already-allocated pages proceed in
+// parallel — this is safe because distinct pages occupy non-overlapping regions of
+// the underlying file. FileManager also does not implement a write-ahead log;
+// free-list mutations are made durable via a direct WriteAt+Sync of the bitmap page,
+// which is sufficient for this subtask's acceptance criteria but is not a substitute
+// for the WAL that engine/wal/ will provide for full catalog mutations.
 type FileManager struct {
 	file *os.File
 
+	// mu guards ONLY the fields below (bitmap, highestAllocated) and the brief
+	// bitmap-check/bitmap-mutation critical sections in AllocatePage, FreePage, and
+	// validDataPageID's read of highestAllocated. It is deliberately NOT held around
+	// the raw file.ReadAt/WriteAt/Sync syscalls in ReadPage/WritePage/persistBitmap's
+	// disk I/O beyond what's needed to snapshot/mutate this bookkeeping state, so
+	// concurrent operations on different pages/fileIDs are not serialized behind one
+	// another's disk I/O. This is the fix for the over-broad caller-side fmMu lock
+	// that catalog.go previously required: the lock now lives here, scoped to the
+	// actual shared state, and callers need no locking of their own around
+	// FileManager calls.
+	mu sync.Mutex
+
 	// bitmap holds the raw bytes of the free-list page (page 0), including its
 	// header, mirrored in memory for fast lookups. It is kept in sync with the
-	// on-disk copy by persistBitmap after every mutation.
+	// on-disk copy by persistBitmap after every mutation. Guarded by mu.
 	bitmap [PageSize]byte
 
 	// highestAllocated is the highest page ID ever allocated (i.e. the current
 	// file-extension high-water mark). Page IDs 1..highestAllocated are the only
 	// ones that physically exist in the file; each is either used or free per the
-	// bitmap.
+	// bitmap. Guarded by mu.
 	highestAllocated uint64
+
+	// writeDelay, if non-nil, is invoked by WritePage immediately before it performs
+	// its WriteAt+Sync I/O, and specifically AFTER validDataPageID's brief mu section
+	// has already been released. It exists solely so tests (see file_test.go) can
+	// simulate slow disk I/O deterministically, in order to prove that mu is not held
+	// during that I/O (i.e. that other pages'/fileIDs' operations, and AllocatePage/
+	// FreePage, are not serialized behind it). It is always nil in production use;
+	// nothing in this package ever sets it outside of tests.
+	writeDelay func()
 }
 
 // Open opens the catalog file at path, creating it (and its initial free-list page)
@@ -82,7 +107,7 @@ func Open(path string) (*FileManager, error) {
 		// Freshly created (or truncated-to-empty) file: initialize a brand-new,
 		// all-free bitmap page as page 0 and persist it immediately.
 		fm.highestAllocated = 0
-		if err := fm.persistBitmap(); err != nil {
+		if err := fm.persistBitmapLocked(); err != nil {
 			file.Close()
 			return nil, fmt.Errorf("catalog: initializing free-list page for %s: %w", path, err)
 		}
@@ -119,10 +144,13 @@ func (fm *FileManager) Close() error {
 // reusing a previously-freed page ID over extending the file; only when no free page
 // exists does it extend the file by one page.
 func (fm *FileManager) AllocatePage() (uint64, error) {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
 	for id := uint64(1); id <= fm.highestAllocated; id++ {
 		if !fm.isUsed(id) {
 			fm.setUsed(id, true)
-			if err := fm.persistBitmap(); err != nil {
+			if err := fm.persistBitmapLocked(); err != nil {
 				return 0, err
 			}
 			return id, nil
@@ -143,7 +171,7 @@ func (fm *FileManager) AllocatePage() (uint64, error) {
 
 	fm.highestAllocated = newID
 	fm.setUsed(newID, true)
-	if err := fm.persistBitmap(); err != nil {
+	if err := fm.persistBitmapLocked(); err != nil {
 		return 0, err
 	}
 	return newID, nil
@@ -157,12 +185,16 @@ func (fm *FileManager) FreePage(pageID uint64) error {
 	if pageID == freeListPageID {
 		return fmt.Errorf("catalog: cannot free reserved free-list page %d", pageID)
 	}
+
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
 	if pageID == 0 || pageID > fm.highestAllocated {
 		return fmt.Errorf("catalog: cannot free page %d: not an allocated page (highest allocated is %d)", pageID, fm.highestAllocated)
 	}
 
 	fm.setUsed(pageID, false)
-	return fm.persistBitmap()
+	return fm.persistBitmapLocked()
 }
 
 // ReadPage reads the page stored at pageID from disk.
@@ -171,6 +203,8 @@ func (fm *FileManager) ReadPage(pageID uint64) (*Page, error) {
 		return nil, err
 	}
 
+	// Not covered by fm.mu, deliberately: see WritePage's comment below for why
+	// concurrent I/O on distinct pages is safe without serialization.
 	p := &Page{}
 	offset := int64(pageID) * PageSize
 	if _, err := fm.file.ReadAt(p.buf[:], offset); err != nil {
@@ -186,6 +220,15 @@ func (fm *FileManager) WritePage(pageID uint64, p *Page) error {
 		return err
 	}
 
+	// The pread/pwrite/fsync below are intentionally NOT covered by fm.mu: distinct
+	// pageIDs occupy non-overlapping byte ranges of the file, so concurrent I/O on
+	// different pages is safe without synchronization, and serializing it would
+	// reintroduce exactly the cross-fileID contention this locking model exists to
+	// avoid (see the FileManager doc comment above).
+	if fm.writeDelay != nil {
+		fm.writeDelay()
+	}
+
 	offset := int64(pageID) * PageSize
 	if _, err := fm.file.WriteAt(p.buf[:], offset); err != nil {
 		return fmt.Errorf("catalog: writing page %d: %w", pageID, err)
@@ -197,13 +240,19 @@ func (fm *FileManager) WritePage(pageID uint64, p *Page) error {
 }
 
 // validDataPageID reports an error if pageID is the reserved free-list page or does
-// not refer to a page that currently exists in the file.
+// not refer to a page that currently exists in the file. It briefly holds fm.mu only
+// to snapshot highestAllocated consistently; it does not perform any I/O.
 func (fm *FileManager) validDataPageID(pageID uint64) error {
 	if pageID == freeListPageID {
 		return fmt.Errorf("catalog: page %d is the reserved free-list page, not a data page", pageID)
 	}
-	if pageID > fm.highestAllocated {
-		return fmt.Errorf("catalog: page %d does not exist (highest allocated is %d)", pageID, fm.highestAllocated)
+
+	fm.mu.Lock()
+	highest := fm.highestAllocated
+	fm.mu.Unlock()
+
+	if pageID > highest {
+		return fmt.Errorf("catalog: page %d does not exist (highest allocated is %d)", pageID, highest)
 	}
 	return nil
 }
@@ -236,9 +285,12 @@ func (fm *FileManager) setUsed(pageID uint64, used bool) {
 	}
 }
 
-// persistBitmap writes the current in-memory highestAllocated + bitmap bytes to page
-// 0 of the file, followed by an fsync, so the free-list survives process restarts.
-func (fm *FileManager) persistBitmap() error {
+// persistBitmapLocked writes the current in-memory highestAllocated + bitmap bytes to
+// page 0 of the file, followed by an fsync, so the free-list survives process
+// restarts. Callers must already hold fm.mu (or, as in Open, be certain no other
+// goroutine yet has a reference to fm), since it reads/mutates the shared bitmap
+// field in place.
+func (fm *FileManager) persistBitmapLocked() error {
 	binary.LittleEndian.PutUint64(fm.bitmap[bitmapOffHighestAllocated:], fm.highestAllocated)
 
 	if _, err := fm.file.WriteAt(fm.bitmap[:], 0); err != nil {

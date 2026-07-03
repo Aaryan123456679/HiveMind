@@ -1,0 +1,42 @@
+{
+  "subtask": "1.1.5",
+  "run": "2026-07-03-015-implementation-fix",
+  "checks": [
+    {
+      "cmd": "go build ./engine/...",
+      "result": "pass"
+    },
+    {
+      "cmd": "go vet ./engine/catalog/...",
+      "result": "pass"
+    },
+    {
+      "cmd": "go test ./engine/catalog/... -run TestCatalog -race -v -count=1",
+      "result": "pass",
+      "notes": "All TestCatalog* tests pass, including TestCatalogConcurrentDistinctFileIDs (previously failed with a real torn-read/lost-update bug after removing fmMu, fixed by adding pageStripes) and TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO (new contention proof)."
+    },
+    {
+      "cmd": "go test ./engine/catalog/... -run TestCatalogFileManager -race -v -count=1",
+      "result": "pass",
+      "notes": "1.1.3 FileManager tests (TestCatalogFileManager) still pass unchanged with the new internal mu locking; TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO also matches this -run pattern and passes."
+    },
+    {
+      "cmd": "go test ./engine/catalog/... -race -v -count=1 (full package)",
+      "result": "pass",
+      "notes": "Full engine/catalog suite green under -race: Catalog, FileManager, FileIDAllocator, Page, Record tests all pass. ~63-67s wall time (dominated by pre-existing TestFileIDAllocator concurrent test, unrelated to this fix)."
+    },
+    {
+      "cmd": "gofmt -l engine/catalog/",
+      "result": "pass",
+      "notes": "no formatting diffs"
+    }
+  ],
+  "matrix_coverage": {
+    "narrow_lock_guards_only_shared_state": "covered by file_test.go's existing TestCatalogFileManager suite (unchanged pass) plus manual code review of file.go's mu field/comment",
+    "fmMu_removed_from_catalog": "confirmed by grep: no remaining references to fmMu in catalog.go",
+    "concurrent_ops_different_fileIDs_do_not_block": "covered by TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs (record-stripe level, unchanged) and the new TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO (FileManager-internal-lock level)",
+    "same_physical_page_correctness_preserved": "covered by TestCatalogConcurrentDistinctFileIDs (300 fileIDs x 4 workers, round-trip + final-state assertions, -race clean) — this is what caught the pageStripes gap during development of this fix",
+    "doc_comment_accuracy": "manually reviewed catalog.go's Catalog doc comment; now describes stripes + indexMu + pageStripes + FileManager's own internal lock accurately"
+  },
+  "overall": "pass"
+}

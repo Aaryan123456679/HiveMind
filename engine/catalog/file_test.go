@@ -3,7 +3,9 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestCatalogFileManager exercises the full test spec for subtask 1.1.3: create a
@@ -204,4 +206,122 @@ func TestCatalogFileManager(t *testing.T) {
 			t.Fatalf("FreePage(%d) on a page believed still-in-use after reopen failed: %v; the reopened free-list state is inconsistent", stillUsed, err)
 		}
 	})
+}
+
+// TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO is the contention-proof
+// test for subtask 1.1.5's fix: it demonstrates that FileManager's internal narrow
+// lock (the unexported mu field in file.go, guarding only highestAllocated/bitmap
+// bookkeeping) is NOT held for the duration of ReadPage/WritePage's actual disk I/O.
+//
+// Before the fix, catalog.go held a single caller-side fmMu sync.Mutex around every
+// FileManager call, including WritePage's synchronous WriteAt+Sync — meaning an
+// AllocatePage (or ReadPage/WritePage on a completely unrelated page) would have to
+// wait for another in-flight WritePage's full I/O duration to complete before it
+// could even begin. This test uses the writeDelay test hook (file.go) to simulate a
+// slow WritePage and proves that:
+//
+//  1. AllocatePage, which needs FileManager's narrow internal lock, completes quickly
+//     even while an unrelated page's WritePage call is stuck mid-I/O.
+//  2. ReadPage on a different, already-allocated page also completes quickly under
+//     the same conditions.
+//
+// If FileManager's internal lock were (incorrectly) held around the I/O instead of
+// just the bookkeeping check/mutation, both assertions below would time out.
+func TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.dat")
+
+	fm, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(%q) = _, %v; want nil error", path, err)
+	}
+	defer fm.Close()
+
+	pageA, err := fm.AllocatePage()
+	if err != nil {
+		t.Fatalf("AllocatePage() for pageA: %v", err)
+	}
+	pageB, err := fm.AllocatePage()
+	if err != nil {
+		t.Fatalf("AllocatePage() for pageB: %v", err)
+	}
+
+	seedA := NewPage()
+	if _, err := seedA.InsertSlot([]byte("seed-a")); err != nil {
+		t.Fatalf("seeding pageA: %v", err)
+	}
+	if err := fm.WritePage(pageA, seedA); err != nil {
+		t.Fatalf("WritePage(pageA) seed: %v", err)
+	}
+	seedB := NewPage()
+	if _, err := seedB.InsertSlot([]byte("seed-b")); err != nil {
+		t.Fatalf("seeding pageB: %v", err)
+	}
+	if err := fm.WritePage(pageB, seedB); err != nil {
+		t.Fatalf("WritePage(pageB) seed: %v", err)
+	}
+
+	// Install a hook that blocks WritePage's I/O (after its brief mu-guarded
+	// validDataPageID check has already released mu) until release is closed,
+	// simulating a slow fsync without holding fm.mu.
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+	fm.writeDelay = func() {
+		once.Do(func() { close(entered) })
+		<-release
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		slowPage := NewPage()
+		if _, err := slowPage.InsertSlot([]byte("slow-write")); err != nil {
+			writeDone <- err
+			return
+		}
+		writeDone <- fm.WritePage(pageA, slowPage)
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("test setup bug: WritePage(pageA) never reached the writeDelay hook")
+	}
+
+	// Assertion 1: AllocatePage (needs FileManager's narrow internal lock) must not
+	// block behind pageA's in-flight, artificially slow WritePage.
+	allocDone := make(chan error, 1)
+	go func() {
+		_, err := fm.AllocatePage()
+		allocDone <- err
+	}()
+	select {
+	case err := <-allocDone:
+		if err != nil {
+			t.Fatalf("AllocatePage() while pageA's WritePage was mid-I/O: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("AllocatePage blocked behind an unrelated page's in-flight WritePage I/O — the internal lock is too broad")
+	}
+
+	// Assertion 2: ReadPage on a different, already-allocated page must also proceed
+	// without waiting for pageA's slow WritePage to finish.
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := fm.ReadPage(pageB)
+		readDone <- err
+	}()
+	select {
+	case err := <-readDone:
+		if err != nil {
+			t.Fatalf("ReadPage(pageB) while pageA's WritePage was mid-I/O: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReadPage(pageB) blocked behind an unrelated page's in-flight WritePage I/O — the internal lock is too broad")
+	}
+
+	close(release)
+	if err := <-writeDone; err != nil {
+		t.Fatalf("delayed WritePage(pageA) = %v; want nil error", err)
+	}
 }

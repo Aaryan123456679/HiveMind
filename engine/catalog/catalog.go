@@ -12,6 +12,23 @@ import (
 // the same lock."
 const numStripes = 256
 
+// numPageStripes is the number of striped mutexes guarding the read-modify-write
+// page sequence (ReadPage -> mutate in-memory Page -> WritePage) against concurrent
+// callers that happen to target the SAME physical pageID. This is necessary and
+// orthogonal to numStripes/stripeFor above: many distinct fileIDs' records can be
+// packed onto the same physical page (see page.go's slotted layout), so two
+// operations on DIFFERENT fileIDs' stripes can still race on the same underlying
+// page (e.g. one fileID's tombstone racing another fileID's insert into the same
+// shared active page) unless that specific pageID's read-modify-write sequence is
+// serialized. FileManager's own internal lock (file.go's mu) does not and should not
+// cover this: it only protects FileManager's own bookkeeping (highestAllocated,
+// bitmap), not the caller-orchestrated, multi-call page mutation sequences that live
+// here in Catalog. Keying by pageID (rather than reusing the fileID stripes) keeps
+// this narrowly scoped to pages that are ACTUALLY shared, so operations on different
+// fileIDs whose records live on different pages still proceed without blocking each
+// other.
+const numPageStripes = 256
+
 // ErrNotFound is the sentinel error returned by Get and Delete when the requested
 // fileID has no corresponding CatalogRecord. Callers should use errors.Is(err,
 // ErrNotFound) rather than string-matching; both Get and Delete wrap it with the
@@ -54,29 +71,25 @@ type location struct {
 //     is only ever brief (a map read or map write), never for the duration of a
 //     page I/O.
 //
-//  3. fmMu sync.Mutex, serializing every call into the shared *FileManager (fm.go's
-//     AllocatePage/FreePage/ReadPage/WritePage). This is a necessary, deliberate
-//     departure from pure per-fileID striping: FileManager (1.1.3) is explicitly
-//     documented as having "no internal locking... a future subtask (striped-mutex
-//     CRUD) is responsible for synchronizing concurrent access to a shared
-//     FileManager" — and its internal state (highestAllocated, the free-list bitmap)
-//     is genuinely shared, file-wide state, not state scoped to any one page or
-//     fileID. Two different fileIDs' operations can legitimately touch the very same
-//     physical page (many records fit per 4KB page) or mutate the very same
-//     highestAllocated/bitmap fields (via AllocatePage/FreePage), so per-fileID
-//     stripes alone cannot safely guard FileManager's own internals — a genuine
-//     torn-read/data-race was observed under `go test -race` during this subtask's
-//     development when only per-fileID stripes were used, confirming this is required
-//     for correctness, not just caution. fmMu critical sections are kept as short as
-//     possible (wrapping only the direct FileManager call, never a whole Put/Get/
-//     Delete), so this does not reintroduce a single global lock over the CRUD API's
-//     own logic (encode/decode, index lookups still use their own, finer-grained
-//     locks); it does mean actual disk I/O throughput is currently bounded by
-//     FileManager's lack of internal concurrency support, which is an accurate
-//     reflection of 1.1.3's documented single-threaded design, not a defect
-//     introduced by this subtask. A future optimization (once FileManager itself
-//     gains finer-grained internal locking, e.g. per-page or per-bitmap-region) could
-//     shrink or remove this lock's scope; not needed for 1.1.5's acceptance criteria.
+//  3. FileManager's own internal lock (fm.go's unexported mu field), which Catalog
+//     does NOT need to take itself and has no access to. FileManager (1.1.3) now
+//     synchronizes its own genuinely shared, file-wide bookkeeping state
+//     (highestAllocated, the free-list bitmap) internally, guarding only the brief
+//     bitmap-check/bitmap-mutation critical sections inside AllocatePage, FreePage,
+//     and the highestAllocated read inside validDataPageID — never the actual
+//     pread/pwrite/fsync page I/O, which is safe to run concurrently across distinct
+//     pages/fileIDs without any coordination (different pages occupy non-overlapping
+//     file regions). This means Catalog.readSlot/tombstone/insert/tryInsertInto call
+//     FileManager methods (ReadPage/WritePage/AllocatePage/FreePage) directly, with no
+//     additional locking of their own around them: an earlier version of this file had
+//     a caller-side fmMu sync.Mutex wrapping every FileManager call, which incorrectly
+//     serialized ALL operations (including the expensive synchronous fsync in
+//     WritePage) across every fileID regardless of which page or stripe they touched —
+//     directly contradicting docs/LLD/catalog.md's "unrelated files never contend on
+//     the same lock" design goal. That caller-side lock has been removed; the narrow
+//     fix now lives inside FileManager itself (see file.go's FileManager doc comment
+//     and the mu field), where it belongs, since the state being protected is
+//     FileManager's own, not Catalog's.
 //
 // Known gap (intentionally out of scope for 1.1.5, not a regression introduced here):
 // NewCatalog does not scan .meta/catalog.dat on load to rebuild the in-memory index
@@ -103,6 +116,14 @@ type Catalog struct {
 
 	stripes [numStripes]sync.Mutex
 
+	// pageStripes guards the read-modify-write page sequence (ReadPage -> mutate ->
+	// WritePage) against concurrent callers targeting the same physical pageID, keyed
+	// by pageStripeFor(pageID). See numPageStripes' doc comment above for why this is
+	// necessary and distinct from both stripes (keyed by fileID) and FileManager's
+	// own internal lock (keyed by nothing — it only guards FileManager's own
+	// bookkeeping, not page contents).
+	pageStripes [numPageStripes]sync.Mutex
+
 	indexMu sync.RWMutex
 	index   map[uint64]location
 
@@ -113,9 +134,6 @@ type Catalog struct {
 	// once real throughput needs justify the added bookkeeping complexity.
 	activeMu     sync.Mutex
 	activePageID uint64 // 0 means "no active page allocated yet this process"
-
-	// fmMu serializes every call into fm (see locking model item 3 above).
-	fmMu sync.Mutex
 }
 
 // NewCatalog wraps fm (an already-open FileManager, see file.go) in a Catalog CRUD
@@ -136,6 +154,12 @@ func NewCatalog(fm *FileManager) *Catalog {
 // ever matter; it is not required for this subtask's acceptance criteria.
 func stripeFor(fileID uint64) uint64 {
 	return fileID % numStripes
+}
+
+// pageStripeFor returns the page-stripe index for pageID (see numPageStripes' doc
+// comment for what this protects and why it's keyed separately from stripeFor).
+func pageStripeFor(pageID uint64) uint64 {
+	return pageID % numPageStripes
 }
 
 // Put inserts or overwrites the CatalogRecord for rec.FileID. If a record already
@@ -248,12 +272,14 @@ func (c *Catalog) Delete(fileID uint64) error {
 	return nil
 }
 
-// readSlot reads and returns the raw encoded bytes stored at loc, serialized against
-// concurrent FileManager access via fmMu (see the Catalog doc comment, locking model
-// item 3).
+// readSlot reads and returns the raw encoded bytes stored at loc. No additional
+// locking around the FileManager call is needed here: FileManager synchronizes its
+// own internal shared state itself (see file.go), and distinct pages'/fileIDs' I/O
+// proceeds concurrently without contention.
 func (c *Catalog) readSlot(loc location) ([]byte, error) {
-	c.fmMu.Lock()
-	defer c.fmMu.Unlock()
+	pageStripe := pageStripeFor(loc.pageID)
+	c.pageStripes[pageStripe].Lock()
+	defer c.pageStripes[pageStripe].Unlock()
 
 	page, err := c.fm.ReadPage(loc.pageID)
 	if err != nil {
@@ -262,11 +288,16 @@ func (c *Catalog) readSlot(loc location) ([]byte, error) {
 	return page.ReadSlot(loc.slotID)
 }
 
-// tombstone deletes the slot at loc and durably writes the page back, serialized
-// against concurrent FileManager access via fmMu.
+// tombstone deletes the slot at loc and durably writes the page back. The
+// pageStripes lock (keyed by loc.pageID) is required here, in addition to
+// FileManager needing no locking of its own (see readSlot's comment above):
+// tombstone's ReadPage -> mutate -> WritePage sequence must be atomic with respect
+// to any other operation (insert, another tombstone) touching the SAME physical
+// page, since distinct fileIDs' records commonly share a page.
 func (c *Catalog) tombstone(loc location) error {
-	c.fmMu.Lock()
-	defer c.fmMu.Unlock()
+	pageStripe := pageStripeFor(loc.pageID)
+	c.pageStripes[pageStripe].Lock()
+	defer c.pageStripes[pageStripe].Unlock()
 
 	page, err := c.fm.ReadPage(loc.pageID)
 	if err != nil {
@@ -282,9 +313,8 @@ func (c *Catalog) tombstone(loc location) error {
 // or allocating a fresh page via FileManager.AllocatePage otherwise. It returns the
 // location the data was written to, after durably writing the page (WritePage's
 // WriteAt+Sync) so the insert is durable before insert returns. activeMu serializes
-// concurrent inserts' view of "which page is currently active"; fmMu (taken by the
-// tryInsertInto/allocate-new-page helpers below) separately serializes the actual
-// FileManager calls, per the Catalog doc comment's locking model item 3.
+// concurrent inserts' view of "which page is currently active"; FileManager calls
+// need no additional locking from Catalog (see readSlot's comment above).
 func (c *Catalog) insert(data []byte) (location, error) {
 	c.activeMu.Lock()
 	defer c.activeMu.Unlock()
@@ -299,27 +329,32 @@ func (c *Catalog) insert(data []byte) (location, error) {
 		// bookkeeping) — fall through and allocate a fresh page below.
 	}
 
-	c.fmMu.Lock()
 	pageID, err := c.fm.AllocatePage()
 	if err != nil {
-		c.fmMu.Unlock()
 		return location{}, fmt.Errorf("allocating new page: %w", err)
 	}
+
+	// pageID was just allocated by us, under activeMu, and cannot yet be referenced
+	// by any existing location in the index (it has never held a record before), so
+	// no other goroutine can be concurrently reading/mutating it via tombstone or
+	// tryInsertInto at this point. The pageStripes lock is still taken here (rather
+	// than skipped as an optimization) purely for defense-in-depth/consistency with
+	// every other ReadPage/WritePage-around-mutation sequence in this file.
+	pageStripe := pageStripeFor(pageID)
+	c.pageStripes[pageStripe].Lock()
+	defer c.pageStripes[pageStripe].Unlock()
 
 	page := NewPage()
 	slotID, err := page.InsertSlot(data)
 	if err != nil {
-		c.fmMu.Unlock()
 		// A brand-new, empty page failing to hold a single record would indicate
 		// data larger than PageSize, which Encode's fixed RecordEncodedSize should
 		// never produce; surface the error rather than masking it.
 		return location{}, fmt.Errorf("inserting into freshly allocated page %d: %w", pageID, err)
 	}
 	if err := c.fm.WritePage(pageID, page); err != nil {
-		c.fmMu.Unlock()
 		return location{}, fmt.Errorf("writing freshly allocated page %d: %w", pageID, err)
 	}
-	c.fmMu.Unlock()
 
 	c.activePageID = pageID
 	return location{pageID: pageID, slotID: slotID}, nil
@@ -329,8 +364,9 @@ func (c *Catalog) insert(data []byte) (location, error) {
 // ok=false (with no error) if the page does not have room, so the caller can fall
 // back to allocating a new page.
 func (c *Catalog) tryInsertInto(pageID uint64, data []byte) (location, bool, error) {
-	c.fmMu.Lock()
-	defer c.fmMu.Unlock()
+	pageStripe := pageStripeFor(pageID)
+	c.pageStripes[pageStripe].Lock()
+	defer c.pageStripes[pageStripe].Unlock()
 
 	page, err := c.fm.ReadPage(pageID)
 	if err != nil {

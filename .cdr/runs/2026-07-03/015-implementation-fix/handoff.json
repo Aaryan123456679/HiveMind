@@ -1,0 +1,57 @@
+{
+  "subtask": "1.1.5",
+  "run": "2026-07-03-015-implementation-fix",
+  "status": "completed",
+  "for": "cdr-verify",
+  "summary": "Fixed CHANGES_REQUESTED finding from run 014-verification: moved FileManager synchronization from a caller-side global fmMu (catalog.go) into a narrow internal lock inside FileManager itself, and added a second narrow pageID-keyed striped lock in Catalog to preserve correctness for records that share a physical page.",
+  "pointers": {
+    "new_lock_field": {
+      "name": "mu",
+      "type": "sync.Mutex",
+      "location": "engine/catalog/file.go (FileManager struct, ~line 55; doc comment ~line 32-48)",
+      "guards": "highestAllocated (line ~66) and bitmap [PageSize]byte (line ~59), plus the brief bitmap-check/mutation critical sections inside AllocatePage (~line 121), FreePage (~line 156), and the highestAllocated read inside validDataPageID (~line 199). Does NOT guard the pread/pwrite/fsync syscalls in ReadPage/WritePage.",
+      "helper_renamed": "persistBitmap -> persistBitmapLocked (must be called with mu already held)"
+    },
+    "test_hook_field": {
+      "name": "writeDelay",
+      "type": "func()",
+      "location": "engine/catalog/file.go (FileManager struct, ~line 68)",
+      "purpose": "test-only hook invoked by WritePage right before its WriteAt+Sync I/O, after validDataPageID's brief mu section has released; nil in production, set only by file_test.go"
+    },
+    "fmMu_removed": {
+      "confirmed": true,
+      "evidence": "grep -n fmMu engine/catalog/catalog.go returns no matches; readSlot/tombstone/insert/tryInsertInto call FileManager methods directly with no Catalog-side lock around them"
+    },
+    "new_lock_added_for_correctness": {
+      "name": "pageStripes",
+      "type": "[256]sync.Mutex",
+      "location": "engine/catalog/catalog.go (Catalog struct, ~line 130; const numPageStripes ~line 15; func pageStripeFor ~line 160)",
+      "why": "Not requested by the finding directly, but required: removing the global fmMu exposed a real, previously-masked torn-read/lost-update race in TestCatalogConcurrentDistinctFileIDs, because distinct fileIDs commonly share the same physical page and readSlot/tombstone/insert/tryInsertInto each do a non-atomic ReadPage->mutate->WritePage sequence. pageStripes (keyed by pageID % 256, orthogonal to the fileID-keyed stripes) makes each pageID's read-modify-write sequence atomic across different callers without reintroducing cross-fileID contention for fileIDs on different pages.",
+      "used_by": ["readSlot", "tombstone", "tryInsertInto", "insert (new-page branch)"]
+    },
+    "doc_comment_fixed": {
+      "location": "engine/catalog/catalog.go, Catalog struct doc comment (~lines 28-100)",
+      "now_describes": "stripes (fileID-keyed record-level lock), indexMu (index map RWMutex), pageStripes (pageID-keyed physical-page lock), and FileManager's own internal mu (bookkeeping-only, not exposed to Catalog)"
+    },
+    "contention_proof_test": {
+      "name": "TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO",
+      "location": "engine/catalog/file_test.go",
+      "proves": "AllocatePage and ReadPage (on a different, already-allocated page) both complete within a 2s bound while a separate WritePage call is deliberately held mid-I/O via the writeDelay hook, demonstrating FileManager's internal mu is not held for the duration of page I/O"
+    },
+    "pre_existing_test_unaffected": {
+      "name": "TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs",
+      "location": "engine/catalog/catalog_test.go",
+      "status": "unchanged, still passes"
+    }
+  },
+  "test_results": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "go_test_TestCatalog_race": "pass",
+    "go_test_TestCatalogFileManager_race": "pass",
+    "go_test_full_package_race": "pass (~63-67s, dominated by pre-existing TestFileIDAllocator)"
+  },
+  "no_self_verification": true,
+  "no_push": true,
+  "next_step": "run /cdr:verify against this fix"
+}

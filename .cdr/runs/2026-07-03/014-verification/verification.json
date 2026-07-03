@@ -1,0 +1,61 @@
+{
+  "subtask": "1.1.5",
+  "title": "Striped-mutex catalog CRUD API (Put/Get/Delete by fileID)",
+  "verdict": "CHANGES_REQUESTED",
+  "summary": "Correctness (round-trip, not-found handling, race-clean concurrent test across distinct fileIDs) all hold up. However, the added fmMu sync.Mutex wraps every FileManager.ReadPage/WritePage/AllocatePage call end-to-end, including the WritePage fsync -- the dominant cost of every Put/Get/Delete. This was empirically confirmed (probe test) to serialize Get/Put/Delete calls for DIFFERENT fileIDs on DIFFERENT stripes/pages behind one goroutine's fmMu hold. That directly contradicts the LLD's explicit design goal ('unrelated files never contend on the same lock') and the literal acceptance criterion ('concurrent ops on DIFFERENT fileIDs proceed without blocking each other'). The shipped stripe-contention test (TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs) only exercises the record-stripe locks, never fmMu, so it structurally cannot detect this -- it proves the stripe mechanism works, not that the design goal holds end-to-end. A narrower fix exists (scope a lock to just FileManager's own shared mutable state -- highestAllocated/bitmap -- rather than around the ReadPage/WritePage/AllocatePage calls themselves) that would have preserved cross-fileID I/O concurrency; the implementer chose the coarser global-fmMu fix instead.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "fail",
+      "evidence": "Put/Get/Delete signatures match spec exactly (engine/catalog/catalog.go:152,195,225). Not-found handling correct (ErrNotFound wrapped via %w, no panic, no silent success: catalog.go:207-209, 241-243, tested in TestCatalogGetDeleteNotFound). BUT the core striping requirement ('unrelated files never contend on the same lock', docs/LLD/catalog.md line ~29) is violated in substance: fmMu (catalog.go:118, 254-263, 267-279, 288-326, 331-351) is acquired around every ReadPage/WritePage/AllocatePage call, and WritePage performs a synchronous fsync (file.go:184-197) inside that lock. Confirmed via an ad-hoc probe test (written and run, then removed -- not part of the deliverable) that holding fmMu from one goroutine blocks Get() for a completely different fileID (different stripe, different page) for the full hold duration. This is a real, load-bearing violation of the acceptance criterion 'concurrent ops on DIFFERENT fileIDs proceed without blocking each other', not merely a theoretical one."
+    },
+    "architecture_conformance": {
+      "status": "fail",
+      "evidence": "docs/LLD/catalog.md's Concurrency section states the striped-mutex design exists specifically 'so unrelated files never contend on the same lock.' The implementation adds a third lock (fmMu) that is broader than necessary: FileManager's actual data race is narrowly in its own unsynchronized shared fields (highestAllocated read by validDataPageID/ReadPage/WritePage, written by AllocatePage/FreePage; bitmap array read/written by isUsed/setUsed/persistBitmap -- file.go:49-62, 121-166, 217-237). A correctly-scoped fix would put a small internal mutex around just those field accesses inside FileManager (or narrow fmMu to guard only the highestAllocated/bitmap touch points), leaving the actual pread/pwrite+fsync syscalls in ReadPage/WritePage free to run concurrently for different pages/fileIDs (os-level positional I/O to non-overlapping file regions is inherently safe without app-level locking). Instead, fmMu wraps the entire ReadPage-then-page-local-op-then-WritePage sequence in readSlot, tombstone, insert, and tryInsertInto (catalog.go:254-263,267-279,288-326,331-351), which serializes the fsync-dominated I/O path across ALL fileIDs regardless of stripe. The in-code doc comment (catalog.go:57-79) acknowledges the tradeoff exists but understates its scope, asserting fmMu 'does not reintroduce a single global lock over the CRUD API's own logic' -- true only for encode/decode/index bookkeeping, not for the disk I/O that dominates each operation's wall-clock cost."
+    },
+    "regression_risk": {
+      "status": "pass_with_comments",
+      "evidence": "No regressions in already-verified modules (Page/1.1.2, FileManager/1.1.3, IDAllocator/1.1.4); go vet and go build both clean, full package test suite (67s) passes race-clean including all prior subtasks' tests (TestCatalogFileManager, TestFileIDAllocator, TestSlottedPage*, TestRecordEncodeDecode). The activeMu single-shared-active-page design (catalog.go:109-116, already documented as a deliberate simplicity tradeoff) is a second, independent source of cross-fileID contention on the insert-new-page path, compounding the fmMu issue; not new regression risk introduced by this subtask but worth flagging alongside it since both erode the striping design's benefit."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Get/Delete on nonexistent fileID: verified via TestCatalogGetDeleteNotFound, returns wrapped ErrNotFound, no panic, no silent success (catalog.go:207-209,241-243). InvalidFileID guarded on all three methods. Put's delete-then-reinsert window for the SAME fileID is protected end-to-end by that fileID's stripe lock (held for the whole Put, catalog.go:163-164), so a concurrent Get on the same fileID cannot observe a torn intermediate state -- confirmed both by code inspection and by TestCatalogConcurrentDistinctFileIDs / round-trip test passing under -race."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No externally-facing surface in this subtask; no secrets, no injection vectors. fileID is a uint64 validated against InvalidFileID sentinel before use."
+    },
+    "performance": {
+      "status": "fail",
+      "evidence": "See architecture_conformance: fmMu serializes fsync-bound disk I/O across all fileIDs/pages, which is the actual throughput bottleneck this subtask's design (striping) exists to avoid. Under real concurrent load from many distinct fileIDs, throughput will be effectively single-threaded on the I/O path despite the striped record-level locks, i.e. no better than a global lock for write-heavy workloads."
+    },
+    "maintainability": {
+      "status": "pass_with_comments",
+      "evidence": "Code is clearly commented and the locking model is explicitly documented (rare and appreciated), but the documentation's framing ('fmMu critical sections are kept as short as possible... wrapping only the direct FileManager call') is misleading relative to what the code actually does (wraps a full read-modify-write page sequence including the fsync, not just a single direct call), which could mislead a future maintainer into believing the concurrency tradeoff is smaller than it is."
+    },
+    "test_coverage": {
+      "status": "fail",
+      "evidence": "The stripe-contention test (TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs, catalog_test.go:169-253) only ever holds a stripe lock (c.stripes[heldStripe]) directly, never fmMu, so it structurally cannot detect fmMu-induced cross-fileID contention -- it passes in both a correctly-striped implementation AND in one where every operation's I/O is fully globally serialized via fmMu (which is exactly the case here, confirmed via an ad hoc probe test that held fmMu directly and observed Get() for an unrelated fileID/stripe/page block for the full hold duration). No test in the suite exercises or asserts anything about fmMu's scope or its effect on cross-fileID throughput, despite this being the single most architecturally significant risk in the change. Round-trip, not-found, and race-detector coverage are otherwise solid (TestCatalogPutGetDeleteRoundTrip, TestCatalogGetDeleteNotFound, TestCatalogConcurrentDistinctFileIDs verify every record's exact final state, not just 'no crash')."
+    },
+    "confidence": {
+      "status": "medium",
+      "evidence": "High confidence in the correctness findings (verified by reading code + running tests + an empirical probe). Medium-not-low because the underlying FileManager race is real and the implementer's choice, while coarser than necessary, is not incorrect -- it is a legitimate, documented tradeoff that a reviewer could reasonably accept for this phase if the acceptance criterion's 'never contend' language is read as applying only to the record-level stripe locks rather than to all locking introduced by this subtask. That reading is plausible but not what the LLD's plain language nor the acceptance criteria say."
+    },
+    "possible_improvements": [
+      "Scope a lock to FileManager's own internal shared state (highestAllocated + bitmap) rather than wrapping ReadPage/WritePage/AllocatePage's entire bodies in fmMu -- e.g. add a small internal sync.Mutex or atomic operations inside FileManager guarding just those fields, letting concurrent ReadPage/WritePage calls to different pages proceed via the OS's inherently-safe positional pread/pwrite.",
+      "Add a dedicated test that holds fmMu directly (mirroring the existing stripe-contention test's technique) and asserts Get/Put/Delete for a DIFFERENT fileID/page still completes promptly -- this is the actual acceptance-criterion-relevant test that is currently missing.",
+      "Reconsider the single shared activePageID (activeMu) for the same reason -- it is a second global bottleneck on the insert path independent of fmMu.",
+      "Tighten the doc comment's claim about fmMu's scope to accurately reflect that it wraps a full page read-modify-write (including fsync), not just 'the direct FileManager call'."
+    ]
+  },
+  "tests_run": [
+    {"cmd": "go test ./engine/catalog/... -run TestCatalog -race -v -count=1", "result": "PASS", "duration": "~15.9s (implementer reported ~13s)"},
+    {"cmd": "go test ./engine/catalog/... -race -v -count=1", "result": "PASS", "duration": "~67.4s (implementer reported ~59s)"},
+    {"cmd": "go vet ./engine/catalog/...", "result": "clean"},
+    {"cmd": "go build ./engine/...", "result": "clean"},
+    {"cmd": "ad hoc probe test (written to engine/catalog/fmmu_probe_test.go, run, then deleted -- not part of the deliverable)", "result": "CONFIRMED fmMu blocks Get() for an unrelated fileID/stripe/page while held by another goroutine"}
+  ],
+  "required_changes": [
+    "Narrow fmMu's scope (or move the synchronization into FileManager itself, guarding only highestAllocated/bitmap) so that ReadPage/WritePage/AllocatePage calls for DIFFERENT pages/fileIDs do not serialize behind one shared mutex, per docs/LLD/catalog.md's explicit 'unrelated files never contend on the same lock' design goal and the acceptance criterion 'concurrent ops on DIFFERENT fileIDs proceed without blocking each other'.",
+    "Add a test that actually exercises fmMu contention across different fileIDs (the current stripe-contention test does not and cannot detect this issue)."
+  ]
+}
