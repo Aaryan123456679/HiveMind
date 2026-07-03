@@ -1,0 +1,29 @@
+{
+  "run_id": "2026-07-04-039-implementation",
+  "subtask": "1.3.3",
+  "status": "implemented",
+  "commit": "PENDING_FILL_AFTER_COMMIT",
+  "files": [
+    "engine/wal/checkpoint.go",
+    "engine/wal/checkpoint_test.go"
+  ],
+  "index_updates": [
+    ".cdr/index/file.jsonl (2 new entries: engine/wal/checkpoint.go, engine/wal/checkpoint_test.go)",
+    ".cdr/index/task.jsonl (new entry task-1.3.3, state=implemented)"
+  ],
+  "key_pointers": {
+    "checkpoint_pointer_type": "engine/wal/checkpoint.go: CheckpointPointer{SegmentNumber uint64, OffsetInSegment int64} -- JSON-tagged segment_number/offset_in_segment",
+    "write_path": "engine/wal/checkpoint.go: Checkpoint(dir, segmentNumber, offsetInSegment) -- marshals CheckpointPointer, writes manifest.json.tmp, Sync()s it, os.Rename to manifest.json (atomic, matches engine/btree/persist.go's SaveRoot temp-file+Sync+rename precedent)",
+    "read_path": "engine/wal/checkpoint.go: LoadCheckpoint(dir) (segmentNumber uint64, offsetInSegment int64, found bool, err error) -- found=false, err=nil if manifest.json absent (os.IsNotExist)",
+    "archival_identification": "engine/wal/checkpoint.go: ArchivableSegments(dir, checkpointSegmentNumber) ([]string, error) -- lists wal-<N>.log paths with N < checkpointSegmentNumber, sorted ascending; identification only, no deletion",
+    "offset_semantics_confirmed": "Writer.Append's returned offset (writer.go) is per-segment (w.size before write, reset to 0 on rotation), not global -- this is why CheckpointPointer is a (segmentNumber, offsetInSegment) tuple, not a single integer",
+    "tests": "engine/wal/checkpoint_test.go: TestCheckpointManifest (literal issue-spec'd test name; write across >=2 rotations, checkpoint mid-way, round-trip via LoadCheckpoint, assert ArchivableSegments == exactly segments strictly before checkpoint segment, negative-check checkpoint's own + later segments excluded), TestLoadCheckpointNoManifest (fresh dir -> found=false, err=nil)"
+  },
+  "downstream_notes_for_1.3.4": [
+    "Recovery replay should call LoadCheckpoint(dir) to get (segmentNumber, offsetInSegment, found); if found, resume reading from wal-<segmentNumber>.log starting at byte offsetInSegment (need a partial-segment-read helper, since ReadSegment(1.3.1) parses a whole file from offset 0 -- 1.3.4 may need a variant or an offset-aware wrapper), then continue through any higher-numbered segments in full. If found=false, replay everything from segment 0.",
+    "ArchivableSegments only identifies eligible segment paths; actual deletion/archival is out of scope and not yet assigned to a specific subtask in the issue's checklist as read.",
+    "docs/LLD/wal.md remains scaffold-only (flagged again across three consecutive subtasks now: 1.3.1, 1.3.2, 1.3.3); a dedicated LLD-sync pass is recommended before or alongside 1.3.4."
+  ],
+  "verification_delegated_to": "/cdr:verify (not self-verified per invariant I4)",
+  "no_push": true
+}

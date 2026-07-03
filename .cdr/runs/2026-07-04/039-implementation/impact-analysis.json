@@ -1,0 +1,44 @@
+{
+  "subtask": "1.3.3",
+  "risk_level": "medium",
+  "risk_rationale": "Defines the checkpoint-pointer format (segment number + in-segment byte offset) and manifest.json's on-disk JSON schema that subtask 1.3.4's recovery replay will directly depend on to know where to resume reading the WAL. Getting the offset semantics wrong (e.g. global vs per-segment) would silently corrupt recovery correctness later, even though this subtask's own tests would still pass.",
+  "new_files": [
+    "engine/wal/checkpoint.go",
+    "engine/wal/checkpoint_test.go"
+  ],
+  "modified_files": [],
+  "files_not_modified_but_read": [
+    "engine/wal/writer.go",
+    "engine/wal/record.go",
+    "engine/wal/writer_test.go",
+    "docs/LLD/wal.md",
+    ".cdr/index/file.jsonl",
+    ".cdr/index/task.jsonl",
+    ".cdr/index/regression.jsonl"
+  ],
+  "downstream_dependents": [
+    {
+      "subtask": "1.3.4",
+      "reason": "Recovery replay must interpret the checkpoint pointer (segment number, in-segment offset) produced here to know where to resume reading the WAL forward from."
+    }
+  ],
+  "upstream_dependencies": [
+    {
+      "subtask": "1.3.1",
+      "commit": "1a12643cfadd40610afa690d32672e6c59928870",
+      "used_symbols": ["segmentPath (naming convention reused, not imported)", "Writer.Append per-segment offset semantics", "Writer.SegmentNum()"]
+    },
+    {
+      "subtask": "1.3.2",
+      "commit": "4e418a16a02991348fdde840cff113b7d3c26e09",
+      "used_symbols": ["none directly required by checkpoint.go; TypedRecord/AppendAndApply used only in checkpoint_test.go to write records"]
+    }
+  ],
+  "backward_compatibility": "Additive only; no existing exported symbol in engine/wal is modified or removed.",
+  "regression_surface": "None to existing writer.go/record.go behavior. New surface: manifest.json file introduced in the WAL directory; must not collide with wal-<N>.log segment file naming (confirmed disjoint: manifest.json does not match segmentFilePrefix/segmentFileSuffix).",
+  "open_items_not_addressed": [
+    "docs/LLD/wal.md remains scaffold-only (flagged again, not blocking per task instructions).",
+    "RecordTypeInvalid=0 validation gap (038-verification) is 1.3.4's concern, not touched here.",
+    "Actual deletion/archival of segments identified by ArchivableSegments is out of scope; only identification is implemented."
+  ]
+}

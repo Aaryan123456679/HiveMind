@@ -1,0 +1,40 @@
+{
+  "subtask": "1.3.3",
+  "rows": [
+    {
+      "requirement": "Checkpointing records the WAL offset up to which state is durably applied",
+      "test": "TestCheckpointManifest",
+      "covered": true
+    },
+    {
+      "requirement": "manifest.json reflects correct offset after checkpoint (round-trip)",
+      "test": "TestCheckpointManifest (Checkpoint then LoadCheckpoint, assert equality)",
+      "covered": true
+    },
+    {
+      "requirement": "Segments fully before the checkpoint pointer are eligible for truncation/archival",
+      "test": "TestCheckpointManifest (ArchivableSegments assertion: exactly segments strictly before checkpoint's segment number)",
+      "covered": true
+    },
+    {
+      "requirement": "Checkpoint's own segment and later segments are NOT archivable",
+      "test": "TestCheckpointManifest (negative assertion on returned list)",
+      "covered": true
+    },
+    {
+      "requirement": "LoadCheckpoint on directory with no manifest yet returns found=false, err=nil",
+      "test": "TestLoadCheckpointNoManifest",
+      "covered": true
+    },
+    {
+      "requirement": "Manifest write is atomic (temp file + Sync + rename, no torn manifest.json)",
+      "test": "Code inspection of Checkpoint (temp-file+Sync+os.Rename idiom, matching engine/btree/persist.go precedent); not independently crash-injection-tested in this subtask (deferred to 1.3.5-style crash-injection work per existing repo convention)",
+      "covered": "partial-by-design"
+    },
+    {
+      "requirement": "No regression in existing engine/wal tests (1.3.1, 1.3.2)",
+      "test": "go test ./engine/wal/... -race -v -count=1 (full package run)",
+      "covered": true
+    }
+  ]
+}
