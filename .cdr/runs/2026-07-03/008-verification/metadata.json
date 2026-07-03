@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "cdr-verification",
+  "subtask": "1.1.2",
+  "git_head": "cc0d14ee09c2f44d7ce280d27838dc365678a329",
+  "run_key": "1.1.2-cc0d14ee09c2f44d7ce280d27838dc365678a329-verify",
+  "status": "completed",
+  "last_completed_step": "wrote_verification_json_and_regression_entry",
+  "started_at": "2026-07-03T14:30:00Z",
+  "ended_at": "2026-07-03T14:36:43Z"
+}

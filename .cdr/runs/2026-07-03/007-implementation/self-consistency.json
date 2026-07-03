@@ -1,0 +1,27 @@
+{
+  "subtask": "task-1.1.2",
+  "checks": [
+    {
+      "command": "go build ./engine/...",
+      "result": "pass",
+      "notes": "no output, exit 0"
+    },
+    {
+      "command": "go vet ./engine/...",
+      "result": "pass",
+      "notes": "no output, exit 0"
+    },
+    {
+      "command": "go test ./engine/catalog/... -run TestSlottedPage -race -v",
+      "result": "pass",
+      "notes": "TestSlottedPageInsertReadDelete, TestSlottedPageOverflow, TestSlottedPageReuseAfterDelete all PASS"
+    },
+    {
+      "command": "go test ./engine/catalog/... -race -v",
+      "result": "pass",
+      "notes": "full package: 3 new page tests + all pre-existing record tests (from verified subtask 1.1.1) PASS, no regressions"
+    }
+  ],
+  "validation_matrix_covered": true,
+  "note": "This is internal self-consistency only (build green + matrix covered), NOT independent verification. A separate /cdr:verify step follows per invariant I4."
+}

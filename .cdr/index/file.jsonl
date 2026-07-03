@@ -14,3 +14,5 @@
 {"path": "docs/LLD/eval.md", "module": "agents/eval + engine/loadtest", "features": ["lld"], "last_change_run": "2026-07-03-001-documentation"}
 {"path": "engine/catalog/record.go", "module": "engine/catalog", "features": ["catalog-record", "binary-encoding"], "last_change_run": "2026-07-03-003-implementation"}
 {"path": "engine/catalog/record_test.go", "module": "engine/catalog", "features": ["catalog-record", "binary-encoding", "test"], "last_change_run": "2026-07-03-003-implementation"}
+{"path": "engine/catalog/page.go", "module": "engine/catalog", "features": ["slotted-page", "4kb-page", "free-space-tracking"], "last_change_run": "2026-07-03-007-implementation"}
+{"path": "engine/catalog/page_test.go", "module": "engine/catalog", "features": ["slotted-page", "4kb-page", "test"], "last_change_run": "2026-07-03-007-implementation"}

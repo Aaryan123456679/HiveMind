@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-verification",
+  "subtask": "1.1.2",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "engine/catalog/page.go implements the slotted 4KB page mechanics required by 1.1.2: InsertSlot/ReadSlot/DeleteSlot, header + slot-directory bookkeeping, and free-space tracking. Overflow rejection correctly sums slot-header size (8 bytes) and data length against FreeSpace() before any buffer mutation, so there is no path that can write past the 4096-byte buffer, and no partial writes occur on the rejected path. The reuse test (TestSlottedPageReuseAfterDelete) is well-constructed and genuinely proves reclamation (fills page to capacity, proves a fresh insert of that size fails, deletes a slot, shows the same-sized insert succeeds and reuses the exact tombstoned slotID with SlotCount unchanged) -- this is not a coincidental pass. ReadSlot on a deleted slot, double-delete, and out-of-range/negative slotID all return non-nil errors without panicking, and this is exercised by tests. All required commands pass: 'go test ./engine/catalog/... -run TestSlottedPage -race -v' (3/3 PASS), full package 'go test ./engine/catalog/... -race -v' (all PASS, including record_test.go), 'go vet ./engine/catalog/...' (clean), 'go build ./engine/...' (clean). One design/documentation gap found (see findings) that does not violate the stated acceptance criteria or test spec but should be tracked before free-list/update logic (1.1.3+) is built on top of this reuse mechanism.",
+  "commands_run": [
+    "go build ./engine/...",
+    "go vet ./engine/catalog/...",
+    "go test ./engine/catalog/... -run TestSlottedPage -race -v",
+    "go test ./engine/catalog/... -race -v"
+  ],
+  "test_results": {
+    "TestSlottedPageInsertReadDelete": "PASS - basic insert/read/delete, free-space bookkeeping, double-delete error, out-of-range/negative slotID errors",
+    "TestSlottedPageOverflow": "PASS - fills page with 100-byte payloads until overflow error, confirms further same-size insert still errors, confirms a page-sized insert errors",
+    "TestSlottedPageReuseAfterDelete": "PASS - proves genuine reclamation: full page -> delete -> reinsert reuses exact tombstoned slotID with unchanged SlotCount, and a reinsert beyond the reclaimed capacity still overflows",
+    "TestRecordEncodeDecode_and_related (record_test.go, same package)": "PASS - unaffected by this change",
+    "go_vet": "clean",
+    "go_build": "clean"
+  },
+  "findings": [
+    {
+      "dimension": "requirements_conformance",
+      "severity": "none",
+      "title": "InsertSlot overflow check correctly accounts for both slot-header and data size",
+      "detail": "needed := slotHeaderSize + len(data); if needed > p.FreeSpace() { return error } -- evaluated before any mutation of p.buf, freeStart, or freeEnd. FreeSpace() = freeEnd() - freeStart(), which is exactly the header+data budget available for a brand-new slot. Data exactly equal to the remaining free space (needed == FreeSpace()) is accepted, not rejected (no off-by-one). No path writes to p.buf before this check succeeds, so overflowing inserts cannot corrupt the buffer or write past PageSize.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "test_coverage",
+      "severity": "low",
+      "title": "Reuse capacity is tracked via the tombstoned slot's *current* data length, which shrinks (never grows back) across repeated smaller reuses -- not covered by any test",
+      "detail": "InsertSlot's reuse path picks the first tombstoned slot with slotDataLength(slotID) >= len(data), then overwrites that slot's slotDataLength with the new (possibly smaller) len(data). There is no separate 'reserved capacity' field distinct from the live data length, despite the doc comment on Page and DeleteSlot describing 'reserved capacity' as if it were tracked independently. Concretely: insert 100 bytes into slot N, delete it, reuse it with a 10-byte insert -- slotDataLength(N) becomes 10, permanently forfeiting the other 90 bytes of buffer space that are contiguous in the tuple region (no compaction/relocation occurs, and there is no mechanism to reclaim it later even though it is physically still contiguous and unused within that slot's original footprint). Repeated shrink-cycles on the same slot progressively waste page space with no corresponding test asserting this is/is not intended behavior. This does not violate the 1.1.2 acceptance criteria (insert-until-full/overflow, delete+reinsert-reuses-space are both satisfied) or cause any memory-safety issue, but it is a latent internal-fragmentation risk that should be called out before 1.1.3 (free-list page) or any future UPDATE-in-place feature is built assuming 'reserved capacity' is stable across shrink/grow reuse cycles.",
+      "recommendation": "Either (a) update the doc comment on Page/DeleteSlot to explicitly state that reuse capacity is the slot's most-recent data length (monotonically non-increasing across reuse cycles) rather than a fixed 'reserved capacity', or (b) track a separate reservedCapacity field per slot entry (would require widening the 8-byte slot header or repurposing the 'reserved' field) so reuse can offer the original footprint rather than the shrunk one. Add a regression test that inserts N bytes, deletes, reinserts M<N bytes, deletes again, and attempts to reinsert something between M and N bytes to make this behavior explicit either way."
+    },
+    {
+      "dimension": "architecture_conformance",
+      "severity": "none",
+      "title": "Matches docs/LLD/catalog.md single-page mechanics scope",
+      "detail": "LLD specifies slotted 4KB pages (Postgres/SQLite-style layout) with a separate free-list page for reclaiming deleted/merged slots as a distinct concern; page.go's doc comments correctly scope this subtask to single-page tombstone+in-place-reuse mechanics only, deferring cross-page free-list management and full in-page compaction/defragmentation to later subtasks, consistent with the issue's stated scope for 1.1.2 vs 1.1.3.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "security",
+      "severity": "none",
+      "title": "No unsafe pointer usage; -race clean",
+      "detail": "Page.buf is a plain [PageSize]byte array field (no unsafe, no shared slices escaping the struct in a way that aliases underlying arrays incorrectly). ReadSlot returns a freshly allocated copy (make([]byte, length); copy(...)) rather than a subslice of p.buf, so callers cannot mutate page-internal state through the returned slice. go test -race reports no races (expected, since this subtask is explicitly single-threaded and the tests use no goroutines).",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "edge_cases",
+      "severity": "none",
+      "title": "Zero-length insert, out-of-range/negative slotID, double-delete all handled without panic",
+      "detail": "Manually traced: InsertSlot(nil-or-empty) computes needed = slotHeaderSize + 0, proceeds normally, no special-case needed. validSlotID(slotID) bounds-checks 0 <= slotID < slotCount() before any indexing, so ReadSlot(999), ReadSlot(-1), DeleteSlot(999) all hit this guard and return errors before touching p.buf. DeleteSlot on an already-tombstoned slot explicitly checks slotDeleted(slotID) and errors rather than double-tombstoning silently. All confirmed by TestSlottedPageInsertReadDelete's negative-path assertions and by re-reading InsertSlot/ReadSlot/DeleteSlot source directly.",
+      "recommendation": "none"
+    },
+    {
+      "dimension": "maintainability",
+      "severity": "low",
+      "title": "Slot directory entry has an unused 'reserved uint16' field",
+      "detail": "slotOffReserved / the 'reserved' 2 bytes in each 8-byte slot header are defined but never read or written anywhere in page.go. This is likely intentional padding for future use (e.g. a real reservedCapacity field per the finding above), but as of this subtask it's dead space with no comment explaining its intended future use beyond the struct-layout doc comment.",
+      "recommendation": "Either remove the reserved field to shrink slotHeaderSize to 6 bytes (minor space win), or use it now to store original reserved capacity (would directly fix the fragmentation finding above), or add an explicit comment noting it is intentionally reserved for a specific planned future field."
+    }
+  ],
+  "regression_risk_notes": "Internal fragmentation risk from reuse-capacity shrinking (see test_coverage finding) is the only non-trivial residual risk; it is latent (no current caller triggers repeated shrink-reuse cycles) and does not block this subtask's acceptance criteria.",
+  "blocking": false
+}

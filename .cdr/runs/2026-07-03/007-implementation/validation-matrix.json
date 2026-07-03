@@ -1,0 +1,31 @@
+{
+  "subtask": "task-1.1.2",
+  "rows": [
+    {
+      "acceptance_criterion": "Page supports InsertSlot/ReadSlot/DeleteSlot within a 4KB buffer",
+      "test": "TestSlottedPageInsertReadDelete",
+      "assertion": "insert returns slotID, ReadSlot returns identical bytes, DeleteSlot succeeds, ReadSlot after delete returns an error",
+      "status": "covered"
+    },
+    {
+      "acceptance_criterion": "Tracks free space correctly",
+      "test": "TestSlottedPageInsertReadDelete / TestSlottedPageOverflow",
+      "assertion": "FreeSpace() decreases by (slotHeaderSize + len(data)) after each fresh insert; matches expected remaining bytes",
+      "status": "covered"
+    },
+    {
+      "acceptance_criterion": "Rejects inserts that would overflow the page (behavior 1 of test spec)",
+      "test": "TestSlottedPageOverflow",
+      "assertion": "InsertSlot is called in a loop with fixed-size payloads until it returns a non-nil error; test asserts the error is returned (not a panic, not silent truncation) and that at least one insert succeeded before the page filled up",
+      "status": "covered"
+    },
+    {
+      "acceptance_criterion": "Delete + reinsert reuses freed slot space (behavior 2 of test spec)",
+      "test": "TestSlottedPageReuseAfterDelete",
+      "assertion": "Page is filled to capacity (further insert fails with overflow), one slot is deleted, then a same-or-smaller-sized InsertSlot is attempted; test asserts this reinsert SUCCEEDS (proving reuse, since a fresh-space insert of that size would have failed given the page was already full) and that the returned slotID equals the deleted slot's ID",
+      "status": "covered"
+    }
+  ],
+  "test_spec_command": "go test ./engine/catalog/... -run TestSlottedPage -race",
+  "all_rows_covered": true
+}

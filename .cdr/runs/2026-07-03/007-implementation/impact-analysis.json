@@ -1,0 +1,19 @@
+{
+  "subtask": "task-1.1.2",
+  "risk_level": "low-medium",
+  "rationale": "Foundational, additive-only change to a scaffold-only package (engine/catalog currently has only record.go/record_test.go from 1.1.1, verified, plus a placeholder doc.go). No existing production code path depends on engine/catalog yet, so blast radius of a mistake here is contained to this package. Risk is not zero because: (1) this is a physical on-disk byte-layout decision that later subtasks (1.1.3 file manager, 1.1.4 fileID allocator, 1.1.5 striped CRUD, and eventually mvcc/split/wal) will build directly on top of and depend on for correctness -- a subtle layout bug found later would be expensive to fix once catalog.dat files exist on disk; and (2) the page is currently single-threaded / has no internal locking, which is correct for this subtask's scope but means callers under the future striped-mutex scheme (1.1.5+) must not share a *Page across goroutines without external synchronization -- documented as an explicit constraint, not fixed here.",
+  "new_files": [
+    "engine/catalog/page.go",
+    "engine/catalog/page_test.go"
+  ],
+  "modified_files": [],
+  "downstream_consumers_not_yet_built": [
+    "engine/catalog/file.go (subtask 1.1.3) -- will open/create .meta/catalog.dat and allocate/free Page-backed pages",
+    "engine/catalog/idalloc.go (subtask 1.1.4) -- fileID allocation, no direct page.go dependency expected",
+    "engine/catalog/catalog.go (subtask 1.1.5) -- striped-mutex CRUD API, will call InsertSlot/ReadSlot/DeleteSlot per-fileID under a stripe lock"
+  ],
+  "concurrency_note": "Page/page.go has no internal mutex in this subtask by design (matches 'single-threaded storage core' phase-1 scope per docs/HLD.md section 5 build-phase roadmap). Thread-safety across concurrent access is explicitly deferred to the striped-mutex scheme referenced in docs/LLD/catalog.md and implemented in a later subtask (1.1.5 / Epic 2A). This is documented in page.go's package/type comments so future implementers are not surprised.",
+  "backward_compatibility": "N/A -- no prior page.go exists, no on-disk format yet in use anywhere.",
+  "test_impact": "New test file page_test.go only; does not touch record_test.go or any existing test.",
+  "build_impact": "engine module only; no changes to go.mod/go.sum expected (no new external dependencies -- encoding/binary style raw byte manipulation, matching record.go's existing conventions)."
+}
