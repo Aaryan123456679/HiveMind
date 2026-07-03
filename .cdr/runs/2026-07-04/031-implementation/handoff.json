@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-031-implementation",
+  "subtask": "1.2.5",
+  "status": "completed",
+  "commit_sha": "91d150d4c85aba4287edf62f08773b6d1cd022a4",
+  "pointers": {
+    "new_files": [
+      "engine/btree/scan.go",
+      "engine/btree/scan_test.go"
+    ],
+    "requirement": ".cdr/runs/2026-07-04/031-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-04/031-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-04/031-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-04/031-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-04/031-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-04/031-implementation/self-consistency.json"
+  },
+  "for_verify_agent": {
+    "required_test_command": "go test ./engine/btree/... -run TestPrefixScan -race -v -count=1",
+    "full_package_command": "go test ./engine/btree/... -race -v -count=1",
+    "new_test_functions": [
+      "TestPrefixScan",
+      "TestPrefixScanNoMatches",
+      "TestPrefixScanAcrossLeafBoundary",
+      "TestPrefixScanPrefixIsCompleteKey"
+    ]
+  },
+  "flag_for_launching_agent": {
+    "title": "Scope-correction: 1.2.5 and 1.2.6 are separate issue checklist items, not one combined subtask",
+    "detail": "This run's original instructions described subtask 1.2.5 as a combined 'persist/reload + prefix scan' subtask (root-node-ID sidecar file, LoadRoot/SaveRoot, close/reopen round-trip test). The actual GitHub issue #2 checklist (pulled verbatim via `gh api repos/{owner}/{repo}/issues/2 -q .body`, since `gh issue view 2`'s rendered text truncates/garbles this exact item) splits this into 1.2.5 (Prefix scan, engine/btree/scan.go+scan_test.go, -run TestPrefixScan -- this run) and a separate, still-unstarted 1.2.6 (Persisted reload correctness test, engine/btree/btree_test.go, -run TestPersistReload). This run implements only 1.2.5's actual scope. Root-node-ID persistence, LoadRoot/SaveRoot, and the close/reopen round-trip test still need to be done as subtask 1.2.6, a separate implementation run.",
+    "recommendation": "Schedule 1.2.6 as its own implementation run using the verbatim issue text for that checklist item as its requirement, not this run's persist/reload design guidance (which can still inform 1.2.6's design, e.g. the NodeAllocator .nodealloc sidecar idiom is a reasonable template for a root-ID sidecar, but should be re-scoped as its own one-commit subtask)."
+  },
+  "known_gaps_still_open": [
+    "No persisted current-root-node-ID across process restarts (unchanged by this run; targeted at 1.2.6)",
+    "1.2.4's unreclaimed tombstoned-leaf / abandoned-merged-node-ID gap (unchanged by this run; confirmed not to affect PrefixScan correctness)"
+  ],
+  "no_push": true,
+  "no_self_verification_performed": true
+}
