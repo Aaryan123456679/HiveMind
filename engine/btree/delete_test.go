@@ -375,6 +375,105 @@ func TestDeleteEmptiesSingleLeafTree(t *testing.T) {
 	}
 }
 
+// TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss is a regression test for
+// a critical, reproducible data-loss bug found during verification of this
+// subtask (see .cdr/runs/2026-07-04/028-verification/verification.json):
+// repairEmptyLeaf's borrow/merge helpers discarded the isLeaf bool returned
+// by store.ReadNode and unconditionally treated a same-parent sibling as a
+// LeafNode. A bare leaf can legitimately end up as a direct sibling of
+// INTERNAL nodes under the same parent as a consequence of Delete's own
+// grandparent-splice repair (shrinkParentAfterMerge) -- a tree shape pure
+// Insert never produces, and one TestDeleteInternalMerge's smaller (n=2000,
+// maxDepth=1) tree never reaches. When the emptied leaf's merge fallback hit
+// an INTERNAL sibling in that shape, it decoded the sibling as a zero-valued
+// LeafNode, "merged" nothing from it, and spliced the sibling's pointer/key
+// out of the parent -- permanently detaching that sibling's entire live
+// subtree with no crash and no structural-invariant violation detected by
+// assertNoOrphanedPointers (which only checks reachable-graph shape, not
+// completeness).
+//
+// This test mirrors verification's own reproduction methodology directly
+// (insert N sequential keys via the real Insert path -- deep/wide enough,
+// per verification's own measurement of this implementation's ~169-per-node
+// fanout at NodeSize=4096, to produce a genuine 3-level tree -- then delete
+// a large contiguous prefix, and confirm every remaining, non-deleted key is
+// still found via Lookup with its original fileID, i.e. total live-key count
+// is verified exactly via assertAllLookupable/assertStructuralInvariants,
+// not merely "no crash/no error"). Using real Insert (rather than a reduced
+// NodeSize test fixture) was chosen because NodeSize is a package-level
+// const baked directly into Encode/Decode's fixed-size buffers, not a
+// per-test-overridable parameter, so a real large-N tree is the cheaper and
+// more faithful way to reach this shape.
+func TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	const n = 40000
+	rootID, inserted := insertN(t, store, alloc, n)
+
+	isLeaf, _, _, err := store.ReadNode(rootID)
+	if err != nil {
+		t.Fatalf("ReadNode(root): unexpected error: %v", err)
+	}
+	if isLeaf {
+		t.Fatalf("root is still a leaf after %d inserts, want a multi-level internal root (test setup assumption violated)", n)
+	}
+
+	// Confirm the tree actually reaches 3 levels (root -> internal ->
+	// leaf), the shape verification measured as necessary to reach the
+	// leaf-adjacent-to-internal-sibling shape via this implementation's
+	// ~169-per-node fanout. If this ever regresses to a shallower tree
+	// (e.g. because of a fanout change), fail loudly rather than silently
+	// stop exercising the buggy code path.
+	depth := 0
+	for cur, done := rootID, false; !done; {
+		curIsLeaf, _, internal, rErr := store.ReadNode(cur)
+		if rErr != nil {
+			t.Fatalf("ReadNode(%d): unexpected error while measuring depth: %v", cur, rErr)
+		}
+		if curIsLeaf {
+			done = true
+			break
+		}
+		depth++
+		cur = internal.Children[0]
+	}
+	if depth < 2 {
+		t.Fatalf("tree depth = %d, want >= 2 (root -> internal -> leaf) for %d sequential inserts (test setup assumption violated)", depth, n)
+	}
+
+	// Sequentially delete a large contiguous prefix of the key space --
+	// mirroring verification's own reproduction (which failed at i=15525
+	// out of genKey(0)..genKey(39899)) -- draining whole leaves to zero
+	// keys repeatedly, forcing exactly the leaf-merge / grandparent-splice
+	// / leaf-adjacent-to-internal-sibling repair sequence that triggered
+	// the bug.
+	const deleteUpTo = n - 100
+	toDelete := make([]string, 0, deleteUpTo)
+	for i := 0; i < deleteUpTo; i++ {
+		toDelete = append(toDelete, genKey(i))
+	}
+	rootID = deleteAll(t, store, alloc, rootID, toDelete)
+	for _, key := range toDelete {
+		delete(inserted, key)
+	}
+
+	// The critical assertion: every key that was NOT deleted must still be
+	// found via Lookup with its original fileID -- i.e. no live subtree was
+	// silently dropped. assertAllLookupable iterates every remaining
+	// key in `inserted` (not just a spot check), so a repeat of the
+	// original bug (an entire live internal subtree of ~161 keys spliced
+	// out of the tree) would be caught here as a hard test failure rather
+	// than passing silently.
+	assertAbsent(t, store, rootID, toDelete)
+	assertAllLookupable(t, store, rootID, inserted)
+	assertStructuralInvariants(t, store, rootID, len(inserted))
+	assertNoOrphanedPointers(t, store, rootID)
+
+	if len(inserted) != n-deleteUpTo {
+		t.Fatalf("len(inserted) = %d after deleting a prefix of %d keys from %d, want %d (bookkeeping bug in the test itself)", len(inserted), deleteUpTo, n, n-deleteUpTo)
+	}
+}
+
 // TestDelete is the acceptance-test entry point named in GitHub issue #2's
 // literal spec for subtask 1.2.4 (`go test ./engine/btree/... -run
 // TestDelete`). It dispatches every scenario above as a subtest so that
@@ -391,4 +490,5 @@ func TestDelete(t *testing.T) {
 	t.Run("InternalMerge", TestDeleteInternalMerge)
 	t.Run("InsertLookupIntegration", TestDeleteInsertLookupIntegration)
 	t.Run("EmptiesSingleLeafTree", TestDeleteEmptiesSingleLeafTree)
+	t.Run("ThreeLevelNoSiblingTypeMismatchDataLoss", TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss)
 }

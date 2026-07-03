@@ -154,95 +154,136 @@ func repairEmptyLeaf(store *NodeStore, chain []uint64, emptyNextLeaf uint64) (ui
 	if j < 0 {
 		return 0, fmt.Errorf("btree: internal invariant violated: parent node %d has no child pointer to %d", parentID, leafID)
 	}
-
-	// Try to borrow one key from the left sibling, if it has more than one
-	// key to spare.
-	if j > 0 {
-		leftID := parent.Children[j-1]
-		_, left, _, err := store.ReadNode(leftID)
-		if err != nil {
-			return 0, err
-		}
-		if len(left.Keys) > 1 {
-			borrowedKey := left.Keys[len(left.Keys)-1]
-			borrowedFileID := left.FileIDs[len(left.FileIDs)-1]
-
-			newLeft := LeafNode{
-				Keys:     append([]string(nil), left.Keys[:len(left.Keys)-1]...),
-				FileIDs:  append([]uint64(nil), left.FileIDs[:len(left.FileIDs)-1]...),
-				NextLeaf: leafID,
-			}
-			newCurrent := LeafNode{
-				Keys:     []string{borrowedKey},
-				FileIDs:  []uint64{borrowedFileID},
-				NextLeaf: emptyNextLeaf,
-			}
-			newParentKeys := append([]string(nil), parent.Keys...)
-			newParentKeys[j-1] = borrowedKey
-			newParent := InternalNode{Keys: newParentKeys, Children: append([]uint64(nil), parent.Children...)}
-
-			if err := writeLeaf(store, leftID, newLeft); err != nil {
-				return 0, err
-			}
-			if err := writeLeaf(store, leafID, newCurrent); err != nil {
-				return 0, err
-			}
-			if err := writeInternal(store, parentID, newParent); err != nil {
-				return 0, err
-			}
-			return chain[0], nil
-		}
+	if len(parent.Children) < 2 {
+		// Structurally unreachable for a well-formed tree: an internal node
+		// always has >= 2 children. Defensive guard against a panic if this
+		// invariant is ever violated.
+		return 0, fmt.Errorf("btree: internal invariant violated: parent node %d has only one child, cannot rebalance", parentID)
 	}
 
-	// Try to borrow one key from the right sibling, if it has more than one
-	// key to spare.
+	// Read whichever same-parent siblings exist, once, and record whether
+	// each one actually decodes as a LeafNode.
+	//
+	// A same-parent sibling of an emptied leaf is not guaranteed to be a
+	// leaf itself: Delete's own grandparent-splice repair (see
+	// shrinkParentAfterMerge) can promote a bare surviving leaf up to sit
+	// directly under a grandparent, alongside sibling children that are
+	// themselves internal nodes (a shape pure Insert never produces).
+	// assertStructuralInvariants (insert_test.go) does not require uniform
+	// leaf depth, so this shape is not itself a violated structural
+	// invariant -- but it does mean a leaf must never borrow-from or
+	// merge-with a same-parent sibling of the wrong type: naively decoding
+	// an INTERNAL sibling's bytes as a LeafNode yields a zero-valued
+	// LeafNode, and "merging" with it (as the previous implementation did)
+	// silently splices that sibling's separator key/child pointer out of
+	// the parent -- permanently detaching that sibling's entire live
+	// subtree with no error and no detectable structural violation. This
+	// was a confirmed, reproducible silent data-loss bug (see
+	// .cdr/runs/2026-07-04/028-verification/verification.json).
+	//
+	// Fix: only ever treat a sibling as a borrow/merge candidate if
+	// store.ReadNode reports isLeaf==true for it. A same-parent sibling
+	// that turns out to be internal is simply skipped as a candidate on
+	// that side. If this leaves neither side usable, the emptied leaf is
+	// left in place (already written as a zero-key LeafNode by Delete)
+	// with the underflow unresolved, rather than ever merging/splicing
+	// through a type mismatch.
+	var (
+		leftID, rightID     uint64
+		left, right         LeafNode
+		haveLeft, haveRight bool
+	)
+	if j > 0 {
+		leftID = parent.Children[j-1]
+		leftIsLeaf, l, _, lErr := store.ReadNode(leftID)
+		if lErr != nil {
+			return 0, lErr
+		}
+		if leftIsLeaf {
+			left, haveLeft = l, true
+		}
+	}
 	if j < len(parent.Children)-1 {
-		rightID := parent.Children[j+1]
-		_, right, _, err := store.ReadNode(rightID)
-		if err != nil {
-			return 0, err
+		rightID = parent.Children[j+1]
+		rightIsLeaf, r, _, rErr := store.ReadNode(rightID)
+		if rErr != nil {
+			return 0, rErr
 		}
-		if len(right.Keys) > 1 {
-			borrowedKey := right.Keys[0]
-			borrowedFileID := right.FileIDs[0]
-
-			newRight := LeafNode{
-				Keys:     append([]string(nil), right.Keys[1:]...),
-				FileIDs:  append([]uint64(nil), right.FileIDs[1:]...),
-				NextLeaf: right.NextLeaf,
-			}
-			newCurrent := LeafNode{
-				Keys:     []string{borrowedKey},
-				FileIDs:  []uint64{borrowedFileID},
-				NextLeaf: rightID,
-			}
-			newParentKeys := append([]string(nil), parent.Keys...)
-			newParentKeys[j] = newRight.Keys[0]
-			newParent := InternalNode{Keys: newParentKeys, Children: append([]uint64(nil), parent.Children...)}
-
-			if err := writeLeaf(store, rightID, newRight); err != nil {
-				return 0, err
-			}
-			if err := writeLeaf(store, leafID, newCurrent); err != nil {
-				return 0, err
-			}
-			if err := writeInternal(store, parentID, newParent); err != nil {
-				return 0, err
-			}
-			return chain[0], nil
+		if rightIsLeaf {
+			right, haveRight = r, true
 		}
 	}
 
-	// Neither sibling can spare a key: merge. Prefer merging into the left
-	// sibling (the empty leaf's node ID is abandoned); otherwise merge the
-	// right sibling into the (empty) current leaf's node ID (the right
-	// sibling's node ID is abandoned instead).
-	if j > 0 {
-		leftID := parent.Children[j-1]
-		_, left, _, err := store.ReadNode(leftID)
-		if err != nil {
+	// Try to borrow one key from the left sibling, if it is a real leaf
+	// sibling with more than one key to spare.
+	if haveLeft && len(left.Keys) > 1 {
+		borrowedKey := left.Keys[len(left.Keys)-1]
+		borrowedFileID := left.FileIDs[len(left.FileIDs)-1]
+
+		newLeft := LeafNode{
+			Keys:     append([]string(nil), left.Keys[:len(left.Keys)-1]...),
+			FileIDs:  append([]uint64(nil), left.FileIDs[:len(left.FileIDs)-1]...),
+			NextLeaf: leafID,
+		}
+		newCurrent := LeafNode{
+			Keys:     []string{borrowedKey},
+			FileIDs:  []uint64{borrowedFileID},
+			NextLeaf: emptyNextLeaf,
+		}
+		newParentKeys := append([]string(nil), parent.Keys...)
+		newParentKeys[j-1] = borrowedKey
+		newParent := InternalNode{Keys: newParentKeys, Children: append([]uint64(nil), parent.Children...)}
+
+		if err := writeLeaf(store, leftID, newLeft); err != nil {
 			return 0, err
 		}
+		if err := writeLeaf(store, leafID, newCurrent); err != nil {
+			return 0, err
+		}
+		if err := writeInternal(store, parentID, newParent); err != nil {
+			return 0, err
+		}
+		return chain[0], nil
+	}
+
+	// Try to borrow one key from the right sibling, if it is a real leaf
+	// sibling with more than one key to spare.
+	if haveRight && len(right.Keys) > 1 {
+		borrowedKey := right.Keys[0]
+		borrowedFileID := right.FileIDs[0]
+
+		newRight := LeafNode{
+			Keys:     append([]string(nil), right.Keys[1:]...),
+			FileIDs:  append([]uint64(nil), right.FileIDs[1:]...),
+			NextLeaf: right.NextLeaf,
+		}
+		newCurrent := LeafNode{
+			Keys:     []string{borrowedKey},
+			FileIDs:  []uint64{borrowedFileID},
+			NextLeaf: rightID,
+		}
+		newParentKeys := append([]string(nil), parent.Keys...)
+		newParentKeys[j] = newRight.Keys[0]
+		newParent := InternalNode{Keys: newParentKeys, Children: append([]uint64(nil), parent.Children...)}
+
+		if err := writeLeaf(store, rightID, newRight); err != nil {
+			return 0, err
+		}
+		if err := writeLeaf(store, leafID, newCurrent); err != nil {
+			return 0, err
+		}
+		if err := writeInternal(store, parentID, newParent); err != nil {
+			return 0, err
+		}
+		return chain[0], nil
+	}
+
+	// Neither sibling can spare a key for a borrow: merge, but only with a
+	// same-parent sibling that is actually a leaf. Prefer merging into the
+	// left sibling (the empty leaf's node ID is abandoned); otherwise merge
+	// the right sibling into the (empty) current leaf's node ID (the right
+	// sibling's node ID is abandoned instead).
+	if haveLeft {
 		mergedLeft := LeafNode{
 			Keys:     left.Keys,
 			FileIDs:  left.FileIDs,
@@ -256,29 +297,31 @@ func repairEmptyLeaf(store *NodeStore, chain []uint64, emptyNextLeaf uint64) (ui
 		return shrinkParentAfterMerge(store, chain, parentIdx, j)
 	}
 
-	if j >= len(parent.Children)-1 {
-		// Structurally unreachable for a well-formed tree: an internal node
-		// always has >= 2 children, so if j == 0 (no left sibling) there
-		// must be a right sibling at index 1. Defensive guard against a
-		// panic if this invariant is ever violated.
-		return 0, fmt.Errorf("btree: internal invariant violated: parent node %d has only one child, cannot rebalance", parentID)
+	if haveRight {
+		mergedCurrent := LeafNode{
+			Keys:     right.Keys,
+			FileIDs:  right.FileIDs,
+			NextLeaf: right.NextLeaf,
+		}
+		if err := writeLeaf(store, leafID, mergedCurrent); err != nil {
+			return 0, err
+		}
+		// rightID is abandoned; see "Abandoned node IDs" in Delete's doc
+		// comment.
+		return shrinkParentAfterMerge(store, chain, parentIdx, j+1)
 	}
 
-	rightID := parent.Children[j+1]
-	_, right, _, err := store.ReadNode(rightID)
-	if err != nil {
-		return 0, err
-	}
-	mergedCurrent := LeafNode{
-		Keys:     right.Keys,
-		FileIDs:  right.FileIDs,
-		NextLeaf: right.NextLeaf,
-	}
-	if err := writeLeaf(store, leafID, mergedCurrent); err != nil {
-		return 0, err
-	}
-	// rightID is abandoned; see "Abandoned node IDs" in Delete's doc comment.
-	return shrinkParentAfterMerge(store, chain, parentIdx, j+1)
+	// Neither same-parent sibling is a usable (same-type, i.e. leaf)
+	// borrow/merge candidate -- both existing siblings are internal nodes,
+	// the pathological post-grandparent-splice shape described above.
+	// Rather than ever merge/splice through a type mismatch (which would
+	// silently discard a live subtree), accept the underflow: the leaf
+	// stays in place as the empty (0-key) LeafNode already written by
+	// Delete's caller. It contributes no keys to the leaf-chain traversal
+	// and remains structurally valid (reachable, correctly linked via
+	// NextLeaf), just under-capacity -- consistent with this subtask's own
+	// tombstone policy for non-empty underflow.
+	return chain[0], nil
 }
 
 // shrinkParentAfterMerge removes the child pointer at removedChildIdx (an

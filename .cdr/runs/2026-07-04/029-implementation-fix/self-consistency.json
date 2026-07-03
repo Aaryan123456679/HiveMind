@@ -1,0 +1,8 @@
+{
+  "build": "go build ./engine/... -> exit 0",
+  "vet": "go vet ./engine/... -> exit 0",
+  "full_suite": "go test ./engine/btree/... -race -v -count=1 -> ok, all tests pass (TestDelete* incl. new TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss, TestInsert*, TestLookup, TestNodeSerialization), 21.283s",
+  "data_loss_repro_closed": "New regression test TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss inserts 40,000 sequential keys (real Insert path, confirmed tree depth >= 2 i.e. root->internal->leaf), deletes a 39,900-key prefix (mirroring verification's own 0..39899 repro that failed at i=15525), then asserts every remaining non-deleted key is still found via Lookup with its correct fileID via assertAllLookupable (not just 'no crash'), plus assertStructuralInvariants and assertNoOrphanedPointers. Passes with the fix.",
+  "regression_test_efficacy_check": "git stash push -- engine/btree/delete.go (reverting only the production fix, keeping the new test), re-ran -run TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss alone against pre-fix delete.go: FAILS with 'Delete(\"topic15526/page\"): expected found=true, got false' -- confirming the new test actually catches the original bug. git stash pop restored the fix; full suite re-confirmed green afterward.",
+  "matrix_coverage": "All validation-matrix rows covered: leaf borrow/merge among same-type siblings (TestDeleteLeafMerge, TestDeleteInternalMerge unmodified and passing), root collapse/empty-tree/absent-key (TestDeleteEmptyTree, TestDeleteAbsentKey, TestDeleteSingleLeaf, TestDeleteEmptiesSingleLeafTree unmodified and passing), new type-mismatch data-loss regression (TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss, new, passing)."
+}
