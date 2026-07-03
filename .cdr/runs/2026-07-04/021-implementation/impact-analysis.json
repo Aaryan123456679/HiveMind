@@ -1,0 +1,44 @@
+{
+  "subtask": "1.2.2",
+  "risk_level": "medium-high",
+  "risk_rationale": [
+    "Establishes the node-ID-to-file-offset addressing convention (nodeID * NodeSize, node ID 0 reserved) that 1.2.3 (insert/split), 1.2.4 (delete), and 1.2.5 (prefix scan) will all build on -- getting this wrong or inconsistent would ripple through the rest of the epic.",
+    "Establishes the internal-node child-descent traversal rule as executable code (not just doc prose) for the first time -- future subtasks reuse this exact rule.",
+    "Introduces a test-only tree-building helper that must be unambiguously marked as scaffolding, not the real insert API, to avoid confusion with 1.2.3's actual deliverable."
+  ],
+  "new_files": [
+    "engine/btree/lookup.go",
+    "engine/btree/lookup_test.go"
+  ],
+  "modified_files": [],
+  "unmodified_frozen_files": [
+    "engine/btree/node.go",
+    "engine/btree/node_test.go"
+  ],
+  "downstream_dependents": [
+    {"subtask": "1.2.3", "module": "engine/btree/insert.go", "depends_on": "NodeStore.ReadNode/WriteNode, node-ID addressing convention"},
+    {"subtask": "1.2.4", "module": "engine/btree/delete.go", "depends_on": "NodeStore, traversal rule, Lookup for verifying post-delete state"},
+    {"subtask": "1.2.5", "module": "engine/btree/scan.go", "depends_on": "NodeStore, NextLeaf-based leaf chaining, traversal rule to find scan start leaf"},
+    {"subtask": "1.2.6", "module": "engine/btree/btree_test.go", "depends_on": "NodeStore persisted reload, Lookup"}
+  ],
+  "public_api_additions": [
+    "type NodeStore struct",
+    "func OpenNodeStore / NewNodeStore(f *os.File) *NodeStore (exact name TBD in plan)",
+    "func (s *NodeStore) ReadNode(nodeID uint64) (...)",
+    "func (s *NodeStore) WriteNode(nodeID uint64, encoded []byte) error",
+    "func Lookup(store *NodeStore, rootNodeID uint64, path string) (fileID uint64, found bool, err error)"
+  ],
+  "compatibility": {
+    "breaking_changes_to_1.2.1_api": false,
+    "node_go_touched": false
+  },
+  "concurrency_scope": {
+    "in_scope": false,
+    "note": "Lookup and NodeStore in this subtask are single-threaded / no locking, consistent with docs/LLD/btree.md deferring latch-crabbing and optimistic-read version-check/retry to a later concurrency-focused subtask. Version field is read/round-tripped (already on the structs) but not used for any CAS/retry logic here."
+  },
+  "test_scaffolding_risk": {
+    "risk": "A hand-built, non-splitting tree-construction helper could be mistaken for a real insert implementation by a future reader or by /cdr:verify.",
+    "mitigation": "Helper lives only in lookup_test.go (not exported, not in lookup.go), named buildTestTree, with an explicit doc comment stating it is test-only scaffolding and is NOT subtask 1.2.3's insert API."
+  },
+  "rollback_plan": "Single self-contained commit adding two new files; revertable with a single git revert without touching node.go or any other package."
+}

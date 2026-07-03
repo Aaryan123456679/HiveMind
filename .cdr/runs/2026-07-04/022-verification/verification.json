@@ -1,0 +1,62 @@
+{
+  "subtask": "1.2.2",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "lookup.go correctly implements NodeStore (nodeID*NodeSize addressing with reserved node 0) and Lookup's internal-node descent / leaf exact-match, matching the InternalNode covering convention documented in node.go. Not-found returns found=false, err=nil in all cases including keys that route into populated leaves. Test-only buildTestTree scaffolding is clearly marked and does not leak into production API. node.go/node_test.go (1.2.1, already verified) are untouched -- zero regression risk there. Independently ran full build/vet/race test suite; all green. Non-blocking gaps: ReadNode/WriteNode error paths (reserved-ID guard, unrecognized type discriminator, short-write validation) are not exercised by any test, and the internal-node descent logic has no test case for a multi-key internal node (only ever descends through single-key internal nodes in the fixed test tree), so an off-by-one at internal.Children[i] with n>=2 keys is asserted correct by trace but not by test.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Acceptance criteria from issue #2 subtask 1.2.2: (1) 'Lookup returns the correct fileID for an inserted path' -- verified by TestLookup/present, 8 cases spanning all 4 leaves, all passing with exact fileID match. (2) 'Lookup returns a well-defined not-found result for an absent path' -- verified by TestLookup/absent (2 cases that land inside populated leaves, not just empty-leaf trivial cases) and TestLookup/boundary (2 cases before-first-key and after-last-key across the whole tree), all asserting found=false, err=nil, fileID=0."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "docs/LLD/btree.md specifies 'Point lookup (path -> fileID)' as an operation and defers concurrency (latch-crabbing writes, optimistic version-counter reads) to later work; lookup.go's NodeStore doc comment explicitly states it is single-threaded and defers locking, matching the LLD. Addressing convention (nodeID * NodeSize, node ID 0 reserved) is modeled directly on node.go's noSibling(0) sentinel and is applied identically in both ReadNode (lookup.go:55) and WriteNode (lookup.go:89). InternalNode's documented covering convention (child i covers [K[i-1],K[i])) is implemented via sort.Search finding the first key strictly greater than path and descending into the child immediately before it -- traced by hand against the test tree's root/int1/int2 splits and confirmed self-consistent with the separator-equals-min-of-right-subtree convention node.go's field comments describe."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git show e7b669d --stat confirms only engine/btree/lookup.go and engine/btree/lookup_test.go were added; git diff a9815aa..e7b669d for engine/btree/node.go and engine/btree/node_test.go is empty -- the already-verified 1.2.1 node layout/serialization code is completely untouched. Ran the full package test suite (`go test ./btree/... -race -v` from engine/ module): TestNodeSerialization's 5 subtests and TestLookup's 3 subtests all pass, no interaction/regression detected."
+    },
+    "edge_cases": {
+      "status": "pass_with_comments",
+      "evidence": "TestLookup/absent explicitly targets keys that sort into leaves with other real keys ('auth/middleware' between auth/logout and auth/oauth; 'billing/refund' after billing/plan'), proving exact-match logic rather than trivial 'found a leaf = success'. TestLookup/boundary covers before-first-key-in-whole-tree and after-last-key-in-whole-tree. However, every internal node in the fixed test tree (root, internal1, internal2) has exactly ONE separator key -- there is no test exercising sort.Search's descent through an internal node with >=2 keys (e.g. verifying Children[1] is chosen correctly for a path strictly between two interior separators, not just the first/last child). The logic is correct by trace (sort.Search over Keys with predicate path<Keys[i] is standard upper-bound search, independent of key count), but this is asserted by code reading, not demonstrated by test."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new external/untrusted input parsing; path is caller-supplied but Lookup only compares strings, no injection surface. ReadNode fully delegates buffer validation to DecodeLeafNode/DecodeInternalNode (already-verified 1.2.1 code) which bounds-check before every read. No secrets or credentials involved."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "sort.SearchStrings / sort.Search give O(log k) per-node key search (k = keys per node, bounded by NodeSize/entry-size), O(log N) node descents for a balanced tree -- appropriate for a B+Tree point lookup. NodeStore does one os.File.ReadAt syscall per node visited with no unnecessary copying beyond the fixed NodeSize buffer."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Doc comments on NodeStore, reservedNodeID, ReadNode, WriteNode, and Lookup all cross-reference docs/LLD/btree.md and explicitly state scope boundaries (no allocator, no locking, deferred to later subtasks) rather than silently leaving gaps. buildTestTree's tree-shape ASCII diagram in lookup_test.go makes the traversal path for each test case auditable without re-deriving it."
+    },
+    "test_coverage": {
+      "status": "pass_with_comments",
+      "evidence": "Ran `go test ./btree/... -run TestLookup -race -v`: 3/3 subtests pass. Ran full package `go test ./btree/... -race -v`: 8/8 subtests across both files pass. `go build ./...` and `go vet ./...` (engine module) both clean. Coverage: `go test ./btree/... -coverprofile=...` shows lookup.go at ReadNode 68.8%, WriteNode 62.5%, Lookup 92.3%, NewNodeStore 100%. Missed lines are ReadNode's reserved-node-ID error branch, ReadNode's default/unrecognized-type-discriminator error branch, and WriteNode's reserved-node-ID and wrong-length error branches -- none of these are exercised by any test in the diff. These are defensive-programming paths not required by the stated acceptance criteria, but a future subtask relying on these error returns (e.g. insert-time validation) should not assume they've been test-verified yet."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Verified by direct code trace (sort.Search predicate against the documented covering convention, traced concretely against the actual node IDs/keys in buildTestTree) plus independent execution of build/vet/race/coverage, not by trusting the commit message or self-consistency.json. The one residual uncertainty (multi-key internal node descent) is flagged above rather than silently passed over."
+    }
+  },
+  "explicit_determinations": {
+    "internal_descent_boundary_check": "CORRECT for all cases actually tested (single-key internal nodes). i := sort.Search(len(Keys), path<Keys[i]) returns the first index where Keys[i]>path; equal-to-separator paths (e.g. 'billing/invoice' vs root's Keys[0]='billing/invoice') correctly fall through to Children[1] (the right/older-or-equal subtree), matching the convention that separator keys equal the minimum key of the right subtree, and confirmed empirically since TestLookup/present's 'billing/invoice'->201 case only passes if this descent is correct. NOT independently tested: an internal node with >=2 keys where the target path lies strictly between two interior separators (i.e. Children[i] for 0<i<n).",
+    "not_found_semantics": "CONFIRMED. Leaf branch returns (0, false, nil) explicitly at lookup.go:120 for any key not found by exact match, with no code path that could return a non-nil error for a genuinely absent key while traversal itself succeeds. Verified this holds when the absent key routes into a leaf with other real keys present (TestLookup/absent), not just empty-tree or empty-leaf trivia.",
+    "addressing_convention": "CONFIRMED consistent between ReadNode (lookup.go:55, offset := int64(nodeID)*int64(NodeSize)) and WriteNode (lookup.go:89, identical formula). Node ID 0 is guarded as an explicit error in both functions (not silently allowed), mirroring node.go's noSibling sentinel value. No allocator exists yet in this subtask (explicitly out of scope per doc comment), so there is no risk of the addressing scheme colliding with itself; risk of collision with 'future usage' is deferred to whichever subtask adds the allocator/free-list, as documented.",
+    "test_scaffolding_scope": "CONFIRMED clean. buildTestTree is unexported (lowercase), lives only in lookup_test.go, takes *testing.T and calls t.Helper()/t.Fatalf(), and its doc comment explicitly disclaims it as NOT the real 1.2.3 insert API. No production file imports or references it."
+  },
+  "commands_run": [
+    "cd engine && go build ./... -> exit 0",
+    "cd engine && go vet ./... -> exit 0",
+    "cd engine && go test ./btree/... -run TestLookup -race -v -> PASS (3/3 subtests)",
+    "cd engine && go test ./btree/... -race -v -> PASS (8/8 subtests, includes TestNodeSerialization from 1.2.1, no regression)",
+    "cd engine && go test ./btree/... -coverprofile=/tmp/cov.out && go tool cover -func=/tmp/cov.out -> ReadNode 68.8%, WriteNode 62.5%, Lookup 92.3%, NewNodeStore 100%",
+    "git show e7b669d --stat -> only lookup.go + lookup_test.go touched",
+    "git diff a9815aa..e7b669d -- engine/btree/node.go engine/btree/node_test.go -> empty (no changes to 1.2.1 code)"
+  ],
+  "non_blocking_notes": [
+    "ReadNode's reserved-node-ID and unrecognized-type-discriminator error branches, and WriteNode's reserved-node-ID and wrong-length error branches, are not exercised by any test in this diff. Recommend adding explicit negative-path tests before later subtasks (1.2.3 insert, 1.2.4 delete) start depending on these error contracts.",
+    "No test exercises internal-node descent through a node with >=2 separator keys (interior-child selection, i.e. Children[i] for 0<i<len(Keys)); the fixed test tree only has single-key internal nodes at every level. Correctness for this case was confirmed by code trace but should be covered by a future test (can be added cheaply in 1.2.3 once insert produces such nodes naturally, or added now as a supplementary buildTestTree variant)."
+  ]
+}

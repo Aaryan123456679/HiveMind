@@ -24,3 +24,5 @@
 {"path": "engine/catalog/catalog_test.go", "module": "engine/catalog", "features": ["striped-mutex-crud", "concurrency-test", "stripe-contention-test"], "last_change_run": "2026-07-03-013-implementation"}
 {"path": "engine/btree/node.go", "module": "engine/btree", "features": ["btree-node-layout", "leaf-internal-node-encode-decode", "binary-encoding", "fixed-node-size"], "last_change_run": "2026-07-03-017-implementation"}
 {"path": "engine/btree/node_test.go", "module": "engine/btree", "features": ["btree-node-layout", "round-trip-test", "overflow-rejection-test", "file-created-on-first-use-test"], "last_change_run": "2026-07-03-017-implementation"}
+{"path": "engine/btree/lookup.go", "module": "engine/btree", "features": ["node-store", "node-id-to-offset-addressing", "point-lookup", "b-tree-traversal"], "last_change_run": "2026-07-04-021-implementation"}
+{"path": "engine/btree/lookup_test.go", "module": "engine/btree", "features": ["point-lookup-test", "test-only-tree-scaffolding", "present-key-test", "absent-key-test", "boundary-test"], "last_change_run": "2026-07-04-021-implementation"}

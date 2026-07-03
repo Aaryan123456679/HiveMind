@@ -1,0 +1,309 @@
+diff --git a/engine/btree/lookup.go b/engine/btree/lookup.go
+new file mode 100644
+index 0000000..50adf12
+--- /dev/null
++++ b/engine/btree/lookup.go
+@@ -0,0 +1,128 @@
++package btree
++
++import (
++	"fmt"
++	"os"
++	"sort"
++)
++
++// NodeStore is the minimal file-I/O layer this subtask (1.2.2) adds on top of
++// subtask 1.2.1's pure in-memory Encode/Decode: it addresses on-disk nodes by a
++// uint64 node ID and reads/writes exactly NodeSize bytes at a time. It wraps the
++// *os.File returned by OpenIndexFile.
++//
++// Addressing convention: node ID N lives at byte offset N * NodeSize within the
++// index file, directly analogous to engine/catalog/file.go's FileManager mapping
++// pageID -> pageID * PageSize. Node ID 0 is reserved and never a valid node
++// (mirroring node.go's noSibling sentinel and catalog's reserved free-list page 0);
++// real node IDs start at 1.
++//
++// NodeStore deliberately does NOT implement an allocator or free-list (unlike
++// catalog's FileManager): this subtask only needs to read nodes that were placed at
++// caller-chosen IDs (by the test-scaffolding tree-builder in lookup_test.go today,
++// and by the real insert-with-splitting implementation in a later subtask). If a
++// free-list/allocator turns out to be needed, that is left to whichever later
++// subtask's LLD calls for it.
++//
++// NodeStore also does not do any locking: concurrency (latch-crabbing writes,
++// optimistic lock-free reads with version-counter retry) is explicitly deferred to
++// a later, concurrency-focused subtask per docs/LLD/btree.md's "Concurrency"
++// section. This subtask is single-threaded.
++type NodeStore struct {
++	f *os.File
++}
++
++// NewNodeStore wraps an already-open index file handle (as returned by
++// OpenIndexFile) in a NodeStore.
++func NewNodeStore(f *os.File) *NodeStore {
++	return &NodeStore{f: f}
++}
++
++// reservedNodeID is the sentinel node ID that is never a valid node (mirrors
++// noSibling / catalog's reserved page 0). Real node IDs start at 1.
++const reservedNodeID uint64 = 0
++
++// ReadNode reads and decodes the node at nodeID. Exactly one of leaf/internal is
++// populated, indicated by isLeaf. It returns an error for I/O failures, a short
++// read, or a corrupt/undecodable node -- never for anything related to key
++// presence (that is Lookup's concern, not ReadNode's).
++func (s *NodeStore) ReadNode(nodeID uint64) (isLeaf bool, leaf LeafNode, internal InternalNode, err error) {
++	if nodeID == reservedNodeID {
++		return false, LeafNode{}, InternalNode{}, fmt.Errorf("btree: node ID %d is reserved and never valid", nodeID)
++	}
++
++	buf := make([]byte, NodeSize)
++	offset := int64(nodeID) * int64(NodeSize)
++	if _, err := s.f.ReadAt(buf, offset); err != nil {
++		return false, LeafNode{}, InternalNode{}, fmt.Errorf("btree: reading node %d at offset %d: %w", nodeID, offset, err)
++	}
++
++	switch buf[offNodeType] {
++	case nodeTypeLeaf:
++		l, err := DecodeLeafNode(buf)
++		if err != nil {
++			return false, LeafNode{}, InternalNode{}, fmt.Errorf("btree: decoding leaf node %d: %w", nodeID, err)
++		}
++		return true, l, InternalNode{}, nil
++	case nodeTypeInternal:
++		n, err := DecodeInternalNode(buf)
++		if err != nil {
++			return false, LeafNode{}, InternalNode{}, fmt.Errorf("btree: decoding internal node %d: %w", nodeID, err)
++		}
++		return false, LeafNode{}, n, nil
++	default:
++		return false, LeafNode{}, InternalNode{}, fmt.Errorf("btree: node %d has unrecognized type discriminator %d", nodeID, buf[offNodeType])
++	}
++}
++
++// WriteNode writes an already-encoded (via LeafNode.Encode / InternalNode.Encode)
++// node buffer at nodeID. encoded must be exactly NodeSize bytes, which Encode
++// always produces.
++func (s *NodeStore) WriteNode(nodeID uint64, encoded []byte) error {
++	if nodeID == reservedNodeID {
++		return fmt.Errorf("btree: node ID %d is reserved and never valid", nodeID)
++	}
++	if len(encoded) != NodeSize {
++		return fmt.Errorf("btree: WriteNode requires exactly %d bytes, got %d", NodeSize, len(encoded))
++	}
++
++	offset := int64(nodeID) * int64(NodeSize)
++	if _, err := s.f.WriteAt(encoded, offset); err != nil {
++		return fmt.Errorf("btree: writing node %d at offset %d: %w", nodeID, offset, err)
++	}
++	return nil
++}
++
++// Lookup performs a point lookup of path in the B+Tree rooted at rootNodeID,
++// reading nodes from store. It returns the fileID and found=true if path is
++// present; found=false and a nil error if path is genuinely absent (not-found is a
++// normal, expected outcome, not an error). A non-nil error indicates a genuine
++// I/O or decode failure encountered while traversing the tree.
++//
++// Traversal follows the covering convention documented on InternalNode: for an
++// internal node with keys K[0..n) and children C[0..n], C[i] covers keys in
++// [K[i-1], K[i]) for interior i (K[-1] treated as -infinity, K[n] treated as
++// +infinity). This is implemented as "descend into the child before the first key
++// strictly greater than path".
++func Lookup(store *NodeStore, rootNodeID uint64, path string) (fileID uint64, found bool, err error) {
++	currentID := rootNodeID
++	for {
++		isLeaf, leaf, internal, err := store.ReadNode(currentID)
++		if err != nil {
++			return 0, false, err
++		}
++
++		if isLeaf {
++			i := sort.SearchStrings(leaf.Keys, path)
++			if i < len(leaf.Keys) && leaf.Keys[i] == path {
++				return leaf.FileIDs[i], true, nil
++			}
++			return 0, false, nil
++		}
++
++		// Internal node: find the first key strictly greater than path, and
++		// descend into the child immediately before it.
++		i := sort.Search(len(internal.Keys), func(i int) bool { return path < internal.Keys[i] })
++		currentID = internal.Children[i]
++	}
++}
+diff --git a/engine/btree/lookup_test.go b/engine/btree/lookup_test.go
+new file mode 100644
+index 0000000..d3d25d8
+--- /dev/null
++++ b/engine/btree/lookup_test.go
+@@ -0,0 +1,169 @@
++package btree
++
++import (
++	"path/filepath"
++	"testing"
++)
++
++// buildTestTree is TEST-ONLY SCAFFOLDING for exercising Lookup. It is NOT subtask
++// 1.2.3's real insert-with-splitting API: it hand-constructs a fixed, already-
++// balanced tree shape by directly assembling LeafNode/InternalNode values and
++// writing them to disk via NodeStore. It performs no splitting, no rebalancing, and
++// no general-purpose insert logic -- it exists solely because 1.2.3 (real insert)
++// has not landed yet and Lookup needs *some* on-disk tree to traverse. Do not reuse
++// this as, or mistake it for, the real insert implementation.
++//
++// Tree shape (3 levels):
++//
++//	root (internal, node ID 7): Keys=["billing/invoice"], Children=[internal1, internal2]
++//	  internal1 (node ID 5): Keys=["auth/oauth"],     Children=[leaf1, leaf2]
++//	    leaf1 (node ID 1): "auth/login"=101, "auth/logout"=102        -> NextLeaf leaf2
++//	    leaf2 (node ID 2): "auth/oauth"=103, "auth/session"=104       -> NextLeaf leaf3
++//	  internal2 (node ID 6): Keys=["search/index"],    Children=[leaf3, leaf4]
++//	    leaf3 (node ID 3): "billing/invoice"=201, "billing/plan"=202  -> NextLeaf leaf4
++//	    leaf4 (node ID 4): "search/index"=301, "search/query"=302    -> NextLeaf 0 (none)
++//
++// Node IDs are assigned arbitrarily (leaves 1-4, internals 5-6, root 7); only that
++// every ID is >= 1 (0 is reserved) and consistent with the Children/NextLeaf
++// pointers matters.
++func buildTestTree(t *testing.T) (store *NodeStore, rootID uint64) {
++	t.Helper()
++
++	const (
++		leaf1ID = uint64(1)
++		leaf2ID = uint64(2)
++		leaf3ID = uint64(3)
++		leaf4ID = uint64(4)
++		int1ID  = uint64(5)
++		int2ID  = uint64(6)
++		rootID_ = uint64(7)
++	)
++
++	path := filepath.Join(t.TempDir(), "name.idx")
++	f, err := OpenIndexFile(path)
++	if err != nil {
++		t.Fatalf("OpenIndexFile: %v", err)
++	}
++	t.Cleanup(func() { f.Close() })
++
++	store = NewNodeStore(f)
++
++	nodes := []struct {
++		id       uint64
++		leaf     *LeafNode
++		internal *InternalNode
++	}{
++		{id: leaf1ID, leaf: &LeafNode{
++			Keys: []string{"auth/login", "auth/logout"}, FileIDs: []uint64{101, 102}, NextLeaf: leaf2ID,
++		}},
++		{id: leaf2ID, leaf: &LeafNode{
++			Keys: []string{"auth/oauth", "auth/session"}, FileIDs: []uint64{103, 104}, NextLeaf: leaf3ID,
++		}},
++		{id: leaf3ID, leaf: &LeafNode{
++			Keys: []string{"billing/invoice", "billing/plan"}, FileIDs: []uint64{201, 202}, NextLeaf: leaf4ID,
++		}},
++		{id: leaf4ID, leaf: &LeafNode{
++			Keys: []string{"search/index", "search/query"}, FileIDs: []uint64{301, 302}, NextLeaf: noSibling,
++		}},
++		{id: int1ID, internal: &InternalNode{
++			Keys: []string{"auth/oauth"}, Children: []uint64{leaf1ID, leaf2ID},
++		}},
++		{id: int2ID, internal: &InternalNode{
++			Keys: []string{"search/index"}, Children: []uint64{leaf3ID, leaf4ID},
++		}},
++		{id: rootID_, internal: &InternalNode{
++			Keys: []string{"billing/invoice"}, Children: []uint64{int1ID, int2ID},
++		}},
++	}
++
++	for _, n := range nodes {
++		var encoded []byte
++		var err error
++		if n.leaf != nil {
++			encoded, err = n.leaf.Encode()
++		} else {
++			encoded, err = n.internal.Encode()
++		}
++		if err != nil {
++			t.Fatalf("encoding node %d: %v", n.id, err)
++		}
++		if err := store.WriteNode(n.id, encoded); err != nil {
++			t.Fatalf("writing node %d: %v", n.id, err)
++		}
++	}
++
++	return store, rootID_
++}
++
++func TestLookup(t *testing.T) {
++	store, rootID := buildTestTree(t)
++
++	t.Run("present", func(t *testing.T) {
++		cases := []struct {
++			path       string
++			wantFileID uint64
++		}{
++			{"auth/login", 101},
++			{"auth/logout", 102},
++			{"auth/oauth", 103},
++			{"auth/session", 104},
++			{"billing/invoice", 201},
++			{"billing/plan", 202},
++			{"search/index", 301},
++			{"search/query", 302},
++		}
++		for _, tc := range cases {
++			fileID, found, err := Lookup(store, rootID, tc.path)
++			if err != nil {
++				t.Fatalf("Lookup(%q): unexpected error: %v", tc.path, err)
++			}
++			if !found {
++				t.Fatalf("Lookup(%q): expected found=true, got false", tc.path)
++			}
++			if fileID != tc.wantFileID {
++				t.Fatalf("Lookup(%q): fileID = %d, want %d", tc.path, fileID, tc.wantFileID)
++			}
++		}
++	})
++
++	t.Run("absent", func(t *testing.T) {
++		// These paths sort into leaves that DO have other real keys, proving
++		// Lookup genuinely checks for an exact key match rather than just
++		// treating "found a leaf" as success.
++		cases := []string{
++			"auth/middleware", // between auth/logout and auth/oauth
++			"billing/refund",  // after billing/plan, within billing's range
++		}
++		for _, path := range cases {
++			fileID, found, err := Lookup(store, rootID, path)
++			if err != nil {
++				t.Fatalf("Lookup(%q): unexpected error: %v", path, err)
++			}
++			if found {
++				t.Fatalf("Lookup(%q): expected found=false, got true (fileID=%d)", path, fileID)
++			}
++			if fileID != 0 {
++				t.Fatalf("Lookup(%q): expected fileID=0 on not-found, got %d", path, fileID)
++			}
++		}
++	})
++
++	t.Run("boundary", func(t *testing.T) {
++		cases := []string{
++			"aaa/first", // sorts before every key in the whole tree
++			"zzz/last",  // sorts after every key in the whole tree
++		}
++		for _, path := range cases {
++			fileID, found, err := Lookup(store, rootID, path)
++			if err != nil {
++				t.Fatalf("Lookup(%q): unexpected error: %v", path, err)
++			}
++			if found {
++				t.Fatalf("Lookup(%q): expected found=false, got true (fileID=%d)", path, fileID)
++			}
++			if fileID != 0 {
++				t.Fatalf("Lookup(%q): expected fileID=0 on not-found, got %d", path, fileID)
++			}
++		}
++	})
++}

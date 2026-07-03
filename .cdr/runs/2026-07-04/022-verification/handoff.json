@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "022-verification",
+  "subtask": "1.2.2",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-04/022-verification/verification.json",
+    "regression_entries": [".cdr/index/regression.jsonl (last 2 entries, run=022-verification)"],
+    "diff_reviewed": "commit e7b669db588f443a181485c43493fe3288902ef5",
+    "files_touched": ["engine/btree/lookup.go", "engine/btree/lookup_test.go"],
+    "dependency_verified_untouched": ["engine/btree/node.go", "engine/btree/node_test.go"],
+    "lld_reference": "docs/LLD/btree.md"
+  }
+}

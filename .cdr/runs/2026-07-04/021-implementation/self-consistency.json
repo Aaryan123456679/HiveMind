@@ -1,0 +1,16 @@
+{
+  "subtask": "1.2.2",
+  "checks": [
+    {"cmd": "go build ./engine/...", "result": "pass"},
+    {"cmd": "go vet ./engine/btree/...", "result": "pass"},
+    {"cmd": "go test ./engine/btree/... -run TestLookup -race -v", "result": "pass", "subtests": ["TestLookup/present (8/8 present-key assertions)", "TestLookup/absent (2/2 absent-in-populated-leaf assertions)", "TestLookup/boundary (2/2 edge-case-absent assertions)"]},
+    {"cmd": "go test ./engine/btree/... -race -v", "result": "pass", "note": "full package: TestLookup + 1.2.1's TestNodeSerialization (5 subtests) all pass, no regression"}
+  ],
+  "validation_matrix_coverage": "all 12 rows in validation-matrix.json covered (8 present, 2 absent-in-populated-leaf, 2 boundary)",
+  "bug_found_and_fixed_during_self_consistency": {
+    "description": "Initial test-scaffolding tree (buildTestTree) used the wrong separator key for internal2 (used leaf3's last key 'billing/plan' instead of leaf4's first key 'search/index'), which caused TestLookup/present to fail for 'billing/plan' -- Lookup's covering-convention logic was correct; the test tree's separator was inconsistent with the documented convention (Children[i] covers keys < Keys[i] for i==0, else covers keys >= previous separator; last child covers keys >= Keys[n-1], meaning Keys[n-1] must equal the first key of the last child, not the last key of the second-to-last child).",
+    "fix": "Changed internal2's Keys from ['billing/plan'] to ['search/index'] (leaf4's first key) in lookup_test.go; re-ran tests, all green."
+  },
+  "not_done_self_verification": "No independent self-verification was performed beyond these internal sanity checks (build/vet/test green, matrix covered); a separate /cdr:verify pass follows per protocol.",
+  "no_push": true
+}

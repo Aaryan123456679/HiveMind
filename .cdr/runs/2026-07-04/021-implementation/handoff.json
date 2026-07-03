@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-021-implementation",
+  "subtask": "1.2.2",
+  "status": "completed",
+  "commit": "e7b669d",
+  "files_changed": [
+    "engine/btree/lookup.go",
+    "engine/btree/lookup_test.go"
+  ],
+  "pointers": {
+    "NodeStore_type": "engine/btree/lookup.go: type NodeStore struct (lines ~24-32)",
+    "NodeStore_ReadNode": "engine/btree/lookup.go: func (s *NodeStore) ReadNode (~lines 47-70)",
+    "NodeStore_WriteNode": "engine/btree/lookup.go: func (s *NodeStore) WriteNode (~lines 74-88)",
+    "Lookup_func": "engine/btree/lookup.go: func Lookup(store *NodeStore, rootNodeID uint64, path string) (~lines 90-119)",
+    "reservedNodeID_const": "engine/btree/lookup.go: const reservedNodeID uint64 = 0",
+    "test_scaffolding_tree_builder": "engine/btree/lookup_test.go: func buildTestTree (~lines 29-96) -- explicitly commented as TEST-ONLY SCAFFOLDING, NOT subtask 1.2.3's real insert-with-splitting API",
+    "TestLookup": "engine/btree/lookup_test.go: func TestLookup, subtests present/absent/boundary (~lines 98-169)"
+  },
+  "node_id_to_offset_addressing_convention": {
+    "formula": "byte offset = nodeID * NodeSize (NodeSize=4096, defined in engine/btree/node.go)",
+    "reserved_id": "node ID 0 is reserved and never valid (mirrors node.go's noSibling sentinel and engine/catalog/file.go's reserved free-list page 0); real node IDs start at 1",
+    "precedent": "directly analogous to engine/catalog/file.go's FileManager pageID * PageSize convention",
+    "scope_note": "NodeStore has NO allocator/free-list (unlike catalog's FileManager) -- it only reads/writes nodes at caller-chosen IDs. An allocator, if ever needed, is deferred to whichever later subtask's LLD calls for it (likely folded into 1.2.3's real insert)."
+  },
+  "internal_node_traversal_rule": "sort.Search for the first key strictly greater than the target path in InternalNode.Keys; descend into Children[i] (the child immediately before that key), per the covering convention already documented on InternalNode in node.go: Children[i] covers keys < Keys[i] for i==0, keys in [Keys[i-1], Keys[i]) for interior children, keys >= Keys[n-1] for the last child.",
+  "test_scaffolding_explicit_note": "buildTestTree in lookup_test.go is TEST-ONLY SCAFFOLDING to exercise Lookup. It hand-constructs a fixed, pre-balanced 3-level tree (no auto-splitting/rebalancing) and is explicitly NOT subtask 1.2.3's real insert API -- do not reuse or mistake it for that deliverable.",
+  "acceptance_criteria": "Lookup returns the correct fileID for an inserted path; returns a well-defined not-found result (found=false, err=nil) for an absent path.",
+  "test_spec_command": "go test ./engine/btree/... -run TestLookup",
+  "self_consistency": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "go_test_TestLookup_race": "pass (3/3 subtests: present, absent, boundary)",
+    "go_test_full_package_race": "pass (TestLookup + 1.2.1's TestNodeSerialization, no regression)"
+  },
+  "not_done": [
+    "No self-verification performed beyond internal self-consistency (build/vet/test green, validation matrix covered) -- per protocol, a separate /cdr:verify pass follows",
+    "No node-splitting insert (1.2.3), delete (1.2.4), or prefix scan (1.2.5) -- explicitly out of scope",
+    "No latch-crabbing / optimistic-read concurrency logic -- deferred to a later concurrency-focused subtask per docs/LLD/btree.md"
+  ],
+  "no_push": true,
+  "artifacts_dir": ".cdr/runs/2026-07-04/021-implementation/",
+  "index_updates": [
+    ".cdr/index/task.jsonl: appended task-1.2.2 entry, state=implemented, commit=e7b669d",
+    ".cdr/index/file.jsonl: appended engine/btree/lookup.go and engine/btree/lookup_test.go entries"
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "subtask": "1.2.2",
+  "test_spec_command": "go test ./engine/btree/... -run TestLookup",
+  "rows": [
+    {
+      "id": "present-leaf1-a",
+      "category": "present-key, multiple leaves",
+      "input": "auth/login",
+      "expected": {"fileID": 101, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "present-leaf1-b",
+      "category": "present-key, multiple leaves",
+      "input": "auth/logout",
+      "expected": {"fileID": 102, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "present-leaf2-a",
+      "category": "present-key, multiple leaves",
+      "input": "auth/oauth",
+      "expected": {"fileID": 103, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "present-leaf2-b",
+      "category": "present-key, multiple leaves",
+      "input": "auth/session",
+      "expected": {"fileID": 104, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "present-leaf3-a",
+      "category": "present-key, multiple leaves",
+      "input": "billing/invoice",
+      "expected": {"fileID": 201, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "present-leaf3-b",
+      "category": "present-key, multiple leaves",
+      "input": "billing/plan",
+      "expected": {"fileID": 202, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "present-leaf4-a",
+      "category": "present-key, multiple leaves",
+      "input": "search/index",
+      "expected": {"fileID": 301, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "present-leaf4-b",
+      "category": "present-key, multiple leaves",
+      "input": "search/query",
+      "expected": {"fileID": 302, "found": true},
+      "covered_by": "TestLookup/present"
+    },
+    {
+      "id": "absent-populated-leaf1",
+      "category": "absent-key-in-populated-leaf",
+      "input": "auth/middleware",
+      "note": "sorts between auth/logout and auth/oauth, i.e. lands on a leaf that has other real keys",
+      "expected": {"found": false, "err": null, "fileID": 0},
+      "covered_by": "TestLookup/absent"
+    },
+    {
+      "id": "absent-populated-leaf3",
+      "category": "absent-key-in-populated-leaf",
+      "input": "billing/refund",
+      "note": "sorts after billing/plan, within leaf3's/adjacent range",
+      "expected": {"found": false, "err": null, "fileID": 0},
+      "covered_by": "TestLookup/absent"
+    },
+    {
+      "id": "boundary-before-first",
+      "category": "edge-case-absent",
+      "input": "aaa/first",
+      "note": "sorts before every key in the whole tree",
+      "expected": {"found": false, "err": null, "fileID": 0},
+      "covered_by": "TestLookup/boundary"
+    },
+    {
+      "id": "boundary-after-last",
+      "category": "edge-case-absent",
+      "input": "zzz/last",
+      "note": "sorts after every key in the whole tree",
+      "expected": {"found": false, "err": null, "fileID": 0},
+      "covered_by": "TestLookup/boundary"
+    }
+  ],
+  "regression_guard": "go test ./engine/btree/... -race -v (full package, ensures TestNodeSerialization from 1.2.1 still passes unmodified)"
+}
