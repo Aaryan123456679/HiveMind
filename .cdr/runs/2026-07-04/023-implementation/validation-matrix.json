@@ -1,0 +1,60 @@
+{
+  "subtask": "task-1.2.3",
+  "rows": [
+    {
+      "criterion": "Single insert into a brand-new/empty tree bootstraps a root",
+      "covered_by": "TestInsertEmptyTree",
+      "status": "covered"
+    },
+    {
+      "criterion": "Re-inserting an existing key updates fileID in place (upsert), root unchanged",
+      "covered_by": "TestInsertUpsert",
+      "status": "covered"
+    },
+    {
+      "criterion": "Inserting keys beyond a node's capacity triggers a correct leaf split",
+      "covered_by": "TestInsertLeafSplit (250 sequential inserts, real NodeSize=4096, asserts root promoted to internal)",
+      "status": "covered"
+    },
+    {
+      "criterion": "Median promoted to parent, keys partitioned correctly (leaf split: separator duplicated)",
+      "covered_by": "splitLeaf/chooseLeafSplit implementation + assertStructuralInvariants (sorted keys, correct fanout) in TestInsertLeafSplit/TestInsertInternalSplit/TestInsertOutOfOrder",
+      "status": "covered"
+    },
+    {
+      "criterion": "Internal-node split (median promoted alone, not duplicated) when an internal node overflows",
+      "covered_by": "TestInsertInternalSplit (2000 sequential inserts, forces multi-level splitting)",
+      "status": "covered"
+    },
+    {
+      "criterion": "Tree remains balanced; correct fanout (structural invariants: sorted keys, len(Children)==len(Keys)+1)",
+      "covered_by": "assertStructuralInvariants in TestInsertLeafSplit/TestInsertInternalSplit/TestInsertOutOfOrder",
+      "status": "covered"
+    },
+    {
+      "criterion": "All previously inserted keys remain lookup-able after splits (via real Lookup, not scaffolding)",
+      "covered_by": "assertAllLookupable in TestInsertLeafSplit/TestInsertInternalSplit/TestInsertOutOfOrder; never-inserted keys correctly report not-found",
+      "status": "covered"
+    },
+    {
+      "criterion": "Insert order independence (keys arriving out of sorted order still produce a correct tree)",
+      "covered_by": "TestInsertOutOfOrder (300 keys, deterministic shuffle)",
+      "status": "covered"
+    },
+    {
+      "criterion": "Closes 1.2.2's flagged gap: internal nodes with >= 2 separator keys exercised by Lookup",
+      "covered_by": "TestInsertInternalSplit explicitly asserts an internal node with len(Keys) >= 2 exists, then runs full-tree Lookup against it",
+      "status": "covered"
+    },
+    {
+      "criterion": "No regression in 1.2.1 (node serialization) or 1.2.2 (point lookup)",
+      "covered_by": "go test ./engine/btree/... -race -v: TestNodeSerialization and TestLookup both still pass unchanged",
+      "status": "covered"
+    }
+  ],
+  "build_checks": {
+    "go_build": "PASS (go build ./engine/...)",
+    "go_vet": "PASS (go vet ./engine/...)",
+    "go_test_race": "PASS (go test ./engine/btree/... -race -v, full package, 0 failures)"
+  }
+}

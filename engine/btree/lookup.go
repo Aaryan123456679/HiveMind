@@ -93,36 +93,54 @@ func (s *NodeStore) WriteNode(nodeID uint64, encoded []byte) error {
 	return nil
 }
 
-// Lookup performs a point lookup of path in the B+Tree rooted at rootNodeID,
-// reading nodes from store. It returns the fileID and found=true if path is
-// present; found=false and a nil error if path is genuinely absent (not-found is a
-// normal, expected outcome, not an error). A non-nil error indicates a genuine
-// I/O or decode failure encountered while traversing the tree.
+// descendToLeaf walks the B+Tree rooted at rootNodeID from root to the leaf
+// that would contain path, reading nodes from store. It returns the ordered
+// chain of node IDs visited (chain[0] == rootNodeID, chain[len(chain)-1] ==
+// the leaf's node ID) plus the decoded leaf itself, so callers don't need to
+// re-read the leaf a second time. This is the single place descent logic
+// lives; both Lookup and Insert (engine/btree/insert.go) call this instead of
+// each re-implementing the traversal.
 //
 // Traversal follows the covering convention documented on InternalNode: for an
 // internal node with keys K[0..n) and children C[0..n], C[i] covers keys in
 // [K[i-1], K[i]) for interior i (K[-1] treated as -infinity, K[n] treated as
-// +infinity). This is implemented as "descend into the child before the first key
-// strictly greater than path".
-func Lookup(store *NodeStore, rootNodeID uint64, path string) (fileID uint64, found bool, err error) {
+// +infinity). This is implemented as "descend into the child before the first
+// key strictly greater than path".
+func descendToLeaf(store *NodeStore, rootNodeID uint64, path string) (chain []uint64, leaf LeafNode, err error) {
 	currentID := rootNodeID
+	chain = append(chain, currentID)
 	for {
-		isLeaf, leaf, internal, err := store.ReadNode(currentID)
+		isLeaf, l, internal, err := store.ReadNode(currentID)
 		if err != nil {
-			return 0, false, err
+			return nil, LeafNode{}, err
 		}
 
 		if isLeaf {
-			i := sort.SearchStrings(leaf.Keys, path)
-			if i < len(leaf.Keys) && leaf.Keys[i] == path {
-				return leaf.FileIDs[i], true, nil
-			}
-			return 0, false, nil
+			return chain, l, nil
 		}
 
 		// Internal node: find the first key strictly greater than path, and
 		// descend into the child immediately before it.
 		i := sort.Search(len(internal.Keys), func(i int) bool { return path < internal.Keys[i] })
 		currentID = internal.Children[i]
+		chain = append(chain, currentID)
 	}
+}
+
+// Lookup performs a point lookup of path in the B+Tree rooted at rootNodeID,
+// reading nodes from store. It returns the fileID and found=true if path is
+// present; found=false and a nil error if path is genuinely absent (not-found is a
+// normal, expected outcome, not an error). A non-nil error indicates a genuine
+// I/O or decode failure encountered while traversing the tree.
+func Lookup(store *NodeStore, rootNodeID uint64, path string) (fileID uint64, found bool, err error) {
+	_, leaf, err := descendToLeaf(store, rootNodeID, path)
+	if err != nil {
+		return 0, false, err
+	}
+
+	i := sort.SearchStrings(leaf.Keys, path)
+	if i < len(leaf.Keys) && leaf.Keys[i] == path {
+		return leaf.FileIDs[i], true, nil
+	}
+	return 0, false, nil
 }

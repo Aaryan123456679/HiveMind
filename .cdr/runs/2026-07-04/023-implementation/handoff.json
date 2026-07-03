@@ -1,0 +1,32 @@
+{
+  "run_id": "2026-07-04-023-implementation",
+  "subtask": "task-1.2.3",
+  "status": "completed",
+  "commit": "a1dedbb7ac5923808e4ea2f041b3fa0a3ba8eeb8",
+  "new_files": [
+    "engine/btree/insert.go",
+    "engine/btree/insert_test.go"
+  ],
+  "modified_files": [
+    "engine/btree/lookup.go"
+  ],
+  "pointers": {
+    "Insert_signature": "engine/btree/insert.go: func Insert(store *NodeStore, alloc *NodeAllocator, rootNodeID uint64, path string, fileID uint64) (newRootNodeID uint64, err error)",
+    "NodeAllocator": "engine/btree/insert.go: type NodeAllocator (sidecar file <index-path>.nodealloc, pattern mirrors engine/catalog/idalloc.go)",
+    "leaf_split_helpers": "engine/btree/insert.go: chooseLeafSplit, splitLeaf",
+    "internal_split_helpers": "engine/btree/insert.go: chooseInternalSplit, splitInternal",
+    "propagation": "engine/btree/insert.go: propagateSplit (handles ancestor overflow chain and new-root allocation)",
+    "shared_descent": "engine/btree/lookup.go: descendToLeaf (used by both Lookup and Insert)",
+    "tests": "engine/btree/insert_test.go: TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertOutOfOrder"
+  },
+  "known_gaps_for_downstream": [
+    "No persistence yet of 'current root node ID' across process restarts -- caller must track newRootNodeID returned by Insert. Flagged for 1.2.5 (prefix scan) / 1.2.6 (persist/reload).",
+    "NodeAllocator's high-water-mark sidecar file (<index-path>.nodealloc) is durable per-index-file but not yet wired into any single top-level 'open tree' API -- there is no such API yet in this subtask's scope.",
+    "Version field on nodes is round-tripped but not bumped by Insert; concurrency (latch-crabbing, optimistic reads) explicitly deferred to a later concurrency-focused subtask, consistent with 1.2.1/1.2.2's existing treatment."
+  ],
+  "closed_findings": [
+    "1.2.2 verification gap: internal nodes with >= 2 separator keys were never exercised by Lookup (buildTestTree scaffolding only built single-key internal nodes). Closed by TestInsertInternalSplit, which explicitly asserts such a node exists post-insert and runs full-tree Lookup against it."
+  ],
+  "self_consistency": ".cdr/runs/2026-07-04/023-implementation/self-consistency.json (build/vet/test all PASS; internal sanity only, NOT independent verification per invariant I4)",
+  "next_step": "Hand off to /cdr:verify for independent verification of task-1.2.3."
+}

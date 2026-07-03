@@ -1,0 +1,33 @@
+{
+  "subtask": "task-1.2.3",
+  "risk_level": "high",
+  "rationale": "Most complex B+Tree operation implemented so far; defines the node-allocation convention and leaf/internal split-and-promote semantics that later subtasks (1.2.4 delete, 1.2.5 prefix scan, 1.2.6 persist/reload) will depend on and build atop.",
+  "new_files": [
+    "engine/btree/insert.go",
+    "engine/btree/insert_test.go"
+  ],
+  "modified_files": [
+    "engine/btree/lookup.go"
+  ],
+  "modification_reason": {
+    "engine/btree/lookup.go": "Factored the root->leaf descent loop out of Lookup into a shared descendToLeaf helper so Insert can reuse the exact same traversal logic instead of duplicating it, per task instructions. Lookup's external behavior/signature is unchanged."
+  },
+  "unmodified_dependencies": [
+    "engine/btree/node.go (LeafNode/InternalNode/Encode/Decode/leafEncodedSize/internalEncodedSize/NodeSize/noSibling, unchanged)",
+    "engine/btree/lookup.go's NodeStore/ReadNode/WriteNode/reservedNodeID (unchanged, reused as-is)"
+  ],
+  "downstream_dependents": [
+    "task-1.2.4 (delete)",
+    "task-1.2.5 (prefix scan, relies on NextLeaf chain built by Insert's leaf splits)",
+    "task-1.2.6 (persist/reload, will need to persist the new NodeAllocator's high-water-mark and eventually the current root node ID)"
+  ],
+  "known_gaps_flagged_for_future_subtasks": [
+    "No mechanism yet persists 'the current root node ID' across process restarts (Insert returns newRootNodeID to the caller each call; caller is responsible for tracking it in-memory for now). This is expected to be addressed by 1.2.5/1.2.6.",
+    "NodeAllocator's sidecar high-water-mark file is durable across reopen of the same index file, but nothing yet ties it to the root-pointer persistence problem above -- flagged as a known gap for 1.2.5/1.2.6 to revisit.",
+    "Version field on nodes is round-tripped but not bumped by Insert (concurrency/optimistic-read logic is explicitly deferred to a later, concurrency-focused subtask per docs/LLD/btree.md, consistent with how 1.2.1/1.2.2 already treated it)."
+  ],
+  "test_regression_scope": [
+    "engine/btree/node_test.go (1.2.1, must still pass)",
+    "engine/btree/lookup_test.go (1.2.2, must still pass unchanged after descendToLeaf refactor)"
+  ]
+}

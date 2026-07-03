@@ -1,0 +1,12 @@
+{
+  "subtask": "task-1.2.3",
+  "note": "Internal sanity only -- this is NOT independent verification (delegated to /cdr:verify per invariant I4).",
+  "checks": [
+    {"cmd": "go build ./engine/...", "result": "PASS", "output": "no output (clean build)"},
+    {"cmd": "go vet ./engine/...", "result": "PASS", "output": "no output (clean vet)"},
+    {"cmd": "gofmt -l engine/btree/", "result": "PASS", "output": "no files listed (already formatted)"},
+    {"cmd": "go test ./engine/btree/... -race -v", "result": "PASS", "output": "TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertOutOfOrder, TestLookup (+ subtests), TestNodeSerialization (+ subtests) all PASS; 0 failures; no race detector reports"}
+  ],
+  "validation_matrix_status": "fully covered, see validation-matrix.json",
+  "regression_check": "1.2.1 (TestNodeSerialization) and 1.2.2 (TestLookup) both pass unchanged after this run's descendToLeaf refactor of lookup.go"
+}
