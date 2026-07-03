@@ -1,0 +1,26 @@
+{
+  "run_id": "2026-07-04-029-implementation-fix",
+  "subtask": "1.2.4",
+  "status": "completed",
+  "fix_commit": "631c81307be44470eb3b99f0e118e3f424d06f6e",
+  "prior_commit_fixed": "c21c21faf76d4b4a0fbfb4448255b427aa94829e",
+  "verification_input": ".cdr/runs/2026-07-04/028-verification/verification.json",
+  "strategy_chosen": "b: fix repairEmptyLeaf to check isLeaf before treating a same-parent sibling as a LeafNode; skip type-mismatched siblings for borrow/merge and accept underflow if neither side is usable. Grandparent-splice logic in shrinkParentAfterMerge left untouched (already confirmed correct by verification; assertStructuralInvariants does not require uniform leaf depth, so the shape it can produce is not itself an invariant violation in this codebase).",
+  "files_changed": [
+    "engine/btree/delete.go",
+    "engine/btree/delete_test.go"
+  ],
+  "new_test": "TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss (engine/btree/delete_test.go), wired into TestDelete dispatcher",
+  "commands_run": [
+    "go build ./engine/... -> exit 0",
+    "go vet ./engine/... -> exit 0",
+    "go test ./engine/btree/... -race -v -count=1 -> ok, 21.283s, all pass, no regressions",
+    "regression-test-efficacy sanity check: git stash push -- engine/btree/delete.go; go test -run TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss -> FAILS against pre-fix code (Delete(\"topic15526/page\"): expected found=true, got false); git stash pop restored fix; full suite re-confirmed green"
+  ],
+  "pointers": {
+    "fixed_function": "engine/btree/delete.go: repairEmptyLeaf (lines ~140-330 post-fix)",
+    "unchanged_confirmed_correct": "engine/btree/delete.go: shrinkParentAfterMerge (grandparent-splice bound reasoning), root-collapse branch, Delete's empty-tree-after-delete convention",
+    "run_dir": ".cdr/runs/2026-07-04/029-implementation-fix/"
+  },
+  "next_step": "handoff to /cdr:verify for re-verification of subtask 1.2.4 against commit 631c81307be44470eb3b99f0e118e3f424d06f6e"
+}
