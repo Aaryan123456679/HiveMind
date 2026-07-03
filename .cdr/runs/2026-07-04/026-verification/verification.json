@@ -1,0 +1,67 @@
+{
+  "subtask": "1.2.3",
+  "verdict": "PASS_WITH_COMMENTS",
+  "prior_run_reference": ".cdr/runs/2026-07-04/024-verification/verification.json (CHANGES_REQUESTED, single blocking finding: acceptance-test spec name mismatch)",
+  "fix_commits_reviewed": ["3ebc229 (code fix)", "cc55636 (index update)", "1ed7422 (handoff.json)"],
+  "summary": "Re-verified subtask 1.2.3 after the fix cycle addressing the sole blocking finding from run 024 (gh issue #2's literal acceptance test spec `go test ./engine/btree/... -run TestInsertSplit` matched zero tests). Confirmed via `git diff a072f0e51beaedea2227c384fd664e4db3b953f3 3ebc229 -- engine/btree/insert.go engine/btree/lookup.go` that the diff is EMPTY -- no production code was touched by the fix; only engine/btree/insert_test.go and CDR bookkeeping files (.cdr/index/*, run dirs) changed. The fix adds a top-level TestInsertSplit that runs TestInsertLeafSplit's and TestInsertInternalSplit's bodies (extracted verbatim into testInsertLeafSplit/testInsertInternalSplit helpers) as t.Run subtests, while the original TestInsertLeafSplit/TestInsertInternalSplit are kept as one-line wrappers calling the same helpers -- a mechanical extract-function refactor with no assertion-level changes (confirmed by reading the diff hunk: only function signatures/wrapping added, body content identical). Independently ran `go test ./engine/btree/... -run TestInsertSplit -race -v`: now matches and PASSES, executing 2 real subtests (LeafSplit, InternalSplit) instead of the prior silent 'no tests to run' false-pass. Independently ran the full package suite `go test ./engine/btree/... -race -v -count=1`: all 16 test/subtest entries pass (TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertSplit + its 2 subtests, TestInsertOutOfOrder, TestLookup + its 3 subtests, TestNodeSerialization + its 5 subtests) -- no regressions from the wrapper refactor. Since production code is unchanged, the deep functional tracing already performed in run 024 (leaf/internal split promotion semantics, root allocation, NodeAllocator durability, descendToLeaf behavior-preservation, upsert semantics) remains valid and is not re-derived. The only remaining items are the three non-blocking (low/medium-risk) notes already logged to regression.jsonl in run 024, which were explicitly out of scope for this narrow fix and were not required to be addressed before closing 1.2.3.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "gh issue #2's literal acceptance test command now matches and executes real assertions: `go test ./engine/btree/... -run TestInsertSplit -race -v` -> PASS, 2/2 subtests (LeafSplit, InternalSplit), each running the identical assertion bodies previously exercised only under TestInsertLeafSplit/TestInsertInternalSplit. Functional acceptance criteria (median promotion, key partitioning, tree balance, full lookup-ability post-split) remain met as established in run 024 -- unchanged since no production code was touched."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "No production code touched (confirmed via empty diff on insert.go/lookup.go between a072f0e and 3ebc229), so all architecture-conformance determinations from run 024 (NodeAllocator mirroring engine/catalog/idalloc.go, LLD node-addressing convention, deferred concurrency model) remain valid unchanged."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Diffed insert_test.go's changed hunks directly: TestInsertLeafSplit and TestInsertInternalSplit bodies were moved verbatim into new unexported helpers (testInsertLeafSplit, testInsertInternalSplit) with the original test functions reduced to a single delegating call each -- no assertion, fixture, or setup code was altered, added, or removed in the move. Full package test suite run with -count=1 (no cache) confirms all previously-passing tests (TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertOutOfOrder, TestLookup x3, TestNodeSerialization x5) still pass, plus the new TestInsertSplit x2 subtests. No coverage was lost and no existing test's pass/fail outcome changed."
+    },
+    "edge_cases": {
+      "status": "pass_with_comments",
+      "evidence": "No new edge cases introduced (test-only change). The two non-blocking edge-case gaps identified in run 024 (chooseLeafSplit's mid>1 floor on a pathologically oversized single key; chooseInternalSplit's potential mid=0 selection producing a non-root 0-key internal node) are unchanged and remain open as low-risk, already logged to regression.jsonl in run 024 (not re-duplicated here)."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No production code or attack surface changed by this fix; determination from run 024 stands unchanged."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "No production code changed; run 024's performance determination (O(log n) descent, O(fanout) rewrite per level, matching idalloc.go's cost model) stands unchanged. TestInsertSplit's subtests reuse existing fixtures/scale (n=2000 for InternalSplit) rather than duplicating work, so no meaningful added test runtime (full suite completed in ~2.1s)."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "The extract-function-into-helper-plus-wrapper pattern is a clean, idiomatic Go way to give a test both its original name (for direct `-run TestInsertLeafSplit` invocation, preserving any external tooling/CI history that depends on that name) and a spec-conformant umbrella name (TestInsertSplit) without duplicating assertion code. Doc comments on testInsertLeafSplit/testInsertInternalSplit/TestInsertSplit clearly explain the relationship and the acceptance-test rationale, aiding future maintainers who might otherwise wonder why three test names exist for two scenarios."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "The exact gap flagged in run 024 (no test literally named/substring-matching TestInsertSplit) is closed: `go test ./engine/btree/... -run TestInsertSplit -race -v` now executes 2 real subtests instead of matching zero. No coverage was removed -- TestInsertLeafSplit and TestInsertInternalSplit still exist as independently invocable top-level tests (now thin wrappers) and continue to pass. Net new coverage: zero (by design -- this was a spec-conformance/naming fix, not a functional-coverage fix), which is appropriate since run 024 explicitly scoped the fix as name-only."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Independently ran `git diff a072f0e51beaedea2227c384fd664e4db3b953f3 3ebc229 -- engine/btree/insert.go engine/btree/lookup.go` and confirmed zero output (no production code changed). Independently ran `go test ./engine/btree/... -run TestInsertSplit -race -v` (pass, 2/2 subtests, no longer a silent no-op) and the full package suite with -count=1 to bypass caching (16/16 pass, no regressions). Read the actual diff hunk of insert_test.go to confirm the extraction was mechanical (body content unchanged, only wrapped in new function names plus one new umbrella test). All claims in this verdict are based on commands and diffs run/read directly in this session, not on the fix commit's own message or the prior implementation agent's self-consistency report."
+    }
+  },
+  "explicit_determinations": {
+    "production_code_untouched": "Confirmed: `git diff a072f0e51beaedea2227c384fd664e4db3b953f3 3ebc229 -- engine/btree/insert.go engine/btree/lookup.go` produces no output. Only engine/btree/insert_test.go and .cdr/ bookkeeping files were changed by the 3ebc229 commit.",
+    "TestInsertSplit_now_executes_real_assertions": "Confirmed: `go test ./btree/... -run TestInsertSplit -race -v` output shows `=== RUN TestInsertSplit`, `=== RUN TestInsertSplit/LeafSplit`, `=== RUN TestInsertSplit/InternalSplit`, `--- PASS: TestInsertSplit (0.34s)` with both subtests passing -- not a silent zero-match no-op.",
+    "wrapper_extraction_is_behavior_preserving": "Confirmed by reading the diff hunk directly: TestInsertLeafSplit's and TestInsertInternalSplit's full original bodies were relocated into testInsertLeafSplit(t)/testInsertInternalSplit(t) with zero textual changes to the body content itself; the original test names became one-line delegating wrappers. TestInsertSplit's t.Run calls invoke the identical helper functions.",
+    "full_suite_regression_check": "`go test ./engine/btree/... -race -v -count=1` (cache disabled) -> PASS, all 16 test/subtest entries green: TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertSplit (LeafSplit, InternalSplit), TestInsertOutOfOrder, TestLookup (present, absent, boundary), TestNodeSerialization (5 subtests).",
+    "prior_functional_tracing_still_valid": "Since insert.go and lookup.go are byte-identical to the a072f0e version already deep-traced in run 024 (leaf-split duplication, internal-split non-duplication, root allocation, NodeAllocator durability, descendToLeaf equivalence, upsert semantics, reserved-node-0 vs allocator-starts-at-1 non-collision), none of those determinations needed to be, or were, re-derived."
+  },
+  "commands_run": [
+    "git log --oneline -5 (HEAD verification: 1ed7422)",
+    "git show --stat 3ebc229 -> confirms only engine/btree/insert_test.go + .cdr/ bookkeeping files changed",
+    "git diff a072f0e51beaedea2227c384fd664e4db3b953f3 3ebc229 -- engine/btree/insert.go engine/btree/lookup.go -> empty output (no production code changed)",
+    "git show 3ebc229 -- engine/btree/insert_test.go -> read full diff hunk confirming mechanical extract-function-plus-wrapper refactor",
+    "cd engine && go test ./btree/... -run TestInsertSplit -race -v -> PASS (2/2 subtests: LeafSplit, InternalSplit)",
+    "cd engine && go test ./btree/... -race -v -count=1 -> PASS (16/16 test/subtest entries, no regressions)"
+  ],
+  "non_blocking_notes_carried_forward_unchanged": [
+    "NodeAllocator sidecar-file-loss/ID-reuse residual risk (same class as accepted for 1.1.4's idalloc.go) -- already logged to regression.jsonl in run 024, not re-logged here.",
+    "chooseLeafSplit's mid>1 floor could theoretically fail-loud (not corrupt) on a pathologically oversized single key at the split boundary -- already logged to regression.jsonl in run 024.",
+    "chooseInternalSplit's potential mid=0 selection on a 2-key overflowing internal node -- already logged to regression.jsonl in run 024."
+  ],
+  "blocking_findings": [],
+  "recommendation": "Safe to mark subtask 1.2.3 as verified and close out. No new blocking findings. The three pre-existing non-blocking/low-risk notes from run 024 remain open in regression.jsonl for future attention (e.g. before 1.2.4/1.2.5 land) but do not block closing 1.2.3."
+}

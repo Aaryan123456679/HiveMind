@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "024-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "1.2.3",
+  "git_head": "a072f0e51beaedea2227c384fd664e4db3b953f3",
+  "run_key": "sha256:1.2.3-a072f0e-insert-node-splitting",
+  "status": "completed",
+  "last_completed_step": "wrote_verification_and_regression",
+  "started_at": "2026-07-04T00:31:00Z",
+  "ended_at": "2026-07-04T00:55:00Z"
+}

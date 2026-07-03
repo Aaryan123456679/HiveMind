@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "024-verification",
+  "subtask": "1.2.3",
+  "verdict": "CHANGES_REQUESTED",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-04/024-verification/verification.json",
+    "regression_entries": [".cdr/index/regression.jsonl (entries tagged run=024-verification)"],
+    "diff_reviewed": "commit a072f0e51beaedea2227c384fd664e4db3b953f3",
+    "files_touched": ["engine/btree/insert.go", "engine/btree/insert_test.go", "engine/btree/lookup.go"],
+    "dependency_verified_untouched": ["engine/btree/node.go", "engine/btree/node_test.go", "engine/btree/lookup_test.go (assertions)"],
+    "lld_reference": "docs/LLD/btree.md",
+    "blocking_finding": "engine/btree/insert_test.go has no test named/matching TestInsertSplit, which is the exact acceptance test-spec command in gh issue #2 checklist item 1.2.3. Fix: rename one existing test (e.g. TestInsertLeafSplit or TestInsertInternalSplit) to TestInsertSplit, or add a thin TestInsertSplit(t *testing.T) wrapper via t.Run of the existing sub-cases."
+  }
+}

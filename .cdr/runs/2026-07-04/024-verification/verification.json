@@ -1,0 +1,68 @@
+{
+  "subtask": "1.2.3",
+  "verdict": "CHANGES_REQUESTED",
+  "summary": "insert.go implements textbook B+Tree insert-with-split correctly and traceably: leaf split duplicates the separator (right.Keys[0] stays in the leaf AND is promoted to the parent), internal split promotes the median alone without duplicating it into either child, root-overflow correctly allocates a brand-new InternalNode and returns its ID as the new root, upsert-in-place never triggers a spurious split, and the empty-tree bootstrap (rootNodeID==reservedNodeID==0) cannot collide with a real root because NodeAllocator.Next() always starts at 1. The lookup.go refactor (descendToLeaf) is byte-for-byte behavior-preserving -- diffed against the pre-refactor e7b669d version and confirmed the traversal/search logic is unchanged, only extracted. Build/vet/full-package race tests all pass, including 1.2.1's TestNodeSerialization and 1.2.2's TestLookup with zero modification, so no regression. However, the issue's own acceptance test spec for 1.2.3 explicitly reads: 'go test ./engine/btree/... -run TestInsertSplit'. No test named (or matching the substring regex) TestInsertSplit exists anywhere in the package -- actual tests are named TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertOutOfOrder. Running the literal command from the issue produces 'testing: warning: no tests to run' with exit code 0, meaning the acceptance criteria as specified in gh issue #2 is not satisfiable by name and would silently 'pass' a naive CI/grader check without exercising any code. This is a name-only, low-cost fix (rename one test to TestInsertSplit, or add a thin TestInsertSplit wrapper that t.Run()s the existing sub-tests) but is a genuine conformance gap against the written acceptance criteria, consistent with 1.2.1 and 1.2.2 both matching their spec'd test names exactly. Requesting a follow-up commit to align the test name before closing out 1.2.3.",
+  "dimensions": {
+    "requirements": {
+      "status": "changes_requested",
+      "evidence": "Functional acceptance criteria ('median promoted to parent, keys partitioned correctly; tree remains balanced and all previously inserted keys remain lookup-able after many splits') are met by TestInsertLeafSplit/TestInsertInternalSplit/TestInsertOutOfOrder plus assertStructuralInvariants (sorted keys, correct fanout, NextLeaf-chain ordering, full key-count parity). But the literal test-spec command named in gh issue #2 checklist item 1.2.3 ('go test ./engine/btree/... -run TestInsertSplit') matches zero tests: no function named TestInsertSplit exists, and none of the existing test names (TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertOutOfOrder) contain 'TestInsertSplit' as a regex substring. Verified: `go test ./btree/... -run TestInsertSplit -race -v` -> 'no tests to run', exit 0."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "NodeAllocator mirrors engine/catalog/idalloc.go's sidecar-file pattern near-exactly (same nodeAllocStateSize=8 fixed layout, same WriteAt+Sync-before-advance-in-memory-counter durability discipline, same mutex-serialized Next(), same 0-size-vs-fixed-size-vs-other-size file validation). docs/LLD/btree.md's Insert operation and node-addressing convention (node 0 reserved) are honored. LLD's latch-crabbing/optimistic-read concurrency model is explicitly and correctly deferred (Insert has no locking, matching the epic's 'single-threaded' phase-1 scope and NodeStore's own doc comment)."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git diff e7b669d..a072f0e -- engine/btree/lookup.go shows descendToLeaf is a pure extraction: identical sort.Search/sort.SearchStrings logic, identical not-found (found=false, err=nil) and error propagation semantics, no behavioral delta. 1.2.1 (node.go/node_test.go) untouched by this diff. Full package test suite (go test ./btree/... -race -v) passes 13/13 subtests including TestNodeSerialization and TestLookup unmodified. `go test ./... -race` across the whole engine module is green (catalog, btree; other packages have no tests)."
+    },
+    "edge_cases": {
+      "status": "pass_with_comments",
+      "evidence": "reservedNodeID=0 vs allocator start-at-1 collision is impossible by construction (verified). chooseLeafSplit/chooseInternalSplit are checked against the real leafEncodedSize/internalEncodedSize (not naive count/2), correctly handling uneven key-length splits within realistic topic-path sizes. Two minor, non-blocking gaps noted: (1) chooseLeafSplit's decrement loop guards 'mid > 1' -- if a single key (at mid==1) is itself already large enough that even a 1-key half would exceed NodeSize, the loop cannot reduce mid further and Encode() would then reject the write with an error (fails loud, does not silently truncate/corrupt, but the case is untested and undocumented); (2) chooseInternalSplit can in principle select mid=0 for a 2-key overflowing internal node, producing a non-root internal node with 0 keys/1 child post-split, which node.go's doc comment describes as a 'degenerate empty-root case' implied to be root-only -- functionally harmless (search still works) but not covered by any test and slightly at odds with the documented invariant description. Neither is a realistic concern at 4096-byte NodeSize with topic-path-length keys, and neither risks data corruption."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new attack surface; sidecar allocator file uses same 0o644 permissions and WriteAt+Sync pattern as the already-accepted idalloc.go. No injection/traversal risk introduced (paths are caller-supplied topic strings encoded with length prefixes, consistent with 1.2.1's existing encoding)."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Insert is O(log n) descent + O(fanout) node rewrite per level touched, consistent with standard B+Tree insert cost; no unnecessary full-tree rewrites. NodeAllocator.Next() does one WriteAt+Sync per allocation (matching idalloc.go's already-accepted cost model for 1.1.4)."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Extensive doc comments explain leaf-vs-internal split promotion semantics precisely at the point of implementation (splitLeaf/splitInternal), which is exactly the classic bug surface called out in the review brief. descendToLeaf's extraction is a clean, low-risk shared-code improvement. propagateSplit's loop-then-fallthrough-to-new-root structure is easy to follow."
+    },
+    "test_coverage": {
+      "status": "changes_requested",
+      "evidence": "Substantively strong coverage of the real functional behavior (empty-tree bootstrap, upsert, leaf split, multi-level internal split explicitly asserting >=2-key internal node -- closing 1.2.2's flagged gap -- out-of-order insertion, full structural-invariant checking). But the package has no test literally named/matching TestInsertSplit as gh issue #2's acceptance test spec requires, so the spec'd verification command is not actually exercised. No dedicated test for the pathological very-uneven-key-length split case called out in the review brief (adversarial check #1), though the split-index selection logic does correctly consult real encoded size rather than naive count/2."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Traced insert.go/propagateSplit/splitLeaf/splitInternal/NodeAllocator line-by-line against the lookup.go/node.go APIs, diffed the lookup.go refactor line-by-line against pre-refactor e7b669d, and independently ran go build/go vet/go test -race across the whole engine module. The only real blocker found is a test-naming/spec-conformance gap, not a functional or architectural defect."
+    }
+  },
+  "explicit_determinations": {
+    "leaf_split_duplication": "Confirmed by trace: splitLeaf's doc comment and code leave right.Keys[0] present in the leaf, and Insert promotes right.Keys[0] as promotedKey to propagateSplit -- separator IS duplicated for leaf splits, matching standard B+Tree semantics.",
+    "internal_split_no_duplication": "Confirmed by trace: splitInternal removes n.Keys[mid] from both left.Keys and right.Keys and returns it only as `promoted` -- median is NOT duplicated into either child, matching standard B+Tree semantics and correctly distinguishing internal-split from leaf-split behavior.",
+    "root_split_new_root_allocation": "Confirmed: propagateSplit's fallthrough case allocates alloc.Next() for newRootID, builds InternalNode{Keys:[promotedKey], Children:[childIDBeingReplaced, newChildID]}, writes it, and returns newRootID -- exercised end-to-end by TestInsertInternalSplit (2000 sequential inserts) which explicitly asserts the final root decodes as an internal node with >=2 keys somewhere in the tree.",
+    "node_allocator_durability_and_reuse_risk": "NewNodeAllocator/Next() faithfully reproduce engine/catalog/idalloc.go's WriteAt+Sync-before-advance discipline and the previously-accepted (non-blocking, for 1.1.4) residual risk if the sidecar file is deleted/lost between restarts (allocator would restart from 0 and could reissue already-used node IDs, silently corrupting the tree). This is the exact same class of gap flagged non-blocking for idalloc.go in 1.1.4; it is reintroduced here identically and at the same acceptable-for-now scope (single-threaded, pre-persistence-subtask phase). Logged to regression.jsonl for continuity, not blocking.",
+    "upsert_semantics": "Confirmed: Insert finds the existing key via sort.SearchStrings, updates leaf.FileIDs[i] in place, writes the unchanged-shape leaf, and returns rootNodeID unchanged -- no split path is reachable from the upsert branch. Verified by TestInsertUpsert.",
+    "descendToLeaf_refactor_safety": "Confirmed via git diff e7b669d..a072f0e -- the internal-node child-selection (sort.Search over Keys, descend Children[i]) and leaf exact-match/not-found semantics are copied verbatim into descendToLeaf and Lookup respectively; no logic changed, only factored. 1.2.2's original TestLookup (present/absent/boundary subtests) passes unmodified.",
+    "empty_tree_bootstrap_vs_reserved_node_0": "Confirmed no collision is possible: reservedNodeID==0 is only ever a sentinel meaning 'no root yet' (checked explicitly in Insert), and NodeAllocator.Next() always returns candidate = a.next+1 starting from a.next=0, so the first real node ID handed out is always 1, never 0.",
+    "acceptance_test_spec_conformance": "gh issue #2 checklist item 1.2.3 test spec literally reads 'go test ./engine/btree/... -run TestInsertSplit'. Ran this exact command: `go test ./btree/... -run TestInsertSplit -race -v` -> 'testing: warning: no tests to run', exit 0. No existing test name matches the regex 'TestInsertSplit' as a substring. This is a real, blocking-per-spec gap, though trivially fixable (rename or add a wrapper test)."
+  },
+  "commands_run": [
+    "cd engine && go build ./... -> exit 0",
+    "cd engine && go vet ./... -> exit 0",
+    "cd engine && go test ./btree/... -race -v -> PASS (13/13 subtests: TestInsertEmptyTree, TestInsertUpsert, TestInsertLeafSplit, TestInsertInternalSplit, TestInsertOutOfOrder, TestLookup x3, TestNodeSerialization x5)",
+    "cd engine && go test ./btree/... -run TestInsertSplit -race -v -> 'no tests to run', exit 0 (BLOCKING FINDING: acceptance test spec name from gh issue #2 does not exist)",
+    "cd engine && go test ./... -race -> ok btree, ok catalog (57s), no test files in graph/loadtest/mvcc/rpc/split/wal",
+    "git diff e7b669d a072f0e51beaedea2227c384fd664e4db3b953f3 -- engine/btree/lookup.go -> confirms descendToLeaf extraction is behavior-preserving",
+    "git show a072f0e51beaedea2227c384fd664e4db3b953f3 -- engine/btree/insert.go -> full trace of split/promote/allocator logic",
+    "gh issue view 2 -> pulled exact 1.2.3 acceptance criteria and test spec"
+  ],
+  "non_blocking_notes": [
+    "chooseLeafSplit cannot reduce mid below 1, so a single pathologically oversized key at the split boundary could still leave one half over NodeSize; Encode() will reject it with an error (fail-loud, no corruption) but this path is untested and undocumented.",
+    "chooseInternalSplit can select mid=0 on a 2-key overflowing internal node, producing a non-root internal node with 0 keys/1 child; functionally harmless but not covered by any test and in mild tension with node.go's doc comment describing 0-key nodes as a root-only degenerate case.",
+    "NodeAllocator reintroduces the same sidecar-file-loss/ID-reuse residual risk previously accepted as non-blocking for engine/catalog/idalloc.go (1.1.4); acceptable at the same scope here, logged for continuity."
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-026-verification",
+  "subtask": "1.2.3",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-04/026-verification/verification.json",
+    "prior_verification": ".cdr/runs/2026-07-04/024-verification/verification.json",
+    "diff_reviewed": "git diff a072f0e51beaedea2227c384fd664e4db3b953f3 3ebc229 -- engine/btree/insert.go engine/btree/lookup.go (empty, no production code changed)",
+    "fix_commits": ["3ebc229", "cc55636", "1ed7422"],
+    "blocking_finding_from_024_now_closed": "TestInsertSplit now exists and passes: go test ./engine/btree/... -run TestInsertSplit -race -v",
+    "non_blocking_notes_open": ".cdr/index/regression.jsonl (entries tagged run=024-verification, unchanged/not re-logged)"
+  },
+  "task_index_updated": ".cdr/index/task.jsonl task-1.2.3 state -> verified, verification -> PASS_WITH_COMMENTS, runs array appended with 026-verification",
+  "next_step": "Subtask 1.2.3 closed. Safe to proceed to 1.2.4."
+}
