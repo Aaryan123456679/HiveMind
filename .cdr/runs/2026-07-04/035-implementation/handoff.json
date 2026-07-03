@@ -1,0 +1,32 @@
+{
+  "run_id": "2026-07-04-035-implementation",
+  "subtask": "1.3.1",
+  "status": "completed",
+  "summary": "Implemented engine/wal/writer.go (Writer, OpenWriter, Append, Close, ReadSegment) providing an append-only WAL segment writer with size-based rotation, following the repo's WriteAt+Sync durability idiom and hard-error-not-truncate overflow discipline from engine/catalog and engine/btree.",
+  "files_changed": [
+    "engine/wal/writer.go",
+    "engine/wal/writer_test.go",
+    ".cdr/index/file.jsonl",
+    ".cdr/index/task.jsonl"
+  ],
+  "on_disk_format": "8-byte header (uint32 LE payload length, uint32 LE CRC32-IEEE of payload) + raw payload bytes.",
+  "segment_naming": "<dir>/wal-<N>.log, N a plain (non-zero-padded) monotonically increasing base-10 int starting at 0.",
+  "public_api": [
+    "func OpenWriter(dir string, maxSegmentBytes int64) (*Writer, error)",
+    "func (w *Writer) Append(payload []byte) (offset int64, err error)",
+    "func (w *Writer) Close() error",
+    "func (w *Writer) SegmentNum() int",
+    "func ReadSegment(path string) ([][]byte, error)"
+  ],
+  "test_results": "go build ./engine/... PASS; go vet ./engine/... PASS; go test ./engine/wal/... -run TestSegmentWriter -race -v PASS; go test ./engine/wal/... -race -v PASS (3 tests); go test ./engine/... full-suite sanity PASS (no regressions in btree/catalog).",
+  "verification_pending": true,
+  "note_to_verifier": "This implementation run did NOT perform independent verification of its own work (invariant I4). /cdr:verify should independently confirm acceptance criteria, test spec compliance, and race-safety. Pay particular attention to: (1) rotation boundary correctness under concurrent Append calls if concurrent-writer usage is ever expected (current design serializes all Append calls under one mutex per Writer instance, single-writer-per-directory assumption not yet stress-tested for multi-writer misuse), (2) whether OpenWriter's resume-scan behavior (no tail validation) is acceptable given 1.3.4/1.3.5 are the subtasks intended to add that.",
+  "known_scope_boundaries": [
+    "No record-type/semantic layer (deferred to 1.3.2)",
+    "No checkpoint manifest (deferred to 1.3.3)",
+    "No recovery replay (deferred to 1.3.4)",
+    "No torn-tail/crash-injection detection on resume (deferred to 1.3.5), though ReadSegment's CRC/truncation checks lay groundwork"
+  ],
+  "commit_sha": "PENDING_FILL_AFTER_COMMIT",
+  "next_step": "run /cdr:verify for subtask 1.3.1"
+}

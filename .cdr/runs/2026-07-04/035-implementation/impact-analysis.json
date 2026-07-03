@@ -1,0 +1,34 @@
+{
+  "subtask": "1.3.1",
+  "risk_level": "medium",
+  "risk_reason": "New package (engine/wal) with no prior LLD implementation; this subtask establishes the on-disk record format (length+CRC header) and segment-naming/rotation convention that subtasks 1.3.2-1.3.5 will all depend on. Getting the framing/rotation boundary wrong here would require a breaking format change later.",
+  "new_files": [
+    "engine/wal/writer.go",
+    "engine/wal/writer_test.go"
+  ],
+  "modified_files": [],
+  "unchanged_but_referenced_files": [
+    "engine/wal/doc.go",
+    "engine/catalog/file.go",
+    "engine/catalog/idalloc.go",
+    "engine/btree/node.go",
+    "docs/LLD/wal.md"
+  ],
+  "downstream_dependents": [
+    {"subtask": "1.3.2", "reason": "record types + fsync-before-apply write path build directly on Writer.Append"},
+    {"subtask": "1.3.3", "reason": "checkpoint manifest tracks WAL offsets into segments produced by this writer"},
+    {"subtask": "1.3.4", "reason": "recovery replay reads segment files produced by this writer"},
+    {"subtask": "1.3.5", "reason": "crash-injection recovery test corrupts/truncates segment files produced by this writer"}
+  ],
+  "public_api_surface": [
+    "type Writer struct{...}",
+    "func OpenWriter(dir string, maxSegmentBytes int64) (*Writer, error)",
+    "func (w *Writer) Append(payload []byte) (offset int64, err error)",
+    "func (w *Writer) Close() error"
+  ],
+  "backward_compatibility": "N/A — brand new package, no existing callers.",
+  "test_impact": {
+    "new_tests": ["TestSegmentWriter (rotation + record integrity per issue test spec)", "additional focused unit tests for header round-trip, oversized-record hard error, resume/reopen segment numbering"],
+    "race_detector_required": true
+  }
+}
