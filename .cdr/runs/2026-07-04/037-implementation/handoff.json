@@ -2,7 +2,7 @@
   "run_id": "2026-07-04-037-implementation",
   "subtask": "1.3.2",
   "status": "implemented",
-  "commit": "PENDING_FILL_AFTER_COMMIT",
+  "commit": "4e418a16a02991348fdde840cff113b7d3c26e09",
   "files": [
     "engine/wal/record.go",
     "engine/wal/record_test.go"
