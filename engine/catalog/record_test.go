@@ -56,7 +56,10 @@ func TestRecordEncodeDecode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encoded := tt.rec.Encode()
+			encoded, err := tt.rec.Encode()
+			if err != nil {
+				t.Fatalf("Encode() returned unexpected error: %v", err)
+			}
 			if len(encoded) != RecordEncodedSize {
 				t.Fatalf("Encode() returned %d bytes, want fixed size %d", len(encoded), RecordEncodedSize)
 			}
@@ -77,7 +80,50 @@ func TestRecordEncodeDecode(t *testing.T) {
 			if !reflect.DeepEqual(decoded, want) {
 				t.Fatalf("round-trip mismatch:\n  got:  %+v\n  want: %+v", decoded, want)
 			}
+
+			// Reserved padding bytes must stay zero across the round trip; nothing
+			// should ever write into this range.
+			for i := offReserved; i < offReserved+reservedWidth; i++ {
+				if encoded[i] != 0 {
+					t.Fatalf("reserved byte %d: got %d, want 0", i, encoded[i])
+				}
+			}
 		})
+	}
+}
+
+// TestEncodeRejectsTooManyRedirectTargets asserts that Encode() hard-errors when the
+// caller supplies more redirect targets than MaxRedirectTargets, rather than silently
+// truncating and losing data. This mirrors Decode()'s existing symmetric validation.
+func TestEncodeRejectsTooManyRedirectTargets(t *testing.T) {
+	rec := CatalogRecord{
+		FileID:            1,
+		RedirectTargetIDs: []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, // 10 > MaxRedirectTargets (8)
+	}
+
+	encoded, err := rec.Encode()
+	if err == nil {
+		t.Fatal("Encode() with too many redirect targets: expected error, got nil")
+	}
+	if encoded != nil {
+		t.Fatalf("Encode() with too many redirect targets: expected nil buffer on error, got %d bytes", len(encoded))
+	}
+}
+
+// TestEncodeAcceptsExactlyMaxRedirectTargets is the boundary check: exactly
+// MaxRedirectTargets must still succeed (only count > MaxRedirectTargets errors).
+func TestEncodeAcceptsExactlyMaxRedirectTargets(t *testing.T) {
+	rec := CatalogRecord{
+		FileID:            1,
+		RedirectTargetIDs: []uint64{1, 2, 3, 4, 5, 6, 7, 8}, // exactly MaxRedirectTargets (8)
+	}
+
+	encoded, err := rec.Encode()
+	if err != nil {
+		t.Fatalf("Encode() at exactly MaxRedirectTargets: expected no error, got %v", err)
+	}
+	if len(encoded) != RecordEncodedSize {
+		t.Fatalf("Encode() at exactly MaxRedirectTargets: got %d bytes, want %d", len(encoded), RecordEncodedSize)
 	}
 }
 
@@ -94,10 +140,13 @@ func TestDecodeRejectsWrongLength(t *testing.T) {
 }
 
 func TestDecodeRejectsOutOfRangeRedirectCount(t *testing.T) {
-	buf := CatalogRecord{}.Encode()
+	buf, err := CatalogRecord{}.Encode()
+	if err != nil {
+		t.Fatalf("Encode() returned unexpected error: %v", err)
+	}
 	buf[offRedirectCount] = byte(MaxRedirectTargets + 1)
 
-	_, err := Decode(buf)
+	_, err = Decode(buf)
 	if err == nil {
 		t.Fatal("Decode() with out-of-range redirect count: expected error, got nil")
 	}

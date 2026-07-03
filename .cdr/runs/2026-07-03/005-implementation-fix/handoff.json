@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-implementation-fix",
+  "subtask": "1.1.1",
+  "addresses_verdict": "CHANGES_REQUESTED (run 004-verification)",
+  "summary": "Encode() now returns ([]byte, error) and hard-errors when len(RedirectTargetIDs) > MaxRedirectTargets instead of silently truncating. Symmetric with Decode()'s existing overflow check.",
+  "files_changed": [
+    "engine/catalog/record.go",
+    "engine/catalog/record_test.go"
+  ],
+  "pointers": {
+    "encode_func": "engine/catalog/record.go (func (r CatalogRecord) Encode() ([]byte, error))",
+    "new_overflow_test": "engine/catalog/record_test.go (TestEncodeRejectsTooManyRedirectTargets)",
+    "new_boundary_test": "engine/catalog/record_test.go (TestEncodeAcceptsExactlyMaxRedirectTargets)",
+    "reserved_padding_assertion": "engine/catalog/record_test.go (inside TestRecordEncodeDecode subtest loop)",
+    "diff": ".cdr/runs/2026-07-03/005-implementation-fix/files-changed.diff",
+    "validation_matrix": ".cdr/runs/2026-07-03/005-implementation-fix/validation-matrix.md"
+  },
+  "commands_run": [
+    "go test ./engine/catalog/... -run TestRecordEncodeDecode -race -v",
+    "go test ./engine/catalog/... -race -v",
+    "go vet ./engine/catalog/...",
+    "go build ./engine/..."
+  ],
+  "test_results": "all PASS / clean",
+  "task_index_update": ".cdr/index/task.jsonl task-1.1.1 set back to state=implemented pending re-verification, commit set to new local commit SHA",
+  "not_modified": [".cdr/runs/2026-07-03/004-verification/ (verifier's historical artifact, left untouched)"],
+  "next_step": "Independent re-verification pass (not performed by this agent, per invariant I4)."
+}

@@ -71,10 +71,16 @@ const (
 )
 
 // Encode serializes the record into a new RecordEncodedSize-byte little-endian buffer.
-// It never fails at runtime for a well-formed CatalogRecord; callers that build records
-// programmatically must keep len(RedirectTargetIDs) <= MaxRedirectTargets (Decode will
-// reject an over-long buffer, and Encode truncates defensively rather than panicking).
-func (r CatalogRecord) Encode() []byte {
+// It returns an error if len(RedirectTargetIDs) exceeds MaxRedirectTargets rather than
+// silently dropping targets; callers that build records programmatically must keep
+// len(RedirectTargetIDs) <= MaxRedirectTargets (Decode symmetrically rejects an
+// over-long buffer on the read path).
+func (r CatalogRecord) Encode() ([]byte, error) {
+	count := len(r.RedirectTargetIDs)
+	if count > MaxRedirectTargets {
+		return nil, fmt.Errorf("catalog: too many redirect targets: got %d, max %d", count, MaxRedirectTargets)
+	}
+
 	buf := make([]byte, RecordEncodedSize)
 
 	binary.LittleEndian.PutUint64(buf[offFileID:], r.FileID)
@@ -83,10 +89,6 @@ func (r CatalogRecord) Encode() []byte {
 	binary.LittleEndian.PutUint64(buf[offSizeBytes:], r.SizeBytes)
 	buf[offStatus] = byte(r.Status)
 
-	count := len(r.RedirectTargetIDs)
-	if count > MaxRedirectTargets {
-		count = MaxRedirectTargets
-	}
 	buf[offRedirectCount] = byte(count)
 	// buf[offReserved:offReserved+reservedWidth] left as zero padding.
 
@@ -99,7 +101,7 @@ func (r CatalogRecord) Encode() []byte {
 	binary.LittleEndian.PutUint64(buf[offParentTopicID:], r.ParentTopicID)
 	binary.LittleEndian.PutUint64(buf[offLastModified:], uint64(r.LastModified))
 
-	return buf
+	return buf, nil
 }
 
 // Decode deserializes a RecordEncodedSize-byte little-endian buffer (as produced by

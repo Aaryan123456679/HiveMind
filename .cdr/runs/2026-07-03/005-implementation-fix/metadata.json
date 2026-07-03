@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-implementation-fix",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "cdr-implementation",
+  "subtask": "1.1.1",
+  "git_head": "0eeee147ca496af5476cf99b472997cb739cf0a1",
+  "run_key": "1.1.1-0eeee147ca496af5476cf99b472997cb739cf0a1-fix-encode-truncation",
+  "status": "completed",
+  "last_completed_step": "committed_local_no_push",
+  "started_at": "2026-07-03T14:20:00Z",
+  "ended_at": "2026-07-03T14:35:00Z",
+  "note": "Follow-up fix for subtask 1.1.1 addressing CHANGES_REQUESTED verdict from run 004-verification (Encode() silent truncation of RedirectTargetIDs). Not a new subtask."
+}
