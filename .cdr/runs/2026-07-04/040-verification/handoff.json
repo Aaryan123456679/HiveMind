@@ -1,0 +1,14 @@
+{
+  "subtask": "1.3.3",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_run": "2026-07-04-040-verification",
+  "verification_json": ".cdr/runs/2026-07-04/040-verification/verification.json",
+  "pointers": {
+    "diff_files": ["engine/wal/checkpoint.go", "engine/wal/checkpoint_test.go"],
+    "dependency_files_read": ["engine/wal/writer.go:185-246 (Append/rotateLocked)", "engine/btree/persist.go (SaveRoot/LoadRoot)"],
+    "regression_entries": ["index/regression.jsonl (3 entries appended, run=040-verification, subtask=1.3.3)"],
+    "task_index_entry": "index/task.jsonl:task-1.3.3 (state=verified)"
+  },
+  "key_finding": "SaveRoot-precedent claim in checkpoint.go's doc comment and commit message is false (SaveRoot uses in-place WriteAt+Sync, not temp-file+rename); non-blocking documentation defect, actual Checkpoint implementation is correct and atomic.",
+  "next_subtask_note": "1.3.4 (recovery replay) can rely on the (SegmentNumber, OffsetInSegment) checkpoint pointer format as-is; it is verified consistent with Writer.Append's actual per-segment offset semantics."
+}
