@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-verification",
+  "macro": "cdr_verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "1.1.5",
+  "git_head": "9c61a15aa3f36586417616c57771e9eb6d34edcb",
+  "run_key": "1.1.5|9c61a15|reverify-narrow-lock-fix",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-03T00:00:00Z",
+  "ended_at": "2026-07-03T00:30:00Z"
+}

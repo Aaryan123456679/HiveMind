@@ -1,0 +1,45 @@
+{
+  "subtask": "1.1.5",
+  "verdict": "PASS_WITH_COMMENTS",
+  "git_head": "9c61a15aa3f36586417616c57771e9eb6d34edcb",
+  "prior_finding": "fmMu in catalog.go serialized all FileManager calls across all fileIDs, defeating striping design",
+  "fix_summary": "Removed fmMu; added narrow FileManager-internal mu (bookkeeping only) plus a new caller-side pageStripes[256] keyed by pageID to protect same-page read-modify-write sequences exposed once fmMu was removed.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Put/Get/Delete signatures unchanged; ErrNotFound sentinel preserved; durability via WritePage's WriteAt+Sync preserved."
+    },
+    "architecture_conformance": {
+      "status": "pass_with_comments",
+      "evidence": "file.go: mu is genuinely narrow -- confirmed by full read of file.go. mu is acquired/released only in AllocatePage, FreePage, validDataPageID (highestAllocated read), and persistBitmapLocked (called while mu already held from AllocatePage/FreePage, so the bitmap page's own WriteAt+Sync IS covered by mu -- but this is correct/necessary since page 0's bitmap is genuinely singular shared state; it does not affect ReadPage/WritePage of data pages). ReadPage's pread and WritePage's pwrite+fsync are explicitly outside any mu critical section -- verified no mu.Lock() call appears in either function body. Point 1 (mu narrowness): CONFIRMED, not a recurrence of the prior bug.",
+      "comment": "activeMu (pre-existing since original c5bd902 commit, not introduced by this fix) still serializes the insert() path -- including its ReadPage/WritePage I/O in tryInsertInto and the new-page-allocation branch -- across ALL fileIDs whenever a Put needs to insert (which is every Put, since Put always does tombstone+reinsert). This means concurrent Puts for different fileIDs still contend on a single global lock for their insert-side I/O, in tension with the LLD's 'unrelated files never contend on the same lock' framing, though Get and Delete-of-existing-record paths do not touch activeMu. This is a pre-existing design choice documented as deliberate ('single shared active page ... optimization left for later') from the original 1.1.5 implementation, not new scope from this fix round, so it is not being treated as new CHANGES_REQUESTED-worthy scope creep here, but it is flagged because it means the striping guarantee is not as complete as the doc comment for the stripes array implies."
+    },
+    "new_scope_pageStripes_necessity": {
+      "status": "pass",
+      "evidence": "Point 2: Verified this is a GENUINE necessary fix, not scope creep. page.go confirms PageSize=4096 slotted pages holding many small fixed-size records; catalog.go's insert() uses a single shared activePageID cursor for ALL new inserts regardless of fileID, so distinct fileIDs' records routinely share the same physical page until it fills. Once fmMu (which over-broadly serialized ALL FileManager calls, incidentally also serializing same-page ReadPage->mutate->WritePage sequences) was removed, the same-page race between e.g. one fileID's tombstone and another fileID's tryInsertInto on the shared active page became live and unguarded. This latent race existed conceptually since the original c5bd902 implementation but was masked by fmMu's over-broad lock; pageStripes correctly re-introduces protection at the right granularity (page-level, not fileID- or global-level). Verified pageStripeFor(pageID) = pageID % 256 is applied consistently at all 4 mutation/read call sites: readSlot, tombstone, tryInsertInto, and insert's new-page branch (all read via grep/manual trace of catalog.go)."
+    },
+    "lock_ordering_deadlock_risk": {
+      "status": "pass",
+      "evidence": "Point 3: Traced all 4 call paths. Put/Get/Delete always acquire c.stripes[fileID-stripe] FIRST (outermost). Insert path additionally acquires c.activeMu, then c.pageStripes[pageID-stripe] (order: stripe -> activeMu -> pageStripe, never reversed anywhere). readSlot/tombstone acquire only stripe (already held by caller) then pageStripes directly (order: stripe -> pageStripe). No code path acquires pageStripes or activeMu before the fileID stripe, and no path holds more than one pageStripes entry at a time. No lock-order inversion found; no deadlock risk identified from static trace."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "Point 4: TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO read in full. The 2s bounds are not a weak timing race: fm.writeDelay blocks WritePage(pageA) on an unbuffered 'release' channel that is only closed AFTER both the AllocatePage and ReadPage(pageB) assertions already succeeded -- so if mu were (incorrectly) held during I/O, the test would deadlock indefinitely, not merely run slow, and the 2s timeout is purely a fail-fast bound, not a discriminator between 'no serialization' and 'fast serialization'. This is a sound, non-flaky test design.",
+      "regression": "Point 5: Re-examined TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs. It directly locks c.stripes[heldStripe] via test-only field access and only exercises the fileID-stripe layer, independent of pageStripes/page-sharing concerns -- it does not claim page-level non-contention, so pageStripes' existence does not undermine or invalidate what this test demonstrates. Separately, TestCatalogConcurrentDistinctFileIDs (300 fileIDs x 4 workers, -race) exercises real concurrent same-page contention organically (many fileIDs necessarily share pages given the single active-page cursor) and passed clean under -race, providing genuine evidence pageStripes prevents torn reads/lost updates in that realistic scenario."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Point 6: go build ./engine/... clean. go vet ./engine/catalog/... clean. Full engine/catalog package test suite (TestCatalog*, TestCatalogFileManager*, TestFileIDAllocator*, TestSlottedPage*, TestRecord*, TestEncode*/TestDecode*) all pass under -race -count=1 (63s). No 1.1.1-1.1.4 test regressions."
+    }
+  },
+  "commands_run": [
+    "go build ./engine/...",
+    "go vet ./engine/catalog/...",
+    "go test ./engine/catalog/... -run TestCatalog -race -v -count=1",
+    "go test ./engine/catalog/... -run TestCatalogFileManager -race -v -count=1",
+    "go test ./engine/catalog/... -race -v -count=1"
+  ],
+  "residual_findings_not_blocking": [
+    "activeMu (pre-existing, not from this fix) is a single global lock through which every Put's insert-side I/O passes regardless of fileID, partially undercutting the striping design's 'unrelated files never contend' goal for the insert path specifically. Recommend a future subtask consider per-stripe or per-page-group active-page cursors if Put throughput under high fileID cardinality becomes a concern."
+  ]
+}
