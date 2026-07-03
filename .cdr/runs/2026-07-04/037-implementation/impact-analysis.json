@@ -1,0 +1,23 @@
+{
+  "risk_level": "medium-high",
+  "risk_rationale": "The fsync-before-apply ordering guarantee implemented here is the core durability contract of the entire WAL subsystem (docs/LLD/wal.md's central invariant: every catalog/index mutation must be logged before it is applied). Additionally, the record type shapes defined here directly constrain what 1.3.3 (checkpoint manifest) and 1.3.4 (recovery replay) can reconstruct and dispatch on, so a naming/granularity mistake here would ripple into two future subtasks.",
+  "new_files": [
+    "engine/wal/record.go",
+    "engine/wal/record_test.go"
+  ],
+  "modified_files": [],
+  "unchanged_but_depended_on": [
+    "engine/wal/writer.go (Writer.Append, OpenWriter — not modified, only called)",
+    "engine/catalog/record.go (CatalogRecord.Encode/Decode field shapes referenced for payload design, not imported/called)",
+    "engine/btree/insert.go (Insert signature referenced for payload design)",
+    "engine/btree/delete.go (Delete signature referenced for payload design)"
+  ],
+  "downstream_consumers": [
+    "1.3.3 checkpoint manifest — will need to know record type/offset shapes to decide what's covered by a checkpoint",
+    "1.3.4 recovery replay — will decode TypedRecord envelopes and dispatch by RecordType to reapply catalog Put/Delete and btree Insert/Delete",
+    "1.3.5 crash-injection recovery test — will rely on this subtask's encode/decode + Writer's CRC framing to detect torn records"
+  ],
+  "backward_compatibility": "No existing callers of engine/wal exist outside its own package yet (WAL is not wired into catalog/btree callers in this phase), so no breaking change risk to other modules. Writer's public API (OpenWriter/Append/ReadSegment/Close/SegmentNum) from 1.3.1 is left untouched.",
+  "test_impact": "Adds engine/wal/record_test.go; does not modify engine/wal/writer_test.go. No regression expected to 1.3.1's TestSegmentWriter-family tests.",
+  "rollback_plan": "Single self-contained commit adding two new files; revertible independently of 1.3.1's commit."
+}

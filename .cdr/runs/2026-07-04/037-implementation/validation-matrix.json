@@ -1,0 +1,57 @@
+{
+  "acceptance_criteria": "A mutation is durably fsynced to the WAL before the caller's Append call returns, and before the corresponding in-memory/on-disk state change is considered committed.",
+  "test_spec": "go test ./engine/wal/... -run TestFsyncBeforeApply -race",
+  "rows": [
+    {
+      "requirement": "Catalog Put mutation record type: encode/decode round trip (FileID + opaque encoded CatalogRecord bytes)",
+      "test": "TestRecordEncodeDecodeRoundTrip/CatalogPut",
+      "status": "covered"
+    },
+    {
+      "requirement": "Catalog Delete mutation record type: encode/decode round trip (FileID only)",
+      "test": "TestRecordEncodeDecodeRoundTrip/CatalogDelete",
+      "status": "covered"
+    },
+    {
+      "requirement": "BTree Insert mutation record type: encode/decode round trip (Path + FileID)",
+      "test": "TestRecordEncodeDecodeRoundTrip/BTreeInsert",
+      "status": "covered"
+    },
+    {
+      "requirement": "BTree Delete mutation record type: encode/decode round trip (Path only)",
+      "test": "TestRecordEncodeDecodeRoundTrip/BTreeDelete",
+      "status": "covered"
+    },
+    {
+      "requirement": "Edge case: empty string / empty blob fields encode/decode correctly",
+      "test": "TestRecordEncodeDecodeRoundTrip/empty_path_and_empty_record_blob",
+      "status": "covered"
+    },
+    {
+      "requirement": "Decode accessors reject mismatched RecordType",
+      "test": "TestAsXxxTypeMismatch",
+      "status": "covered"
+    },
+    {
+      "requirement": "fsync-before-apply: apply callback only fires after the WAL record is durably observable on disk (proven via independent ReadSegment call inside the callback, not by code inspection)",
+      "test": "TestFsyncBeforeApply",
+      "status": "covered"
+    },
+    {
+      "requirement": "apply() error after a successful durable append: error propagated, offset still returned, and the WAL record remains durably present on disk (recovery-replay-friendly semantics)",
+      "test": "TestAppendAndApplyErrorFromApply",
+      "status": "covered"
+    },
+    {
+      "requirement": "Writer.Append failure (e.g. oversized record) must skip apply entirely — apply never runs if nothing was durably logged",
+      "test": "TestAppendAndApplyWriterErrorSkipsApply",
+      "status": "covered"
+    },
+    {
+      "requirement": "No regression to 1.3.1's segment writer / rotation / oversized-record / resume-numbering behavior",
+      "test": "TestSegmentWriter, TestAppendOversizedRecordHardErrors, TestOpenWriterResumesExistingSegments (all in writer_test.go, unmodified)",
+      "status": "covered (pre-existing, re-run, still passing)"
+    }
+  ],
+  "gaps": []
+}

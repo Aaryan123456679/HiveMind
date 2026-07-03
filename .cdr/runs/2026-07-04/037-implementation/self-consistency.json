@@ -1,0 +1,31 @@
+{
+  "note": "Internal sanity check only; NOT a verification step (that is delegated to /cdr:verify per invariant I4).",
+  "checks": [
+    {
+      "command": "go build ./engine/...",
+      "result": "pass",
+      "cwd": "engine/"
+    },
+    {
+      "command": "go vet ./engine/...",
+      "result": "pass",
+      "cwd": "engine/"
+    },
+    {
+      "command": "go test ./wal/... -race -v -count=1",
+      "result": "pass",
+      "cwd": "engine/",
+      "details": "All 5 new tests (TestRecordEncodeDecodeRoundTrip + 5 subtests, TestAsXxxTypeMismatch, TestFsyncBeforeApply, TestAppendAndApplyErrorFromApply, TestAppendAndApplyWriterErrorSkipsApply) pass, plus all 3 pre-existing 1.3.1 tests (TestSegmentWriter, TestAppendOversizedRecordHardErrors, TestOpenWriterResumesExistingSegments) still pass -- no regression."
+    },
+    {
+      "command": "gofmt -l ./wal/",
+      "result": "pass",
+      "details": "No output -- both new files already gofmt-clean."
+    }
+  ],
+  "validation_matrix_coverage": "full (see validation-matrix.json; no gaps)",
+  "known_limitations_disclosed": [
+    "engine/wal package does not import engine/catalog or engine/btree; CatalogPutPayload.Record is treated as an opaque pre-encoded blob and BTreeInsert/Delete payloads carry only (path, fileID) primitives. Decoding the opaque catalog record bytes back into a catalog.CatalogRecord, and actually invoking btree.Insert/Delete or catalog.Put/Delete as the 'apply' callback, is left to whichever future subtask wires this WAL layer into the catalog/btree call sites (not scoped to 1.3.2, which only had to define record types + the fsync-before-apply write path).",
+    "AppendAndApply's fsync-before-apply guarantee is proven empirically in TestFsyncBeforeApply via an independent ReadSegment call from inside the apply callback (real disk read, not a mock), rather than via a synthetic instrumented-fsync spy, since Writer (1.3.1) does not expose a fsync hook and was correctly left unmodified by this subtask."
+  ]
+}
