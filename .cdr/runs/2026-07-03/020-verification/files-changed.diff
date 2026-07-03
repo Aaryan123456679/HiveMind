@@ -1,0 +1,182 @@
+diff --git a/engine/btree/node.go b/engine/btree/node.go
+index 23f9917..8f773e3 100644
+--- a/engine/btree/node.go
++++ b/engine/btree/node.go
+@@ -29,7 +29,14 @@ const (
+ const (
+ 	offNodeType = 0
+ 	offKeyCount = offNodeType + 1 // uint16
+-	offBody     = offKeyCount + 2
++	// offVersion holds an optimistic-concurrency version counter (see the
++	// "Reads" section of docs/LLD/btree.md: readers check that a node's
++	// version counter is unchanged and retry if it changed during the read).
++	// This subtask only reserves and (de)serializes the field; the actual
++	// CAS/atomic version-bump logic used by concurrent readers/writers is
++	// implemented by a later, concurrency-focused subtask.
++	offVersion = offKeyCount + 2 // uint64
++	offBody    = offVersion + 8
+ )
+ 
+ // noSibling is the sentinel NextLeaf value meaning "this is the rightmost leaf; no
+@@ -51,6 +58,11 @@ type LeafNode struct {
+ 	// NextLeaf is the node index of the next leaf in sorted key order, or noSibling (0)
+ 	// if this is the rightmost leaf.
+ 	NextLeaf uint64
++	// Version is an optimistic-concurrency version counter (see docs/LLD/btree.md's
++	// "Reads" section). This subtask only stores/round-trips the field; the atomic
++	// bump-on-write / unchanged-check-on-read logic belongs to a later, concurrency-
++	// focused subtask.
++	Version uint64
+ }
+ 
+ // InternalNode is a B+Tree internal (non-leaf) node: it stores separator keys and child
+@@ -64,6 +76,11 @@ type InternalNode struct {
+ 	// Children holds the node index of each child. len(Children) must equal
+ 	// len(Keys)+1.
+ 	Children []uint64
++	// Version is an optimistic-concurrency version counter (see docs/LLD/btree.md's
++	// "Reads" section). This subtask only stores/round-trips the field; the atomic
++	// bump-on-write / unchanged-check-on-read logic belongs to a later, concurrency-
++	// focused subtask.
++	Version uint64
+ }
+ 
+ // leafEncodedSize returns the number of bytes Encode would need to write n's contents,
+@@ -108,6 +125,7 @@ func (n LeafNode) Encode() ([]byte, error) {
+ 	buf := make([]byte, NodeSize)
+ 	buf[offNodeType] = nodeTypeLeaf
+ 	binary.LittleEndian.PutUint16(buf[offKeyCount:], uint16(len(n.Keys)))
++	binary.LittleEndian.PutUint64(buf[offVersion:], n.Version)
+ 
+ 	off := offBody
+ 	off = encodeKeys(buf, off, n.Keys)
+@@ -139,6 +157,7 @@ func (n InternalNode) Encode() ([]byte, error) {
+ 	buf := make([]byte, NodeSize)
+ 	buf[offNodeType] = nodeTypeInternal
+ 	binary.LittleEndian.PutUint16(buf[offKeyCount:], uint16(len(n.Keys)))
++	binary.LittleEndian.PutUint64(buf[offVersion:], n.Version)
+ 
+ 	off := offBody
+ 	off = encodeKeys(buf, off, n.Keys)
+@@ -163,19 +182,20 @@ func encodeKeys(buf []byte, off int, keys []string) int {
+ 	return off
+ }
+ 
+-// decodeHeader reads the shared node header (type discriminator + key count) from data
+-// and returns them, or an error if data is too short or declares an unrecognized node
+-// type.
+-func decodeHeader(data []byte) (nodeType byte, keyCount int, err error) {
++// decodeHeader reads the shared node header (type discriminator + key count + version
++// counter) from data and returns them, or an error if data is too short or declares an
++// unrecognized node type.
++func decodeHeader(data []byte) (nodeType byte, keyCount int, version uint64, err error) {
+ 	if len(data) < offBody {
+-		return 0, 0, fmt.Errorf("btree: node buffer too short: got %d bytes, want at least %d", len(data), offBody)
++		return 0, 0, 0, fmt.Errorf("btree: node buffer too short: got %d bytes, want at least %d", len(data), offBody)
+ 	}
+ 	nodeType = data[offNodeType]
+ 	if nodeType != nodeTypeLeaf && nodeType != nodeTypeInternal {
+-		return 0, 0, fmt.Errorf("btree: unrecognized node type discriminator: %d", nodeType)
++		return 0, 0, 0, fmt.Errorf("btree: unrecognized node type discriminator: %d", nodeType)
+ 	}
+ 	keyCount = int(binary.LittleEndian.Uint16(data[offKeyCount:]))
+-	return nodeType, keyCount, nil
++	version = binary.LittleEndian.Uint64(data[offVersion:])
++	return nodeType, keyCount, version, nil
+ }
+ 
+ // decodeKeys reads keyCount length-prefixed keys from data starting at off, and returns
+@@ -203,7 +223,7 @@ func decodeKeys(data []byte, off int, keyCount int) ([]string, int, error) {
+ // wrong node type, or is too short to hold its declared key count / fileIDs / sibling
+ // pointer.
+ func DecodeLeafNode(data []byte) (LeafNode, error) {
+-	nodeType, keyCount, err := decodeHeader(data)
++	nodeType, keyCount, version, err := decodeHeader(data)
+ 	if err != nil {
+ 		return LeafNode{}, err
+ 	}
+@@ -233,7 +253,7 @@ func DecodeLeafNode(data []byte) (LeafNode, error) {
+ 	}
+ 	nextLeaf := binary.LittleEndian.Uint64(data[off:])
+ 
+-	return LeafNode{Keys: keys, FileIDs: fileIDs, NextLeaf: nextLeaf}, nil
++	return LeafNode{Keys: keys, FileIDs: fileIDs, NextLeaf: nextLeaf, Version: version}, nil
+ }
+ 
+ // DecodeInternalNode deserializes a NodeSize-byte buffer (as produced by
+@@ -241,7 +261,7 @@ func DecodeLeafNode(data []byte) (LeafNode, error) {
+ // too short, declares the wrong node type, or is too short to hold its declared key
+ // count / children.
+ func DecodeInternalNode(data []byte) (InternalNode, error) {
+-	nodeType, keyCount, err := decodeHeader(data)
++	nodeType, keyCount, version, err := decodeHeader(data)
+ 	if err != nil {
+ 		return InternalNode{}, err
+ 	}
+@@ -264,7 +284,7 @@ func DecodeInternalNode(data []byte) (InternalNode, error) {
+ 		off += 8
+ 	}
+ 
+-	return InternalNode{Keys: keys, Children: children}, nil
++	return InternalNode{Keys: keys, Children: children, Version: version}, nil
+ }
+ 
+ // OpenIndexFile opens the B+Tree index file at path, creating it (and any necessary
+diff --git a/engine/btree/node_test.go b/engine/btree/node_test.go
+index 9b3cc32..a7470f1 100644
+--- a/engine/btree/node_test.go
++++ b/engine/btree/node_test.go
+@@ -19,11 +19,12 @@ func TestNodeSerialization(t *testing.T) {
+ 			{Keys: nil, FileIDs: nil, NextLeaf: 0},
+ 			// one key
+ 			{Keys: []string{"auth/login"}, FileIDs: []uint64{42}, NextLeaf: 7},
+-			// many keys, rightmost leaf (no sibling)
++			// many keys, rightmost leaf (no sibling), non-zero version counter
+ 			{
+ 				Keys:     []string{"auth/login", "auth/logout", "auth/oauth", "billing/invoice", "billing/refund"},
+ 				FileIDs:  []uint64{1, 2, 3, 4, 5},
+ 				NextLeaf: 0,
++				Version:  99,
+ 			},
+ 		}
+ 
+@@ -53,10 +54,11 @@ func TestNodeSerialization(t *testing.T) {
+ 			{Keys: nil, Children: []uint64{1}},
+ 			// one key, two children
+ 			{Keys: []string{"billing/invoice"}, Children: []uint64{1, 2}},
+-			// many keys
++			// many keys, non-zero version counter
+ 			{
+ 				Keys:     []string{"auth/oauth", "billing/invoice", "billing/refund", "support/ticket"},
+ 				Children: []uint64{1, 2, 3, 4, 5},
++				Version:  7,
+ 			},
+ 		}
+ 
+@@ -119,6 +121,26 @@ func TestNodeSerialization(t *testing.T) {
+ 		}
+ 	})
+ 
++	t.Run("decode rejects mismatched node type", func(t *testing.T) {
++		leaf := LeafNode{Keys: []string{"auth/login"}, FileIDs: []uint64{1}, NextLeaf: 0}
++		encodedLeaf, err := leaf.Encode()
++		if err != nil {
++			t.Fatalf("LeafNode.Encode() error = %v, want nil", err)
++		}
++		if _, err := DecodeInternalNode(encodedLeaf); err == nil {
++			t.Fatalf("DecodeInternalNode() on a leaf-tagged buffer = nil error, want non-nil error")
++		}
++
++		internal := InternalNode{Keys: []string{"auth/login"}, Children: []uint64{1, 2}}
++		encodedInternal, err := internal.Encode()
++		if err != nil {
++			t.Fatalf("InternalNode.Encode() error = %v, want nil", err)
++		}
++		if _, err := DecodeLeafNode(encodedInternal); err == nil {
++			t.Fatalf("DecodeLeafNode() on an internal-tagged buffer = nil error, want non-nil error")
++		}
++	})
++
+ 	t.Run("file created on first use", func(t *testing.T) {
+ 		dir := t.TempDir()
+ 		path := filepath.Join(dir, "index", "name.idx")

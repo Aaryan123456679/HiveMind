@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-03-019-implementation-fix",
+  "subtask": "1.2.1",
+  "type": "implementation-fix",
+  "status": "completed",
+  "commit": "3364ada",
+  "files_changed": [
+    "engine/btree/node.go",
+    "engine/btree/node_test.go"
+  ],
+  "change_summary": {
+    "new_field": "Version uint64 (both LeafNode and InternalNode)",
+    "new_offset_const": "offVersion = offKeyCount + 2 (uint64, 8 bytes)",
+    "header_layout_before": "offNodeType(1) + offKeyCount(2) => offBody = 3",
+    "header_layout_after": "offNodeType(1) + offKeyCount(2) + offVersion(8) => offBody = 11",
+    "byte_layout_diagram": "[0]=nodeType(1B) | [1..3)=keyCount uint16(2B) | [3..11)=Version uint64(8B) | [11..)=body (keys/fileIDs/children/NextLeaf)",
+    "encode_change": "Encode() now also writes binary.LittleEndian.PutUint64(buf[offVersion:], n.Version) for both LeafNode and InternalNode",
+    "decode_change": "decodeHeader() now returns (nodeType, keyCount, version, err); DecodeLeafNode/DecodeInternalNode thread version into the returned struct's Version field",
+    "size_accounting": "leafEncodedSize/internalEncodedSize unaffected in code (they key off offBody, which is now 11), so needed > NodeSize capacity checks are automatically correct with no separate edit needed",
+    "cas_atomic_logic": "NOT implemented (out of scope for this fix) -- deferred to a later concurrency-focused subtask"
+  },
+  "test_changes": [
+    "leaf round-trip: 'many keys' case now sets Version: 99 (was previously always zero-value)",
+    "internal round-trip: 'many keys' case now sets Version: 7",
+    "new subtest 'decode rejects mismatched node type': encodes a LeafNode and feeds bytes to DecodeInternalNode (expects error), and encodes an InternalNode and feeds bytes to DecodeLeafNode (expects error)"
+  ],
+  "self_consistency": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "go_test_TestNodeSerialization_race": "pass (5/5 subtests: leaf_round-trip, internal_round-trip, overflow_rejected, decode_rejects_mismatched_node_type, file_created_on_first_use)",
+    "go_test_full_package_race": "pass"
+  },
+  "not_done": [
+    "No self-verification performed beyond internal self-consistency (build/vet/test green) -- per protocol, a separate /cdr:verify pass follows",
+    "No CAS/atomic version-bump or read-retry logic (explicitly out of scope; belongs to a later concurrency subtask, likely Epic 2)"
+  ],
+  "no_push": true,
+  "task_index_updated": ".cdr/index/task.jsonl task-1.2.1 runs array appended with this run id; state left as 'implemented'; verification left null"
+}

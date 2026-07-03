@@ -1,0 +1,67 @@
+{
+  "subtask": "1.2.1",
+  "title": "On-disk B+Tree node layout + serialization at index/name.idx",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit_verified": "3762740",
+  "commands_run": [
+    "go build ./engine/...  -> OK",
+    "go vet ./engine/btree/...  -> OK, no findings",
+    "go test ./engine/btree/... -run TestNodeSerialization -race -v -> PASS (4/4 subtests)",
+    "go test ./engine/btree/... -race -v -> PASS (whole package, only this test exists)",
+    "gofmt -l engine/btree/ -> no output (clean)"
+  ],
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "PASS",
+      "evidence": "LeafNode and InternalNode types defined (engine/btree/node.go:45-67). Encode()/DecodeLeafNode/DecodeInternalNode implemented and round-trip losslessly (verified below). OpenIndexFile creates index/name.idx on first use and does not truncate on reopen (node_test.go:122-167, asserted via os.Stat before/after)."
+    },
+    "architecture_conformance": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "docs/LLD/btree.md specifies no explicit NodeSize/fanout target, so the implementer's 4096-byte fixed NodeSize is a reasonable, undictated default consistent with engine/catalog's PageSize precedent (node.go:9-13). However, the LLD's Concurrency section requires optimistic lock-free reads that check 'a version counter is unchanged' on each node (docs/LLD/btree.md:26-27). Neither LeafNode nor InternalNode reserves a version-counter field or header byte. This is arguably out of scope for 1.2.1 (which only covers layout+serialization, not concurrency), but note that this format is now committed and used by index/name.idx; adding a version counter later means an on-disk format migration/byte-offset break for all three fixed-offset header constants (offNodeType, offKeyCount, offBody). Recommend the version-counter field be reserved in the header now (even if unused/zero) before 1.2.2+ builds on top of this format, or explicitly document that a breaking format bump is expected when concurrency lands."
+    },
+    "regression_risk": {
+      "verdict": "PASS",
+      "evidence": "New package, no existing consumers (git show 3762740 --stat: 2 files added, 0 modified). No risk to other packages. go build ./engine/... succeeds cleanly."
+    },
+    "edge_cases": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": [
+        "Nil vs empty-slice round-trip (point 1): decodeKeys (node.go:184-199) always returns a non-nil `make([]string, keyCount)`, even for keyCount==0, so an originally-nil Keys slice decodes to a non-nil empty slice. By contrast, DecodeLeafNode's FileIDs (node.go:219-229) stays nil for keyCount==0 (`var fileIDs []uint64` with no assignment when keyCount==0). This is an internal inconsistency (Keys always non-nil after decode, FileIDs nil-preserving only in the zero case) but it does NOT break the test: node_test.go's normalizeLeaf/normalizeInternal helpers (lines 170-191) explicitly convert nil->empty-slice on BOTH sides (want and got) before reflect.DeepEqual, so the comparison is nil-agnostic by design rather than accidentally passing. This is a deliberate, correct handling of the Go nil/empty DeepEqual gotcha, not a masked bug -- flagging only the underlying Keys/FileIDs asymmetry as a minor maintainability nit worth a code comment.",
+        "uint16 key-length overflow (point 2): Encode() checks len(n.Keys) > 0xFFFF (key COUNT) but never checks an individual key's byte length against 65535 before writing `uint16(len(k))` in encodeKeys (node.go:158). If len(k) > 65535, the length prefix would silently wrap/truncate. In practice this path is unreachable today because NodeSize == 4096 and leafEncodedSize/internalEncodedSize (which use full int arithmetic on len(k)) already reject any single key longer than ~4090 bytes via the 'needed > NodeSize' check (node.go:104-106, 134-137), and 4096 << 65535. So this is currently dead code, not an exploitable bug, but it is an implicit invariant (NodeSize < 65536) that is not asserted anywhere -- if NodeSize is ever raised past 65535 in a future subtask, this becomes a live silent-corruption bug. Recommend a comment or const-time assertion tying the two together.",
+        "Overflow-rejection ordering and completeness (point 3): verified by inspection -- Encode() validates length mismatch, key-count>0xFFFF, and needed>NodeSize BEFORE `buf := make([]byte, NodeSize)` is allocated (node.go:95-121 for leaf, 126-151 for internal), so there is no partial/corrupt buffer state on any rejection path. leafEncodedSize/internalEncodedSize correctly account for all overhead: 3-byte header (offBody), 2-byte length prefix per key, 8 bytes per FileID/Child pointer, and (leaf only) 8 trailing bytes for NextLeaf -- this was cross-checked byte-for-byte against the actual write sequence in Encode() and matches exactly (no off-by-a-few-bytes). Covered by node_test.go's 'overflow rejected' subtest, including both a single oversized key and cumulative-many-small-keys overflow (node_test.go:83-120)."
+      ]
+    },
+    "security": {
+      "verdict": "PASS",
+      "evidence": "Decode paths bound-check every read (decodeHeader, decodeKeys, DecodeLeafNode, DecodeInternalNode all check off+N > len(data) before slicing), so a truncated/corrupted on-disk buffer errors cleanly rather than panicking or reading out of bounds. OpenIndexFile uses 0o644 permissions, consistent with engine/catalog convention."
+    },
+    "leaf_internal_discriminator": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "Type-tag byte (offNodeType) is written in both Encode() methods and checked in decodeHeader + re-checked in DecodeLeafNode/DecodeInternalNode against the expected type, producing a clean error rather than misinterpreting bytes (node.go:169-179, 205-212, 243-250) -- verified correct by inspection. However there is NO test exercising this: no test calls DecodeInternalNode on a leaf-encoded buffer or vice versa, and no test exercises a too-short/corrupted buffer. This is a real coverage gap for a brand-new binary format, though it is not required by the literal test spec ('encode/decode leaf and internal nodes with varying key counts, assert equality') and the code is correct by inspection."
+    },
+    "internal_node_invariant": {
+      "verdict": "PASS",
+      "evidence": "InternalNode.Encode() explicitly checks len(Children) != len(Keys)+1 and errors (node.go:127-129), tested at node_test.go:116-119 (mismatchedInternal case). Not silently accepted."
+    },
+    "test_coverage": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "Test spec (TestNodeSerialization, leaf/internal round-trip across 0/1/many keys, race) is fully met and exceeded (also tests overflow rejection and file-creation, beyond the literal spec). Gaps: no cross-type decode-mismatch test, no truncated/corrupted-buffer decode test, no test for a key that individually exceeds NodeSize but is disguised among otherwise-valid-looking data. None of these are required by the acceptance criteria but are worth adding before 1.2.2 (lookup) builds on this format."
+    },
+    "maintainability": {
+      "verdict": "PASS",
+      "evidence": "Code is clearly commented, offsets are named constants, encode/decode logic is symmetric and easy to follow. DefaultIndexFileName documents that tests must use t.TempDir() instead, which node_test.go correctly follows."
+    },
+    "performance": {
+      "verdict": "PASS",
+      "evidence": "Fixed 4KB nodes with O(n) linear encode/decode over keys; no unnecessary allocations beyond what's structurally required. Not a concern at this subtask's scope."
+    }
+  },
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "LLD's optimistic-read 'version counter' concurrency requirement (docs/LLD/btree.md:26-27) has no corresponding field in the node header; future addition will require an on-disk format migration. Recommend reserving header space now.",
+    "encodeKeys has no per-key uint16 length-prefix overflow guard independent of the NodeSize check; currently unreachable dead code given NodeSize=4096 but an implicit undocumented invariant (NodeSize < 65536).",
+    "No test exercises cross-type decode rejection (leaf buffer decoded as internal or vice versa) or truncated-buffer decoding, despite the code handling both correctly by inspection.",
+    "Minor internal inconsistency: DecodeLeafNode/DecodeInternalNode return a non-nil empty Keys slice for keyCount==0 but DecodeLeafNode's FileIDs stays nil in the same case -- harmless today because node_test.go normalizes both sides before comparing, but worth a clarifying comment."
+  ],
+  "confidence": 0.9
+}

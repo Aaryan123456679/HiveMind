@@ -1,0 +1,56 @@
+{
+  "subtask": "1.2.1",
+  "verdict": "PASS",
+  "summary": "Follow-up fix correctly reserves an 8-byte Version uint64 field in the shared node header (offVersion=3, offBody=11), threads it consistently through Encode/decodeHeader/DecodeLeafNode/DecodeInternalNode, and adds tests that genuinely exercise version round-trip and mismatched-type rejection. No offset regressions found; overflow-rejection tests still pass at the new, smaller effective capacity because size functions derive from offBody rather than a hardcoded literal.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Header now reserves version-counter space per docs/LLD/btree.md 'Reads' section, resolving the prior round's non-blocking comment. Acceptance criteria (round-trip losslessly, index/name.idx created on first use) still verified by TestNodeSerialization; both subtests pass."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Change is additive to the on-disk header layout as anticipated; no CAS/atomic bump logic added, consistent with stated scope (deferred to concurrency-focused subtask). Comments correctly cross-reference docs/LLD/btree.md."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Traced every offset constant: offNodeType=0, offKeyCount=1, offVersion=3, offBody=11 (node.go lines 30-39). decodeHeader's length guard is `len(data) < offBody` (line 189), which now correctly requires 11 bytes before touching offVersion, closing what would otherwise be an out-of-bounds read. No leftover buf[3:]-style body writes/reads found; encodeKeys/decodeKeys both take `off` from offBody. Full package test suite (`go test ./engine/btree/... -race -v`) passes, including previously-existing overflow tests."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "New subtest 'decode rejects mismatched node type' (node_test.go:124-142) builds a real encoded leaf buffer via LeafNode.Encode() and calls DecodeInternalNode on it (and the symmetric case), asserting a non-nil error -- not a no-op/trivial test. Overflow tests (single huge key, 1000 cumulative small keys, mismatched Keys/FileIDs and Keys/Children lengths) still correctly reject at node_test.go:85-122."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new external input parsing paths; decodeHeader bounds-checks before all header reads. No secrets/credentials involved."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "8 fixed bytes of permanent per-node overhead (0.2% of 4096-byte NodeSize); negligible and was the explicitly intended tradeoff to avoid a future breaking migration."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Named offset constants (offVersion, offBody) used consistently rather than magic numbers, so this is not the classic silent-off-by-8 trap -- every size/offset computation is derived, not hardcoded."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "leaf/internal round-trip cases include entries with non-zero Version (99 and 7) at node_test.go:23-28 and 58-62, compared via reflect.DeepEqual against normalizeLeaf/normalizeInternal(got), which do not strip or zero the Version field -- so a Version mismatch would genuinely fail the test. Ran `go test ./engine/btree/... -run TestNodeSerialization -race -v`: all 5 subtests pass. Ran full package `go test ./engine/btree/... -race -v`: pass. `go build ./engine/...` and `go vet ./engine/btree/...` both clean."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Verified by direct code trace (not just implementer's self-report) plus actual test execution; the two riskiest claims (offset math, capacity-check correctness) were independently confirmed false-negative-free."
+    }
+  },
+  "explicit_determinations": {
+    "point_1_offset_math": "CORRECT. offNodeType=0 (1B), offKeyCount=1 (2B, uint16), offVersion=3 (8B, uint64), offBody=11. Encode() writes nodeType at offNodeType, keyCount at offKeyCount, Version at offVersion, then body starting at offBody via encodeKeys/off cursor -- for both LeafNode and InternalNode. decodeHeader reads the same three fields at the same offsets and its length guard was updated to `len(data) < offBody` (11, not the old 3), so no out-of-bounds read on the new Version field. decodeKeys/DecodeLeafNode/DecodeInternalNode all start their body cursor at offBody. No stale buf[3:]-style reference to the old header width was found anywhere in node.go.",
+    "point_2_capacity_check": "TRUE, verified by trace, not trusted from claim. leafEncodedSize and internalEncodedSize both initialize `size := offBody` (node.go lines 89 and 101) rather than any hardcoded header-size literal (e.g. no stray `+ 3`). Since offBody is the single named constant that grew from 3 to 11, both size functions automatically account for the extra 8 header bytes with zero code changes needed, exactly as claimed. Confirmed empirically: the pre-existing overflow-rejection subtest (single huge key, and 1000-key cumulative overflow) still passes, meaning the smaller effective per-node body capacity (4096-11 vs 4096-3) is still correctly enforced end-to-end."
+  },
+  "commands_run": [
+    "go build ./engine/...  -> exit 0",
+    "go vet ./engine/btree/... -> exit 0",
+    "go test ./engine/btree/... -run TestNodeSerialization -race -v -> PASS (5/5 subtests)",
+    "go test ./engine/btree/... -race -v -> PASS"
+  ],
+  "non_blocking_notes": [
+    "None new. Prior round's version-counter comment is now resolved by this fix."
+  ]
+}

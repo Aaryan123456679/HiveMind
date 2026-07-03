@@ -1,0 +1,27 @@
+{
+  "build": {
+    "cmd": "go build ./engine/...",
+    "result": "pass"
+  },
+  "vet": {
+    "cmd": "go vet ./engine/btree/...",
+    "result": "pass"
+  },
+  "targeted_test": {
+    "cmd": "go test ./engine/btree/... -run TestNodeSerialization -race -v",
+    "result": "pass",
+    "subtests": [
+      "leaf_round-trip",
+      "internal_round-trip",
+      "overflow_rejected",
+      "decode_rejects_mismatched_node_type",
+      "file_created_on_first_use"
+    ]
+  },
+  "full_package_test": {
+    "cmd": "go test ./engine/btree/... -race -v",
+    "result": "pass"
+  },
+  "validation_matrix_covered": true,
+  "note": "This is internal self-consistency only (build/vet/tests green); it is NOT the /cdr:verify pass."
+}
