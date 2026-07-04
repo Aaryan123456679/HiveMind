@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-07-04-056-commit",
+  "subtask": "1.4.3",
+  "status": "completed",
+  "commit_sha": null,
+  "artifacts": {
+    "commit_doc": ".cdr/commits/task-1.4.3.md",
+    "task_index_entry": ".cdr/index/task.jsonl"
+  },
+  "notes": "task-1.4.3 marked verified (PASS_WITH_COMMENTS, run 2026-07-04-055-verification), final commit d10a468 after a fix cycle (053-verification CHANGES_REQUESTED -> 054-implementation-fix -> 055-verification PASS_WITH_COMMENTS). Parent task-1.4 intentionally left as planned pending subtask 1.4.4."
+}

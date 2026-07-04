@@ -1,0 +1,53 @@
+{
+  "subtask": "1.4.3",
+  "commit": "d10a4687071a5e99e597709c2693afacca396e79",
+  "prior_verdict_addressed": ".cdr/runs/2026-07-04/053-verification/verification.json (CHANGES_REQUESTED: unsynchronized read-modify-write in ContentStore.Append)",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "The striped-mutex fix genuinely serializes concurrent Append calls to the same fileID: cs.stripes[stripeFor(fileID)] is locked at the top of Append with a function-scoped defer Unlock, covering the ENTIRE read-existing/append/write-back/cat.Put sequence (content.go:236-238, lock acquired before cat.Get, released only after wal.AppendAndApply's apply callback, which itself calls writeContentFile then cs.cat.Put, returns). This is not a partial-coverage fix (no unlock-then-relock gap between read and write). 50-concurrent-1-byte-Append repro (TestContentAppendConcurrentSameFileID) passes reliably across 10 repeated -race runs with zero lost updates and zero race-detector warnings. Independent stripes array is architecturally justified: Catalog.Put/Get/Delete only ever lock+immediately-unlock their OWN stripes[stripeFor(fileID)] and never call into ContentStore, so the only code path acquiring both lock arrays is Append itself, always in the fixed order ContentStore-stripe (outer) then Catalog-stripe (inner, via cat.Get/cat.Put) -- no other caller in the codebase acquires a Catalog stripe first and a ContentStore stripe second, so no ABBA lock-ordering deadlock is possible given current call sites. Create's exemption is safe: IDAllocator.Next() (idalloc.go) is itself mutex-protected and strictly monotonic, so two Create calls can never target the same freshly-allocated fileID concurrently; Create's read-modify-write-free single-shot write has nothing to race against on a brand-new fileID. Full go test ./engine/catalog/... -race -v -count=1 (53.7s) and a repeat -count=3 pass (171.6s) both succeed with zero failures, including all 1.4.1 (Create) and 1.4.2 (Read) tests and 1.4.3's original sequential boundary-crossing (TestContentAppend, asserts crossed at every iteration) and sizeBytes-accounting tests -- no regressions. go build ./... and go vet ./... are clean.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Lost-update bug from prior verification (49/50 concurrent appends silently lost) is fixed; sizeBytes and threshold-crossing semantics from 1.4.3's original scope are unchanged and still correctly tested."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Reuses the repo's documented striped-mutex convention (docs/LLD/catalog.md, same stripeFor hash) with a deliberately independent array, correctly reasoned to avoid deadlocking a non-reentrant sync.Mutex when Append's critical section calls into cat.Put. Verified: only Append acquires both stripe arrays, always in the same order (CS outer, Catalog inner) -- confirmed by grep across engine/ for all ContentStore/Catalog cross-calls; no other caller inverts this order, so no lock-ordering deadlock risk currently exists."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go test ./engine/catalog/... -race -v -count=1 (53.7s) and -count=3 (171.6s) both pass with zero failures; go build ./... and go vet ./... clean. All 1.4.1/1.4.2 tests and 1.4.3's pre-existing sequential tests (TestContentAppend, TestContentAppendNotFound) unaffected."
+    },
+    "edge_cases": {
+      "status": "concern",
+      "evidence": "Read-vs-Append race (explicitly probed): Read takes NO lock at all, but this is safe in the current design, not accidental -- writeContentFile writes to a fresh, uniquely-named temp file and atomically renames it into place (content.go's writeContentFile, used identically by both Create and Append), so a concurrent os.ReadFile(ContentPath) can only ever observe the fully-old or fully-new file, never a torn write, regardless of Append holding no lock during Read's access. Crucially, within Append's WAL-before-apply callback, writeContentFile (content write + rename) executes strictly BEFORE cs.cat.Put, so a concurrent Read that observes the NEW catalog record (via cat.Get) is guaranteed the content file has already been renamed into its final, complete state -- record and content-file visibility cannot invert. This holds up under inspection; it is a genuine no-lock-needed argument, not a latent gap. Residual, non-blocking concern: this correctness argument rests entirely on POSIX rename atomicity and is not itself covered by any -race test that interleaves Read with in-flight Append (the existing TestContentAppendConcurrentSameFileID only exercises concurrent Append vs Append, not Append vs Read); a targeted test would raise confidence but the current absence is not evidence of a bug."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new attack surface; fileID validation and ContentPath derivation unchanged from prior verification."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Stripe hashing keeps unrelated fileIDs from contending (256-way striping matches Catalog's own design goal); no global lock introduced. Consistent with pre-split (~8KB) file-size scope."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Doc comments thoroughly explain the independent-stripes rationale, Create/Read exemption reasoning, and lock scope; comments are consistent with the actual code (verified line-by-line, not just asserted)."
+    },
+    "test_coverage": {
+      "status": "concern",
+      "evidence": "TestContentAppendConcurrentSameFileID directly and faithfully reproduces the prior verification's exact repro shape (50 concurrent 1-byte appends, same assertions on content length and catalog SizeBytes) and passes reliably (10/10 -race runs). Gap: no test exercises concurrent Append vs. concurrent Read on the same fileID to empirically validate the no-torn-read claim discussed above; recommend adding one in a follow-up, though it is not blocking given the rename-atomicity argument is sound by inspection."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Fix directly verified by re-running the exact original repro under -race repeatedly with zero failures; deadlock-avoidance and Create-exemption reasoning independently confirmed against actual call sites, not just taken on faith from the commit message; full regression suite green."
+    }
+  },
+  "build_and_test": {
+    "go_build": "pass (engine module)",
+    "go_vet": "pass (engine module)",
+    "go_test_race_count1": "pass, 53.681s, engine/catalog, zero failures",
+    "go_test_race_count3": "pass, 171.645s, engine/catalog, zero failures",
+    "targeted_repro_count10": "pass, TestContentAppendConcurrentSameFileID, 10/10 runs, -race, zero lost updates, zero race warnings"
+  },
+  "recommendation": "Merge as-is; the blocking lost-update bug from 053-verification is genuinely fixed with a sound, verified locking design. Non-blocking follow-up: add a Read-vs-concurrent-Append -race test to empirically pin down the no-torn-read guarantee currently established only by inspection/argument, so future refactors of writeContentFile or the WAL-before-apply ordering can't silently reintroduce a torn-read window without a test catching it."
+}

@@ -1,0 +1,15 @@
+{
+  "run_id": "055-verification",
+  "subtask": "1.4.3",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "diff": "commit d10a4687071a5e99e597709c2693afacca396e79",
+    "fix_file": "engine/catalog/content.go:229-282 (Append), :64-84 (ContentStore struct/stripes)",
+    "test_file": "engine/catalog/content_test.go:297-346 (TestContentAppendConcurrentSameFileID)",
+    "catalog_locking": "engine/catalog/catalog.go:176-200 (Put), :219-240 (Get) for stripe-lock scope comparison",
+    "idalloc": "engine/catalog/idalloc.go:63,121 (mutex-protected monotonic Next)",
+    "prior_verdict": ".cdr/runs/2026-07-04/053-verification/verification.json",
+    "regression_entry": ".cdr/index/regression.jsonl (055-verification, low risk, Read-vs-Append test gap)"
+  },
+  "status": "completed"
+}
