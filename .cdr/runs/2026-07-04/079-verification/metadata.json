@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-079-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "task-2a.1.5",
+  "git_head": "d6db0161952ee314d9e1d89675e5bcb44351595e",
+  "run_key": "sha256:task-2a.1.5-v1-d6db016-issue6-mvcc-concurrent-rw-test",
+  "status": "completed",
+  "last_completed_step": "report",
+  "started_at": "2026-07-04T23:20:00+05:30",
+  "ended_at": "2026-07-04T23:45:00+05:30"
+}

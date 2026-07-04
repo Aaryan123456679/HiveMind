@@ -1,0 +1,52 @@
+{
+  "subtask": "task-2a.1.5",
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "Many concurrent readers and writers against the same fileID never observe a torn/partial version",
+      "covered_by": "TestConcurrentReadersWriters — 12 writer goroutines x 15 CommitVersion calls (180 total) racing 12 reader goroutines each looping NewSnapshot+Read until writers finish, under -race",
+      "status": "covered"
+    },
+    {
+      "id": "AC2",
+      "description": "Every read returns exactly the full content of some committed version",
+      "covered_by": "each reader iteration asserts read bytes are an exact member (string equality) of a precomputed, immutable validSet of all 180 possible payloads; failure (t.Errorf) on any mismatch",
+      "status": "covered"
+    },
+    {
+      "id": "AC3",
+      "description": "Test spec: go test ./engine/mvcc/... -run TestConcurrentReadersWriters -race must exist and pass",
+      "covered_by": "engine/mvcc/mvcc_test.go, function TestConcurrentReadersWriters",
+      "status": "covered"
+    },
+    {
+      "id": "AC4",
+      "description": "Genuinely concurrent (go func() + sync.WaitGroup), not a disguised sequential test",
+      "covered_by": "24 goroutines launched via go func(), writerWG/readerWG sync.WaitGroup, no per-goroutine serialization; readers race writers via an atomic done-flag rather than fixed sequential ordering",
+      "status": "covered"
+    },
+    {
+      "id": "AC5",
+      "description": "No race in the test itself between committing and registering valid payloads",
+      "covered_by": "validSet + payloads are fully precomputed before any goroutine starts and never mutated during the race (read-only map access, no locking needed)",
+      "status": "covered"
+    },
+    {
+      "id": "AC6",
+      "description": "No regressions on 2a.1.1-2a.1.4's existing tests",
+      "covered_by": "full package run: go test ./engine/mvcc/... -race -v -count=1 — TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter (+ subtests), TestCurrentVersionCAS, TestVersionCASWAL (+ subtests) all PASS",
+      "status": "covered"
+    },
+    {
+      "id": "AC7",
+      "description": "Clean under -race, no flakiness",
+      "covered_by": "go test -run TestConcurrentReadersWriters -race -count=1 (PASS, 7.6s), -count=3 (PASS, 24.3s), -count=5 (PASS, 39.2s) — all clean, zero flakes observed",
+      "status": "covered"
+    }
+  ],
+  "build_checks": {
+    "gofmt": "clean (engine/mvcc/mvcc_test.go)",
+    "go_vet": "clean (./engine/mvcc/...)",
+    "go_build": "clean (./engine/...)"
+  }
+}

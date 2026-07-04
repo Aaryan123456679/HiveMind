@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-078-implementation",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "task-2a.1.5",
+  "git_head": "6dce4975121f7352f6c9b2063f40787186d80d3c",
+  "run_key": "sha256:task-2a.1.5|issue-6|6dce4975121f7352f6c9b2063f40787186d80d3c|mvcc_test.go-new",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:30:00Z"
+}

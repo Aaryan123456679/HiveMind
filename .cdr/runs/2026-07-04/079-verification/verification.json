@@ -1,0 +1,69 @@
+{
+  "subtask": "task-2a.1.5",
+  "issue": 6,
+  "commit": "d6db0161952ee314d9e1d89675e5bcb44351595e",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "TestConcurrentReadersWriters (engine/mvcc/mvcc_test.go:31-166) matches the test spec literally: 12 writer goroutines x 15 payloads (180 total) via CommitVersion against one shared fileID, racing 12 reader goroutines doing NewSnapshot+Read in a loop gated by a WaitGroup + atomic done-flag (lines 74-130). Assertion at line 115-118 checks every read's bytes exactly match a precomputed committed payload."
+    },
+    "genuine_concurrency": {
+      "status": "pass",
+      "evidence": "Real `go` goroutines for both writers (line 79) and readers (line 93), real sync.WaitGroup for both groups, readers loop until writerDone flips (atomic, checked before each iteration at line 101) rather than a fixed count, so overlap is real and not disguised sequential execution. writerWG.Wait() (128) happens before readerWG.Wait() (130), but readers are started (91-126) BEFORE writerWG.Wait() is called, so readers and writers run concurrently for the full writer phase, not readers-then-writers."
+    },
+    "core_assertion_correctness": {
+      "status": "pass",
+      "evidence": "validSet is a map[string]bool keyed by the exact payload byte string (line 59, 70); check at line 115 is `!validSet[string(data)]`, a Go map lookup, which is exact-equality only -- no prefix/substring semantics possible. Payloads embed writer/seq identity plus 64-char repeated filler (lines 63-68), making a truncated or spliced read astronomically unlikely to collide with a different valid entry, and any short/truncated string would simply not be a key in the map (default zero value for a missing key is `false`), so truncated/torn reads are still caught as failures, not accidentally allowed through the design's comment note."
+    },
+    "point_3_false_positive_analysis": {
+      "status": "pass - crux verified",
+      "evidence": "Traced write.go's writeVersionFile (lines 315-343): writes to a temp sibling file (os.CreateTemp), Write, Sync, Close, then os.Rename to the final path. Reader-visible file names only ever come from directory listing / os.Open on the FINAL path (VersionPath), which only exists after the atomic rename completes; rename on the same filesystem/directory is atomic on POSIX, so os.ReadFile in read.go's Read (line 89) can only ever see the fully-formed old file, ENOENT, or the fully-formed new file -- never a partial write. Crucially, CommitVersion (write.go:187-225) calls WriteVersion (which fully completes, including the rename) BEFORE walCAS makes the new version visible via CurrentVersion (line 207 write, then line 212 CAS). Therefore a reader's NewSnapshot can never observe a CurrentVersion pointing at a version file that isn't yet fully written -- the write-then-publish ordering plus atomic rename together make it structurally impossible for validSet-miss to be a false positive from a mid-write read. The test's design is airtight: any assertion failure would necessarily indicate a genuine torn-read or lost-update bug, not a timing false alarm."
+    },
+    "self_reported_bugfix_reverify": {
+      "status": "pass",
+      "evidence": "Lines 132-146: count/maxVersion assertion uses `count >= wantMinCount` (lower bound, correctly accounting for orphaned version files from lost-CAS retries per write.go's documented contract at CommitVersion's doc comment lines 150-186) and `maxVersion == count` (exact -- verifies numbering is contiguous with no gaps/collisions, which a real lost-update bug producing skipped or duplicate version numbers WOULD violate). The combination still meaningfully catches regressions: e.g., if WriteVersion's per-fileID locking broke and two goroutines got the same version number, maxVersion would be less than count, failing the second check; if a CommitVersion call silently dropped a write, count would fall below wantMinCount. Fix is coherent, not over-loosened."
+    },
+    "architecture_lld_conformance": {
+      "status": "pass",
+      "evidence": "docs/LLD/mvcc.md's read path description (readers snapshot then read to completion regardless of concurrent writers, 'never see torn reads') and write path (version files immutable, CAS-then-WAL-first) are exactly what the test exercises and what write.go/read.go's doc comments (independently re-read) describe. No production code was touched (test-only diff, 166 lines added), consistent with commit message and issue scope."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Full `go test ./... -race -count=1` in engine module: all packages pass (engine, btree, catalog, mvcc, wal all green, ~2.6 min total). No existing mvcc tests (TestSnapshotRead, TestVersionWriter, TestCurrentVersionCAS, TestVersionCASWAL) regressed."
+    },
+    "flakiness_hunt": {
+      "status": "pass",
+      "evidence": "TestConcurrentReadersWriters run standalone with -race -count=15 back-to-back: all 15 iterations passed (~117s total, no failures, no data races reported). Also ran with -v -count=1 individually: passes in ~7.9s consistently."
+    },
+    "edge_cases": {
+      "status": "pass_with_comment",
+      "evidence": "CurrentVersion==0-at-start edge case: readers begin racing before any writer commits, so `snap.Version() > 0` is naturally false for at least the first several iterations of most/all readers, correctly skipping Read (avoiding a guaranteed-fail SnapshotPath(fileID,0) open) -- this path is exercised by the test's natural timing without needing to force it. Minor comment: this reliance on natural scheduling to hit the zero-version case isn't asserted/counted explicitly (e.g. no counter confirming at least one reader observed version==0), so if goroutine scheduling ever started all writers before any reader, the edge case could theoretically go unexercised in a given run without the test noticing. Low risk given GOMAXPROCS-based real concurrency, not a blocking issue."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "Complements existing per-component tests (write_test.go's TestVersionWriter/TestCurrentVersionCAS/TestVersionCASWAL, read_test.go's TestSnapshotRead) with the integration-level concurrent read/write surface that was previously untested, per commit message rationale. Final-state assertions (lines 148-165) additionally verify CurrentVersion converges to the highest on-disk version and that the final committed content is a valid payload, which is a useful end-to-end sanity check beyond the mid-race assertions."
+    },
+    "security": {
+      "status": "not_applicable",
+      "evidence": "Test-only change, no new attack surface, no new production code paths."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Test is heavily commented explaining the design rationale (precomputed validSet avoiding a registration race, why lower-bound+exact-max assertion is used), matching the repo's existing doc-comment-heavy style. Uses existing test helpers (newTestCatalog, newTestWAL, countVersionFiles) rather than duplicating setup logic."
+    }
+  },
+  "build_and_test_results": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "TestConcurrentReadersWriters_race_v_count1": "pass (7.79s-7.91s)",
+    "TestConcurrentReadersWriters_race_count15": "pass, zero flakes (116.6s)",
+    "mvcc_package_full_race_v_count1": "pass, all subtests green",
+    "engine_module_full_race_count1": "pass, zero regressions across engine/btree/catalog/mvcc/wal"
+  },
+  "task_2a1_status_note": "This is subtask 2a.1.5, the last of task-2a.1's five subtasks (2a.1.1-2a.1.5), all of which have now verified per .cdr/index (task-2a.1.1 through 2a.1.4 previously verified PASS_WITH_COMMENTS). Pending this verification's recording, task-2a.1 as a whole and GitHub issue #6 (MVCC content versioning) are closable.",
+  "comments": [
+    "Minor: the CurrentVersion==0-at-start edge case is exercised by natural goroutine scheduling timing rather than deterministically forced/asserted; consider a light-weight counter or explicit sub-case if determinism is ever desired, though current risk is low given real OS-scheduled concurrency across 24 goroutines.",
+    "Point 3 (false-positive risk) verified structurally sound: write-before-CAS-publish ordering plus atomic temp-file+rename in writeVersionFile makes it impossible for a reader to observe a version file mid-write, so the test can only fail on genuine torn-read/lost-update bugs, not scheduling false alarms."
+  ]
+}

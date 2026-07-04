@@ -1,0 +1,22 @@
+{
+  "subtask": "task-2a.1.5",
+  "new_files": [
+    "engine/mvcc/mvcc_test.go"
+  ],
+  "modified_files": [],
+  "modules_exercised_not_modified": [
+    "engine/mvcc/write.go (VersionWriter.CommitVersion, WriteVersion)",
+    "engine/mvcc/read.go (NewSnapshot, Snapshot.Read, SnapshotRead)",
+    "engine/catalog (Catalog.Put/Get, CatalogRecord) via newTestCatalog helper",
+    "engine/wal (wal.Writer) via newTestWAL helper"
+  ],
+  "risk": "low — additive test-only change, no production code paths modified",
+  "blast_radius": "engine/mvcc package test suite only",
+  "breaking_changes": "none",
+  "downstream_consumers_affected": [],
+  "closes": [
+    "task-2a.1.5 (this subtask)",
+    "task-2a.1 (parent — last of 5 subtasks: 2a.1.1-2a.1.5)",
+    "GitHub issue #6 (MVCC content versioning) — closable pending verification"
+  ]
+}

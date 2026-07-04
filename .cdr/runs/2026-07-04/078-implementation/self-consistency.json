@@ -1,0 +1,14 @@
+{
+  "subtask": "task-2a.1.5",
+  "checks": [
+    {"check": "gofmt -l engine/mvcc/mvcc_test.go", "result": "clean, no output"},
+    {"check": "go vet ./engine/mvcc/...", "result": "clean"},
+    {"check": "go build ./engine/...", "result": "clean"},
+    {"check": "go test ./engine/mvcc/... -run TestConcurrentReadersWriters -race -v -count=1", "result": "PASS (7.6s)"},
+    {"check": "go test ./engine/mvcc/... -run TestConcurrentReadersWriters -race -count=3", "result": "PASS (24.3s), no flakiness"},
+    {"check": "go test ./engine/mvcc/... -run TestConcurrentReadersWriters -race -count=5", "result": "PASS (39.2s), no flakiness"},
+    {"check": "go test ./engine/mvcc/... -race -v -count=1 (full package)", "result": "PASS — TestConcurrentReadersWriters, TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter (4 subtests), TestCurrentVersionCAS, TestVersionCASWAL (3 subtests) all green, no regressions on 2a.1.1-2a.1.4"}
+  ],
+  "matrix_covered": true,
+  "note": "This is internal sanity only (build green + matrix covered), NOT verification. Delegated to /cdr:verify per invariant I4 — implementation agent does not verify its own work."
+}

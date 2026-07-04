@@ -1,0 +1,20 @@
+{
+  "subtask": "task-2a.1.5",
+  "status": "implemented",
+  "commit": "d6db016",
+  "run_dir": ".cdr/runs/2026-07-04/078-implementation",
+  "files_changed": [
+    "engine/mvcc/mvcc_test.go (new — TestConcurrentReadersWriters)"
+  ],
+  "reused_helpers": [
+    "engine/mvcc/write_test.go:newTestCatalog",
+    "engine/mvcc/write_test.go:newTestWAL",
+    "engine/mvcc/write_test.go:countVersionFiles"
+  ],
+  "test_command": "go test ./engine/mvcc/... -run TestConcurrentReadersWriters -race -v -count=1",
+  "self_consistency": ".cdr/runs/2026-07-04/078-implementation/self-consistency.json — build/vet/gofmt clean, race test green at count=1/3/5, full package regression-clean",
+  "validation_matrix": ".cdr/runs/2026-07-04/078-implementation/validation-matrix.json",
+  "impact_analysis": ".cdr/runs/2026-07-04/078-implementation/impact-analysis.json",
+  "important_note": "This is the LAST subtask of task-2a.1 (2a.1.1-2a.1.5, MVCC versioned writes, GitHub issue #6). All 5 subtasks are now implemented (2a.1.1-2a.1.4 previously verified, this one pending verification). Once /cdr:verify passes this subtask, parent task-2a.1 and GitHub issue #6 should become closable.",
+  "not_verified": "Implementation agent does not verify its own work (invariant I4). Next step: /cdr:verify against this run's commit d6db016."
+}
