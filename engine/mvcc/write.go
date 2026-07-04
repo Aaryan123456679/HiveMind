@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 )
 
 // contentDirName is the fixed subdirectory (relative to VersionWriter's root) that
@@ -98,6 +100,79 @@ func (vw *VersionWriter) WriteVersion(fileID uint64, data []byte) (uint64, error
 
 	state.next = version
 	return version, nil
+}
+
+// CommitVersion durably writes data as a brand-new version for fileID (via
+// WriteVersion) and then atomically publishes it as fileID's current version in cat,
+// via Catalog.CompareAndSwapCurrentVersion. This is the CAS wiring
+// docs/LLD/mvcc.md's "Write path" describes: the version file is durably written
+// FIRST; only once that succeeds is the catalog's CurrentVersion pointer swapped, and
+// the swap itself is a CAS keyed on the CurrentVersion this call observed when it
+// started, never a blind overwrite. cat must already hold a CatalogRecord for fileID
+// (e.g. from Catalog.Put) before CommitVersion is called.
+//
+// Concurrency / "no lost updates" contract for N concurrent CommitVersion calls on
+// the SAME fileID:
+//
+//   - Every call's data is durably written to its own, never-reused version file
+//     (WriteVersion's per-fileID monotonic numbering guarantees this — see its doc
+//     comment), regardless of whether that call's CAS attempt subsequently wins or
+//     loses.
+//   - Every call EVENTUALLY returns successfully: if this call's CAS is refused
+//     because a concurrent CommitVersion's CAS already advanced CurrentVersion out
+//     from under it (the CurrentVersion this call observed via cat.Get no longer
+//     matches), CommitVersion does NOT give up, retry the same stale CAS, or silently
+//     drop the write. It loops: re-reads the catalog record to observe the winner's
+//     new CurrentVersion, writes a FRESH version file (via another WriteVersion call,
+//     since VersionWriter never reuses or rewrites a version number once assigned),
+//     and re-attempts the CAS against the winner's new state — repeating until it
+//     wins or a non-CAS error occurs (e.g. fileID not found).
+//   - A consequence of always writing a brand-new version file per retry (rather than
+//     reusing the prior attempt's number) is that a "losing" attempt's version file is
+//     left orphaned on disk: never referenced by CurrentVersion, but never deleted or
+//     corrupted either. It is exactly the kind of unreachable-but-still-present old
+//     version docs/LLD/mvcc.md's "Garbage collection" section describes as eligible
+//     for later reclamation by a background compactor; CommitVersion itself never
+//     deletes version files.
+//   - Therefore, after N concurrent CommitVersion calls on one fileID all complete
+//     successfully, the fileID's final CurrentVersion equals the version number of
+//     whichever call's CAS completed last in real time. Because WriteVersion assigns
+//     version numbers in the exact order calls acquire its internal per-fileID lock,
+//     and a goroutine only stops retrying once it succeeds, the very last WriteVersion
+//     call issued for this fileID (globally, across every attempt AND every retry) is
+//     guaranteed to belong to the goroutine whose CAS succeeds last (if it had lost,
+//     it would have looped and written yet another, even-higher-numbered version
+//     instead of returning) — so the final CurrentVersion always equals the highest
+//     version number that exists on disk for this fileID once all N calls have
+//     returned. No caller's write is ever lost: each of the N calls' data is captured
+//     durably as some retained version file (whether or not that particular file ends
+//     up referenced by CurrentVersion), and CurrentVersion always reflects the
+//     temporally last one to actually complete its full write+CAS sequence.
+func (vw *VersionWriter) CommitVersion(cat *catalog.Catalog, fileID uint64, data []byte) (uint64, error) {
+	for {
+		rec, err := cat.Get(fileID)
+		if err != nil {
+			return 0, fmt.Errorf("mvcc: commit version: reading catalog record for fileID %d: %w", fileID, err)
+		}
+		expected := rec.CurrentVersion
+
+		version, err := vw.WriteVersion(fileID, data)
+		if err != nil {
+			return 0, fmt.Errorf("mvcc: commit version: writing version file for fileID %d: %w", fileID, err)
+		}
+
+		ok, _, err := cat.CompareAndSwapCurrentVersion(fileID, expected, version)
+		if err != nil {
+			return 0, fmt.Errorf("mvcc: commit version: CAS for fileID %d: %w", fileID, err)
+		}
+		if ok {
+			return version, nil
+		}
+		// Lost the race: some other CommitVersion call's CAS already advanced
+		// CurrentVersion past `expected`. Loop and retry against the winner's
+		// current state with a fresh version file, rather than corrupting state
+		// or silently dropping this call's write.
+	}
 }
 
 // writeVersionFile durably writes data to fileID's version N path. It writes a

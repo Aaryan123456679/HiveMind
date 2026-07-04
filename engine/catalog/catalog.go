@@ -272,6 +272,85 @@ func (c *Catalog) Delete(fileID uint64) error {
 	return nil
 }
 
+// CompareAndSwapCurrentVersion atomically advances the CatalogRecord for fileID's
+// CurrentVersion field from expected to newVersion, but ONLY if the record's
+// CurrentVersion currently equals expected. This is the CAS hook point
+// docs/LLD/mvcc.md's "Write path" describes ("An atomic CAS swaps 'current version'
+// pointer in catalog record fileID once new version durably written"): callers
+// (engine/mvcc's VersionWriter.CommitVersion) durably write a new version file FIRST,
+// then call this to publish it as the current version.
+//
+// The read-check-write sequence is held atomic by reusing fileID's existing stripe
+// lock (stripes[stripeFor(fileID)]) — the SAME lock Get and Put already serialize on
+// for this fileID — rather than adding a new lock, so a CompareAndSwapCurrentVersion
+// racing a concurrent Put or another CompareAndSwapCurrentVersion on the SAME fileID
+// can never interleave: Catalog does not need to expose a way to hold Get's lock
+// across a caller-side conditional Put, because that whole sequence lives here,
+// inside a single stripe-lock critical section.
+//
+// Returns:
+//   - (true, updatedRecord, nil) if the swap succeeded: CurrentVersion is now
+//     newVersion (updatedRecord reflects this).
+//   - (false, currentRecord, nil) if the swap was refused because CurrentVersion did
+//     NOT equal expected (some other write already advanced it first); currentRecord
+//     is the actual current record as of this call, so the caller can inspect the
+//     winner's state (e.g. its CurrentVersion) to decide how to retry.
+//   - (false, CatalogRecord{}, err) if fileID has no record, or reading/encoding/
+//     writing fails.
+func (c *Catalog) CompareAndSwapCurrentVersion(fileID, expected, newVersion uint64) (bool, CatalogRecord, error) {
+	if fileID == InvalidFileID {
+		return false, CatalogRecord{}, fmt.Errorf("catalog: cas current version: invalid fileID %d", fileID)
+	}
+
+	stripe := stripeFor(fileID)
+	c.stripes[stripe].Lock()
+	defer c.stripes[stripe].Unlock()
+
+	c.indexMu.RLock()
+	loc, ok := c.index[fileID]
+	c.indexMu.RUnlock()
+	if !ok {
+		return false, CatalogRecord{}, fmt.Errorf("catalog: cas current version: %w: fileID %d", ErrNotFound, fileID)
+	}
+
+	data, err := c.readSlot(loc)
+	if err != nil {
+		return false, CatalogRecord{}, fmt.Errorf("catalog: cas current version: reading fileID %d: %w", fileID, err)
+	}
+	rec, err := Decode(data)
+	if err != nil {
+		return false, CatalogRecord{}, fmt.Errorf("catalog: cas current version: decoding fileID %d: %w", fileID, err)
+	}
+
+	if rec.CurrentVersion != expected {
+		// Lost the race: someone else's write already advanced CurrentVersion past
+		// what this caller started from. Return the actual current record unchanged
+		// so the caller can retry against the winner's state instead of corrupting
+		// or silently overwriting it.
+		return false, rec, nil
+	}
+
+	rec.CurrentVersion = newVersion
+	newData, err := rec.Encode()
+	if err != nil {
+		return false, CatalogRecord{}, fmt.Errorf("catalog: cas current version: encoding fileID %d: %w", fileID, err)
+	}
+
+	if err := c.tombstone(loc); err != nil {
+		return false, CatalogRecord{}, fmt.Errorf("catalog: cas current version: removing old slot for fileID %d: %w", fileID, err)
+	}
+	newLoc, err := c.insert(newData)
+	if err != nil {
+		return false, CatalogRecord{}, fmt.Errorf("catalog: cas current version: inserting fileID %d: %w", fileID, err)
+	}
+
+	c.indexMu.Lock()
+	c.index[fileID] = newLoc
+	c.indexMu.Unlock()
+
+	return true, rec, nil
+}
+
 // readSlot reads and returns the raw encoded bytes stored at loc. No additional
 // locking around the FileManager call is needed here: FileManager synchronizes its
 // own internal shared state itself (see file.go), and distinct pages'/fileIDs' I/O
