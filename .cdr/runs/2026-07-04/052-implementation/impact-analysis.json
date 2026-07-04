@@ -1,0 +1,25 @@
+{
+  "subtask": "1.4.3",
+  "files_modified": [
+    "engine/catalog/content.go",
+    "engine/catalog/content_test.go"
+  ],
+  "files_read_only": [
+    "engine/catalog/record.go",
+    "engine/catalog/catalog.go",
+    "engine/wal/record.go",
+    "docs/LLD/split.md",
+    "docs/LLD/catalog.md"
+  ],
+  "public_api_additions": [
+    "func (cs *ContentStore) Append(fileID uint64, data []byte) (thresholdCrossed bool, err error)",
+    "const defaultSplitThresholdBytes"
+  ],
+  "risk": "low - additive only method on existing ContentStore, no changes to Create/Read signatures or behavior",
+  "regressions_checked": [
+    "TestContentCreate",
+    "TestContentCreateInvalidFileID",
+    "TestContentRead",
+    "TestContentReadNotFound"
+  ]
+}

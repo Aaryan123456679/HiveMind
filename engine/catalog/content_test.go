@@ -206,6 +206,93 @@ func TestContentRead(t *testing.T) {
 	}
 }
 
+// TestContentAppend covers subtask 1.4.3's full test spec: repeatedly appending
+// small chunks to an existing file must (a) keep the on-disk content and the
+// catalog's SizeBytes in lockstep with the cumulative appended length, and (b)
+// report the threshold-crossing signal true on exactly one append (the one
+// that pushes the cumulative size from at-or-under the threshold to strictly
+// over it), and false on every other append (both before and after crossing).
+//
+// A small overridden threshold (rather than the real ~8KB default) is used so
+// the test can exercise the exact-once crossing semantics with a short,
+// fast-running loop instead of writing kilobytes of filler content.
+func TestContentAppend(t *testing.T) {
+	cs, cat, _ := newTestContentStore(t)
+	cs.splitThresholdBytes = 64
+
+	const fileID = uint64(99)
+	initial := []byte("start")
+	rec := testContentRecord(fileID)
+	rec.SizeBytes = uint64(len(initial))
+	if _, err := cs.Create(rec, initial); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var (
+		cumulative    = append([]byte(nil), initial...)
+		crossingCount int
+		crossingIdx   = -1
+	)
+
+	chunk := []byte("0123456789") // 10 bytes per append
+
+	for i := 0; i < 10; i++ {
+		crossed, err := cs.Append(fileID, chunk)
+		if err != nil {
+			t.Fatalf("Append(#%d): %v", i, err)
+		}
+		cumulative = append(cumulative, chunk...)
+
+		if crossed {
+			crossingCount++
+			crossingIdx = i
+		}
+
+		// SizeBytes must track cumulative content length after every append.
+		gotRec, err := cat.Get(fileID)
+		if err != nil {
+			t.Fatalf("cat.Get after Append(#%d): %v", i, err)
+		}
+		if gotRec.SizeBytes != uint64(len(cumulative)) {
+			t.Fatalf("Append(#%d): SizeBytes = %d, want %d", i, gotRec.SizeBytes, len(cumulative))
+		}
+
+		// Content on disk must match the cumulative bytes exactly.
+		got, err := cs.Read(fileID)
+		if err != nil {
+			t.Fatalf("Read after Append(#%d): %v", i, err)
+		}
+		if !bytes.Equal(got, cumulative) {
+			t.Fatalf("Read after Append(#%d) = %q, want %q", i, got, cumulative)
+		}
+
+		// Signal correctness relative to the threshold at this point.
+		wantCrossed := uint64(len(cumulative)-len(chunk)) <= cs.splitThresholdBytes && uint64(len(cumulative)) > cs.splitThresholdBytes
+		if crossed != wantCrossed {
+			t.Fatalf("Append(#%d): crossed = %v, want %v (cumulative size %d, threshold %d)", i, crossed, wantCrossed, len(cumulative), cs.splitThresholdBytes)
+		}
+	}
+
+	if crossingCount != 1 {
+		t.Fatalf("threshold-crossing signal fired %d times, want exactly 1 (at append index %d)", crossingCount, crossingIdx)
+	}
+}
+
+// TestContentAppendNotFound confirms Append reports a wrapped ErrNotFound for
+// a fileID that was never created, mirroring Read's behavior.
+func TestContentAppendNotFound(t *testing.T) {
+	cs, _, _ := newTestContentStore(t)
+
+	const missingFileID = uint64(1000)
+	crossed, err := cs.Append(missingFileID, []byte("data"))
+	if crossed {
+		t.Fatalf("Append(missing) crossed = true, want false")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Append(missing) err = %v, want wrapping ErrNotFound", err)
+	}
+}
+
 // TestContentReadNotFound confirms Read reports a wrapped ErrNotFound (rather
 // than an os.ReadFile-shaped error) for a fileID that was never created, so
 // callers can distinguish "never created" from other read failures the same

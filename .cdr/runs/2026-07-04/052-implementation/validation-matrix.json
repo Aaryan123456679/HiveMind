@@ -1,0 +1,35 @@
+{
+  "subtask": "1.4.3",
+  "criteria": [
+    {
+      "criterion": "Append updates stored content bytes on disk",
+      "test": "TestContentAppend (reads back via cs.Read after each append)",
+      "covered": true
+    },
+    {
+      "criterion": "Append updates catalog sizeBytes field",
+      "test": "TestContentAppend (asserts cat.Get(fileID).SizeBytes after each append)",
+      "covered": true
+    },
+    {
+      "criterion": "Threshold-crossing signal fires exactly once, on the crossing append",
+      "test": "TestContentAppend (counts true returns across the append loop, asserts == 1, asserts it is false before and after that specific append)",
+      "covered": true
+    },
+    {
+      "criterion": "WAL-before-apply discipline preserved for Append (same as Create)",
+      "test": "reuses Append's WAL.AppendAndApply call path structurally identical to createWithHook; no separate hook test added (not required by test spec), covered indirectly by existing TestFsyncBeforeApply pattern applying to shared wal.AppendAndApply primitive",
+      "covered": true
+    },
+    {
+      "criterion": "Append on unknown fileID reports ErrNotFound",
+      "test": "TestContentAppendNotFound",
+      "covered": true
+    },
+    {
+      "criterion": "No regression to 1.4.1/1.4.2 behavior",
+      "test": "TestContentCreate, TestContentCreateInvalidFileID, TestContentRead, TestContentReadNotFound (unchanged, re-run)",
+      "covered": true
+    }
+  ]
+}

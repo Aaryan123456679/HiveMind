@@ -22,6 +22,16 @@ const contentDirName = "content"
 // whichever later subtask under this epic introduces MVCC-aware content versioning.
 const contentVersionSuffix = ".v1.md"
 
+// defaultSplitThresholdBytes is the default split-trigger threshold used by
+// Append's threshold-crossing signal (subtask 1.4.3), matching the ~8KB /
+// ~2000 tokens default documented in docs/LLD/split.md's "Trigger" section.
+// This is deliberately just a size threshold, not the real auto-split logic
+// (engine/split/ is scaffold-only as of this subtask); actual split execution
+// is out of scope until Epic 2B. Documented override point: callers needing a
+// different threshold (e.g. tests exercising crossing behavior cheaply) may
+// set ContentStore.splitThresholdBytes directly after OpenContentStore.
+const defaultSplitThresholdBytes = 8 * 1024
+
 // ContentStore is the on-disk content (topic file body) I/O layer that sits alongside
 // Catalog: Catalog owns a fileID's metadata record, ContentStore owns the actual .md
 // bytes for that fileID. See docs/LLD/catalog.md's "wal/" cross-reference: every catalog
@@ -39,6 +49,13 @@ type ContentStore struct {
 	dir string // absolute/relative path to the "content" directory itself
 	cat *Catalog
 	w   *wal.Writer
+
+	// splitThresholdBytes is the size (in bytes) Append compares the
+	// post-append content length against to decide whether to report a
+	// threshold-crossing signal. Defaulted to defaultSplitThresholdBytes by
+	// OpenContentStore; overridable directly by callers (e.g. tests) that
+	// need a different threshold. See Append's doc comment.
+	splitThresholdBytes uint64
 }
 
 // OpenContentStore creates (if necessary) a "content" directory under root and returns a
@@ -58,7 +75,7 @@ func OpenContentStore(root string, cat *Catalog, w *wal.Writer) (*ContentStore, 
 		return nil, fmt.Errorf("catalog: OpenContentStore: creating content dir %s: %w", dir, err)
 	}
 
-	return &ContentStore{dir: dir, cat: cat, w: w}, nil
+	return &ContentStore{dir: dir, cat: cat, w: w, splitThresholdBytes: defaultSplitThresholdBytes}, nil
 }
 
 // ContentPath returns the on-disk path of fileID's (single, pre-MVCC) content file:
@@ -157,6 +174,76 @@ func (cs *ContentStore) Read(fileID uint64) ([]byte, error) {
 		return nil, fmt.Errorf("catalog: content read: reading content file for fileID %d: %w", fileID, err)
 	}
 	return data, nil
+}
+
+// Append is the content store's append/mutate path (subtask 1.4.3): it reads
+// fileID's current content, appends data to it, durably logs the resulting
+// catalog record (with an updated SizeBytes) as a catalog Put mutation to the
+// WAL, and ONLY THEN writes the combined content to disk and makes the
+// updated record visible via cat.Put — the same WAL-before-apply discipline
+// Create already provides, built on the same wal.AppendAndApply primitive.
+//
+// Like Read, Append resolves fileID through the catalog first; a fileID with
+// no catalog record is reported as a wrapped ErrNotFound.
+//
+// Append returns thresholdCrossed=true exactly on the one call whose
+// resulting size pushes the file from at-or-under ContentStore's configured
+// split threshold (splitThresholdBytes, defaulted to
+// defaultSplitThresholdBytes) to strictly over it. It is false both before
+// that crossing append (size still at or under the threshold) and on every
+// append after it (size already over the threshold from a prior call), so
+// callers see the signal fire exactly once per crossing. This is
+// deliberately just a signal/stub for a future Epic 2B caller to act on
+// (see docs/LLD/split.md's "Trigger" section); Append itself never invokes
+// engine/split or performs any actual splitting.
+//
+// Task 1.4.3 is pre-MVCC, single-version only, matching Create/Read: Append
+// always mutates the single "v1" content file regardless of
+// rec.CurrentVersion.
+func (cs *ContentStore) Append(fileID uint64, data []byte) (bool, error) {
+	rec, err := cs.cat.Get(fileID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, fmt.Errorf("catalog: content append: %w: fileID %d", ErrNotFound, fileID)
+		}
+		return false, fmt.Errorf("catalog: content append: looking up fileID %d: %w", fileID, err)
+	}
+
+	existing, err := os.ReadFile(cs.ContentPath(fileID))
+	if err != nil {
+		return false, fmt.Errorf("catalog: content append: reading content file for fileID %d: %w", fileID, err)
+	}
+
+	oldSize := uint64(len(existing))
+	newContent := append(append([]byte(nil), existing...), data...)
+	newSize := uint64(len(newContent))
+
+	updatedRec := rec
+	updatedRec.SizeBytes = newSize
+
+	encoded, err := updatedRec.Encode()
+	if err != nil {
+		return false, fmt.Errorf("catalog: content append: encoding fileID %d: %w", fileID, err)
+	}
+
+	walRec := wal.NewCatalogPutRecord(fileID, encoded)
+
+	if _, err := wal.AppendAndApply(cs.w, walRec, func() error {
+		if err := cs.writeContentFile(fileID, newContent); err != nil {
+			return fmt.Errorf("writing content file for fileID %d: %w", fileID, err)
+		}
+
+		if err := cs.cat.Put(updatedRec); err != nil {
+			return fmt.Errorf("committing catalog record for fileID %d: %w", fileID, err)
+		}
+
+		return nil
+	}); err != nil {
+		return false, fmt.Errorf("catalog: content append: %w", err)
+	}
+
+	thresholdCrossed := oldSize <= cs.splitThresholdBytes && newSize > cs.splitThresholdBytes
+	return thresholdCrossed, nil
 }
 
 // writeContentFile durably writes data to fileID's content path. It writes to a temporary
