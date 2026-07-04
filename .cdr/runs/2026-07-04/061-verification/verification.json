@@ -1,0 +1,49 @@
+{
+  "subtask": "1.5.1",
+  "issue": 5,
+  "commit": "cd533b872e2f0fc01580db34106cdde18823c26b",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "TestStorageCoreIntegration wires real catalog.FileManager/Catalog/IDAllocator/ContentStore, real btree.NodeStore/NodeAllocator/Insert(via insertPath helper)/Lookup/PrefixScan, and real wal.OpenWriter/AppendAndApply(via wal.NewBTreeInsertRecord) with no mocks/fakes of any of the four packages. Creates 8 topic files (4 per prefix x 2 prefixes), appends to a subset, does PrefixScan + point Lookup, reads content back. Purely single-threaded: no goroutines, channels, or sync primitives in the file (grep confirmed empty)."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Composition matches docs/LLD/wal.md's WAL-before-apply invariant and docs/LLD/btree.md/catalog.md's topic-path->fileID->content-location chain: path insert is WAL-logged via wal.NewBTreeInsertRecord + wal.AppendAndApply before applying to the in-memory btree; ContentStore.Create/Append already WAL-log catalog mutations internally per its own package invariant, and the test doesn't re-implement that logging, it just calls the real API."
+    },
+    "cross_module_consistency_proof": {
+      "status": "pass",
+      "evidence": "The assertion chain is per-file, not aggregate: for each PrefixScan entry, entry.FileID is checked against fs.fileID for that specific path, then cat.Get(entry.FileID).SizeBytes is checked against len(fs.content) for that path, then cs.Read(entry.FileID) is byte-compared against fs.content for that path. Step 4 repeats independently via point btree.Lookup(fs.path) -> cs.Read(fileID) -> bytes.Equal per path. This genuinely proves fileID-for-path X resolves consistently across btree/catalog/content, not just 'some file matches'."
+    },
+    "threshold_signal_reuse": {
+      "status": "pass",
+      "evidence": "engine/catalog/content.go:214-282 (production Append) computes and returns thresholdCrossed; the test calls cs.Append(...) directly and asserts on the real return value (crossed then crossedAgain==false on the immediately-following append to the same already-over-threshold file), it does not reimplement threshold arithmetic. This directly reuses 1.4.3's verified signal semantics end-to-end."
+    },
+    "negative_case_coverage": {
+      "status": "pass",
+      "evidence": "PrefixScan('topics/nonexistent/') asserts len==0 via the real B+Tree scan; btree.Lookup('topics/alpha/does-not-exist') asserts found==false via the real B+Tree lookup path; cat.Get(999_999) asserts a real error return for a fileID that was never allocated by idAlloc. None of these are skipped or short-circuited -- each calls production code and checks the actual not-found path."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git show cd533b8 --stat confirms only engine/integration_test.go plus .cdr/ index and run bookkeeping files changed; zero production source touched. Full `go build ./... && go vet ./...` clean. `go test ./... -race -count=1` from engine/ is all green (engine, engine/btree, engine/catalog, engine/wal ok; graph/loadtest/mvcc/rpc/split have no test files, unaffected)."
+    },
+    "edge_cases": {
+      "status": "comment",
+      "evidence": "Covers nonexistent-prefix scan (0 results) but not an existing-prefix-with-zero-remaining-matches edge distinct from a wholly nonexistent prefix, nor a prefix that is itself a stored full path (prefix/path boundary ambiguity). N=8 (4 per prefix) is reasonable for exercising multi-entry PrefixScan and sibling isolation between two prefixes, but no explicit single-entry (N=1) prefix case is asserted independently -- it's implicitly covered per-prefix (each prefix here has 4, not 1). This is a minor gap, not a defect."
+    },
+    "test_coverage": {
+      "status": "comment",
+      "evidence": "Good breadth: create, append (ordinary + threshold-crossing + post-threshold), PrefixScan, point Lookup, negative cases, cross-module SizeBytes/content checks. Gap: no assertion on WAL file replay/recovery (WAL is only used as the logging mechanism for inserts, its own crash-recovery behavior is out of scope here per LLD ownership boundaries and was presumably covered in wal's own unit tests) -- acceptable since this subtask's stated scope is single-threaded happy-path wiring, not crash recovery."
+    },
+    "maintainability": {
+      "status": "comment",
+      "evidence": "Well-commented, package-level doc block explains why the test lives at engine/ root (external-consumer-style import) and documents the *fileState slice-reallocation pointer-invalidation bug the implementer says was caught and fixed (files pre-allocated with cap == len(prefixes)*filesPerPrefix, verified correct in the read code). Extendable to a concurrent Epic 2A version by parameterizing the workload function, but as written it is a single monolithic test function; splitting into reusable helpers would ease that future extension somewhat."
+    },
+    "security": {"status": "pass", "evidence": "Test-only code operating on t.TempDir(); no secrets, no external I/O, no injection surface."},
+    "performance": {"status": "pass", "evidence": "Test runs in ~0.28s for the targeted run and adds negligible overhead to the full -race suite (~2.4s for engine package)."}
+  },
+  "confidence": "high",
+  "summary": "Genuine integration test: real production code from all four packages (btree, catalog, wal, content-via-catalog), per-path cross-module assertions (not aggregate), correct reuse of 1.4.3's real Append threshold-crossing signal, real not-found negative-path exercises, single-threaded (no goroutines), zero production-source diff, all builds/vet/race tests green with no regressions. Minor documented gaps (edge-case breadth, single-entry-prefix case, monolithic function structure) do not block acceptance; recommend addressing opportunistically in a future subtask.",
+  "blocking_issues": []
+}
