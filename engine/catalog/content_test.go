@@ -362,3 +362,131 @@ func TestContentReadNotFound(t *testing.T) {
 		t.Fatalf("Read(missing) err = %v, want wrapping ErrNotFound", err)
 	}
 }
+
+// openGenContentStore opens (or reopens) a FileManager+Catalog+wal.Writer+ContentStore
+// generation rooted at root, registering t.Cleanup to close the FileManager and
+// wal.Writer. If recover is true, it calls RecoverFromWAL(cat, walDir) to reconstruct
+// cat's in-memory index from the WAL before wiring the ContentStore, simulating what a
+// restarted process must do given Catalog's documented "empty index on load" gap (see
+// catalog.go's Catalog doc comment and recovery.go's RecoverFromWAL doc comment).
+//
+// This is the "reopen catalog + content store from disk" seam TestContentDurabilityRestart
+// exercises: unlike newTestContentStore (which only ever opens one generation of handles for
+// the lifetime of a test), openGenContentStore can be called twice against the SAME root to
+// model a process exit (first generation's handles closed) followed by a fresh process
+// startup (second generation's handles opened against the same on-disk files).
+func openGenContentStore(t *testing.T, root, walDir string, recoverIndex bool) (cs *ContentStore, cat *Catalog) {
+	t.Helper()
+
+	fm, err := Open(filepath.Join(root, "catalog.dat"))
+	if err != nil {
+		t.Fatalf("Open (catalog FileManager): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := fm.Close(); err != nil {
+			t.Errorf("FileManager.Close: %v", err)
+		}
+	})
+	cat = NewCatalog(fm)
+
+	if recoverIndex {
+		if err := RecoverFromWAL(cat, walDir); err != nil {
+			t.Fatalf("RecoverFromWAL: %v", err)
+		}
+	}
+
+	w, err := wal.OpenWriter(walDir, 1<<20)
+	if err != nil {
+		t.Fatalf("wal.OpenWriter: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("wal.Writer.Close: %v", err)
+		}
+	})
+
+	cs, err = OpenContentStore(root, cat, w)
+	if err != nil {
+		t.Fatalf("OpenContentStore: %v", err)
+	}
+
+	return cs, cat
+}
+
+// TestContentDurabilityRestart covers subtask 1.4.4's full test spec: after writing
+// (Create) and appending (Append) content, simulate a process restart by closing the
+// original FileManager+wal.Writer (without deleting any on-disk WAL/content/catalog
+// files) and opening a brand-new FileManager+Catalog+wal.Writer+ContentStore generation
+// against the same root, reconstructing the new Catalog's index via RecoverFromWAL.
+// Reading the fileID's content via the NEW ContentStore must return the exact same bytes
+// that were visible via the OLD ContentStore immediately before the simulated restart.
+func TestContentDurabilityRestart(t *testing.T) {
+	root := t.TempDir()
+	walDir := filepath.Join(root, "wal")
+
+	const fileID = uint64(7)
+	initial := []byte("# Restart Topic\n\nInitial body.\n")
+	appendA := []byte("More content, appended once.\n")
+	appendB := []byte("And a second append, for good measure.\n")
+	want := append(append(append([]byte{}, initial...), appendA...), appendB...)
+
+	// Generation 1: fresh FileManager+Catalog+wal.Writer+ContentStore, write + append.
+	fm1, err := Open(filepath.Join(root, "catalog.dat"))
+	if err != nil {
+		t.Fatalf("Open (gen1 FileManager): %v", err)
+	}
+	cat1 := NewCatalog(fm1)
+
+	w1, err := wal.OpenWriter(walDir, 1<<20)
+	if err != nil {
+		t.Fatalf("wal.OpenWriter (gen1): %v", err)
+	}
+
+	cs1, err := OpenContentStore(root, cat1, w1)
+	if err != nil {
+		t.Fatalf("OpenContentStore (gen1): %v", err)
+	}
+
+	rec := testContentRecord(fileID)
+	rec.SizeBytes = uint64(len(initial))
+	if _, err := cs1.Create(rec, initial); err != nil {
+		t.Fatalf("gen1 Create: %v", err)
+	}
+	if _, err := cs1.Append(fileID, appendA); err != nil {
+		t.Fatalf("gen1 Append A: %v", err)
+	}
+	if _, err := cs1.Append(fileID, appendB); err != nil {
+		t.Fatalf("gen1 Append B: %v", err)
+	}
+
+	gotBeforeRestart, err := cs1.Read(fileID)
+	if err != nil {
+		t.Fatalf("gen1 Read (before restart): %v", err)
+	}
+	if !bytes.Equal(gotBeforeRestart, want) {
+		t.Fatalf("gen1 Read (before restart) = %q, want %q", gotBeforeRestart, want)
+	}
+
+	// Simulate a process restart: close generation 1's handles WITHOUT deleting any
+	// on-disk WAL/content/catalog files, then open a brand-new generation against the
+	// same root.
+	if err := w1.Close(); err != nil {
+		t.Fatalf("gen1 wal.Writer.Close: %v", err)
+	}
+	if err := fm1.Close(); err != nil {
+		t.Fatalf("gen1 FileManager.Close: %v", err)
+	}
+
+	// Generation 2 ("after restart"): brand-new Catalog starts with an EMPTY in-memory
+	// index (see catalog.go's documented gap); RecoverFromWAL must reconstruct it from
+	// the WAL before this new ContentStore's Read can see fileID at all.
+	cs2, _ := openGenContentStore(t, root, walDir, true /* recover */)
+
+	gotAfterRestart, err := cs2.Read(fileID)
+	if err != nil {
+		t.Fatalf("gen2 Read (after restart): %v", err)
+	}
+	if !bytes.Equal(gotAfterRestart, want) {
+		t.Fatalf("gen2 Read (after restart) = %q, want %q (byte-for-byte match with pre-restart content)", gotAfterRestart, want)
+	}
+}
