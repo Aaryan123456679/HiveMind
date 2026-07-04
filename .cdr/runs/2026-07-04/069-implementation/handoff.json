@@ -1,0 +1,29 @@
+{
+  "subtask": "2a.1.2",
+  "commit": "767400b",
+  "status": "implemented, awaiting /cdr:verify",
+  "files": [
+    "engine/catalog/catalog.go — CompareAndSwapCurrentVersion method (new, appended just before readSlot)",
+    "engine/mvcc/write.go — CommitVersion method (new, appended just before writeVersionFile), added catalog import",
+    "engine/mvcc/write_test.go — TestCurrentVersionCAS, newTestCatalog helper, countVersionFiles helper (appended at end)"
+  ],
+  "design_contract_for_verifier": {
+    "no_lost_updates_meaning": "Every retry writes a BRAND NEW, never-reused version file (per task brief's explicit direction), so the final CurrentVersion after N concurrent CommitVersion calls on one fileID is NOT simply N. It equals the highest version-file number present on disk once all N calls have returned. This holds because WriteVersion assigns version numbers in strict temporal order of internal mutex acquisition, and a goroutine only stops retrying once its own CAS succeeds — so in the terminal state, the globally-last WriteVersion call for that fileID must belong to whichever CAS completed last, and that call's version becomes the final CurrentVersion. 'No lost updates' == every one of the N concurrent CommitVersion calls returns success with a distinct version number (verified via a seen-set in the test), and the version file CurrentVersion ultimately points to contains exactly the payload of the goroutine that produced it (verified via direct file-content comparison in the test) — every writer's data is durably captured as SOME retained version file even if a losing attempt's file is left orphaned (unreferenced, but never deleted/corrupted) for later GC per docs/LLD/mvcc.md's 'Garbage collection' section.",
+    "wal_scope": "WAL wiring for the CAS ('every version-pointer CAS...goes through WAL first' per docs/LLD/mvcc.md) is intentionally NOT implemented here — impacted modules for 2a.1.2 are only engine/mvcc/write.go and write_test.go per the issue. This is a known, documented gap (see architecture-discovery.md), not a regression."
+  },
+  "self_consistency": {
+    "build": "clean",
+    "vet": "clean",
+    "gofmt": "clean",
+    "tests": "go test ./mvcc/... -race -v -count=1 PASS; go test ./mvcc/... -race -run TestCurrentVersionCAS -count=5 PASS; go test ./catalog/... -race -count=1 PASS; go test ./... PASS (full repo)"
+  },
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-04/069-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-04/069-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-04/069-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-04/069-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-04/069-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-04/069-implementation/self-consistency.json"
+  },
+  "next": "run /cdr:verify for subtask 2a.1.2"
+}

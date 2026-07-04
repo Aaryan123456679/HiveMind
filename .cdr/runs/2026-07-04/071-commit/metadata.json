@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-071-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "commit",
+  "subtask": "task-2a.1.2",
+  "git_head": "767400b01ea5538d1ca4526c0b56cc4642805b69",
+  "run_key": "f6a8c59b2f817dc6f4deb267367703a0bc0bb2eeebb8a21f4b1db65329c8f1e",
+  "status": "completed",
+  "last_completed_step": "index_updated",
+  "started_at": "2026-07-04T16:46:52Z",
+  "ended_at": "2026-07-04T16:52:00Z"
+}

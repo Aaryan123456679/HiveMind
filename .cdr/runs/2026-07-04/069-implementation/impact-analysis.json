@@ -1,0 +1,27 @@
+{
+  "subtask": "2a.1.2",
+  "issue": 6,
+  "files_changed": [
+    {
+      "path": "engine/catalog/catalog.go",
+      "change": "added Catalog.CompareAndSwapCurrentVersion method",
+      "reason": "Catalog's public API (Get/Put/Delete) offers no way to hold a fileID's stripe lock across a read-then-conditional-write sequence; CAS must live inside catalog.go to be race-free."
+    },
+    {
+      "path": "engine/mvcc/write.go",
+      "change": "added VersionWriter.CommitVersion method + catalog import",
+      "reason": "wires 2a.1.1's durable WriteVersion together with the new CAS, with a retry loop on CAS failure, per acceptance criteria."
+    },
+    {
+      "path": "engine/mvcc/write_test.go",
+      "change": "added TestCurrentVersionCAS, newTestCatalog helper, countVersionFiles helper",
+      "reason": "test spec: go test ./engine/mvcc/... -run TestCurrentVersionCAS -race"
+    }
+  ],
+  "files_not_changed": [
+    "engine/catalog/record.go (CurrentVersion field already existed, no schema change needed)",
+    "engine/wal/* (WAL wiring explicitly deferred; out of impacted-modules scope for 2a.1.2)"
+  ],
+  "risk": "low — additive methods only, no changes to existing Put/Get/Delete/WriteVersion behavior or signatures",
+  "regression_surface": "engine/catalog (new method only, no existing method bodies touched), engine/mvcc (new method only)"
+}

@@ -1,0 +1,13 @@
+{
+  "gofmt": "clean (gofmt -l . empty)",
+  "go_vet": "clean (./...)",
+  "go_build": "clean (./...)",
+  "tests": [
+    {"cmd": "go test ./mvcc/... -race -v -count=1", "result": "PASS", "notes": "TestVersionWriter (2a.1.1) + TestCurrentVersionCAS (2a.1.2), all subtests pass"},
+    {"cmd": "go test ./mvcc/... -race -run TestCurrentVersionCAS -count=5", "result": "PASS"},
+    {"cmd": "go test ./catalog/... -race -count=1", "result": "PASS"},
+    {"cmd": "go test ./...", "result": "PASS", "notes": "full repo sweep: engine, btree, catalog, mvcc, wal all ok; graph/loadtest/rpc/split have no test files"}
+  ],
+  "validation_matrix_covered": true,
+  "regressions": "none observed"
+}

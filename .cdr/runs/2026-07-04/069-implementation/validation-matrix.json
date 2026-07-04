@@ -1,0 +1,25 @@
+{
+  "subtask": "2a.1.2",
+  "criteria": [
+    {
+      "criterion": "CurrentVersion updated via CAS only after new version file is durably written",
+      "covered_by": "CommitVersion's ordering: WriteVersion (durable, fsync+rename) happens before CompareAndSwapCurrentVersion is ever called; TestCurrentVersionCAS's final content-match assertion (on-disk file content matches the record the CAS published) empirically confirms the CAS never points at data that wasn't durably written first."
+    },
+    {
+      "criterion": "Failed CAS (concurrent writer won) retries without corrupting state",
+      "covered_by": "CommitVersion's for-loop: on ok=false, re-Get + re-WriteVersion + re-CAS; TestCurrentVersionCAS's 30-goroutine race with -race detects any data race, and the distinct-version-per-goroutine + content-match assertions detect any corruption/overwrite."
+    },
+    {
+      "criterion": "Test spec: go test ./engine/mvcc/... -run TestCurrentVersionCAS -race",
+      "covered_by": "TestCurrentVersionCAS added to engine/mvcc/write_test.go; run green under -race (see self-consistency.json)."
+    },
+    {
+      "criterion": "Exactly the expected final currentVersion, no lost updates",
+      "covered_by": "Defined explicitly in plan.md/architecture-discovery.md: final CurrentVersion == max on-disk version-file number for the fileID; asserted via countVersionFiles helper. No lost updates == all N goroutines return distinct successful versions (asserted via a seen-set) and the winning version file's content matches its owner."
+    },
+    {
+      "criterion": "No regression to 2a.1.1 (VersionWriter/WriteVersion)",
+      "covered_by": "go test ./mvcc/... -race -v -count=1 includes TestVersionWriter unchanged and passing; go test ./... full-repo sweep green."
+    }
+  ]
+}
