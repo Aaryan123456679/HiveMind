@@ -1,0 +1,54 @@
+{
+  "subtask": "1.5.2",
+  "issue": "#5",
+  "commit": "2156b0cf3c957aba19a7a1413489616759928e60",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Test-only commit adds TestStorageCoreCrashRecovery to engine/integration_test.go. Build/vet/race/regression all clean. The btree-recovery architecture (SaveRoot/LoadRoot as a manual, out-of-band checkpoint independent of WAL replay) is a pre-existing design from earlier subtasks (engine/btree/persist.go), not introduced here, and is transparently documented in code and in this run's architecture-discovery.md. However, the test only exercises the narrow, convenient case where SaveRoot happens to be called after all pre-crash btree Inserts and before the simulated crash; it does not (and, given current production code, cannot) prove recovery for a crash occurring between a real Insert and the next SaveRoot, which would silently drop that insert from the recovered btree even though its WAL record was durably written/applied and catalog+content would show it as present. This is a genuine, acceptance-criteria-relevant gap against the literal wording '...via WAL replay' for all four modules, but it is a scoped, well-flagged Phase-1 limitation rather than a defect introduced by 1.5.2, since RecordBTreeInsert/RecordBTreeDelete WAL records exist but catalog.RecoverFromWAL explicitly no-ops on them by design (engine/catalog/recovery.go), predating this commit.",
+  "dimensions": {
+    "requirements": {
+      "verdict": "pass_with_comments",
+      "evidence": "TestStorageCoreCrashRecovery interrupts an append mid-way (fileID allocated, never created), injects a torn WAL tail (1.3.5 recipe reused), reopens all stores, runs catalog.RecoverFromWAL + btree.LoadRoot, and asserts consistent state across catalog/btree/content plus system usability post-recovery. Matches the test spec almost verbatim. The one caveat: acceptance criteria says state is reconstructed 'via WAL replay' but btree state is in fact reconstructed via a separate SaveRoot/LoadRoot checkpoint mechanism that is NOT WAL-driven, so the literal wording is not fully satisfied for the btree component -- although this is a documented, pre-existing production design, not something 1.5.2 could unilaterally change."
+    },
+    "architecture_conformance": {
+      "verdict": "pass_with_comments",
+      "evidence": "Confirmed by reading engine/btree/persist.go: SaveRoot is deliberately NOT invoked inside Insert/Delete ('caller decides when to checkpoint'); LoadRoot returns reservedNodeID(0) if SaveRoot was never called. Confirmed by reading engine/catalog/recovery.go: RecoverFromWAL only replays RecordCatalogPut/RecordCatalogDelete and is an explicit no-op for RecordBTreeInsert/RecordBTreeDelete ('not a catalog mutation ... nothing to do'). So the implementer's claim that btree recovery does not go through Catalog/WAL replay is verified as accurate and pre-existing (not new production code, none added in this commit)."
+    },
+    "saveroot_timing_gap": {
+      "verdict": "flagged, not blocking",
+      "evidence": "Checked literally: in gen-1 the test calls btree.Insert for all 3 committed files first (step 1), then a ContentStore.Append (step 2, does not touch btree), then exactly one btree.SaveRoot call (step 3) covering all inserts made so far, before the crash-simulation step (step 4). So within this test, SaveRoot IS called after every Insert that must survive the crash -- the test does not itself contain an uncheckpointed insert. But this also means the test never exercises (and cannot prove correct) the case of a crash between an Insert and the next SaveRoot -- a real production sequence that would lose that insert from the recovered btree despite its WAL record (RecordBTreeInsert) having been durably written and applied, and despite catalog/content correctly reflecting the file as present. This is a real, unaddressed consistency window, but it predates 1.5.2 (rooted in btree/persist.go's original design) and is documented both in code comments and in this commit's own architecture-discovery.md/doc comments -- it is not silently swept under the rug."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "go build ./... and go vet ./... clean in engine module. go test ./... -run TestStorageCoreCrashRecovery -race -v -count=1 passes; -count=5 repeat passes (no flakiness). Full go test ./... -race -count=1 across engine, engine/btree, engine/catalog, engine/wal all pass, no regressions. git show 2156b0c --stat confirms only engine/integration_test.go (+361/-1) changed in the diff itself."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comments",
+      "evidence": "Interrupted-append case is modeled as an allocated-but-never-created fileID plus an unrelated torn WAL tail injection -- these are two orthogonal mechanisms bolted together rather than one literal 'kill mid-write' event, but this combination is a reasonable and conservative way to test the WAL-before-apply invariant (nothing durable exists for the crashed fileID) without needing new fault-injection production code. It is incremental beyond 1.3.5 (WAL-level torn-tail) and 1.4.4 (content-level restart) in that it exercises all four modules together in one restart, which is the stated goal of 1.5.2, even though each individual mechanism was proven standalone before."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "No new attack surface; test-only change, uses t.TempDir(), no secrets or external I/O."
+    },
+    "performance": {
+      "verdict": "pass",
+      "evidence": "Test runs in well under 1s; no perf-sensitive code changed."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Test is heavily commented, explains the architecture rationale in-line and cross-references architecture-discovery.md; follows established idioms from 1.3.5/1.4.4/1.5.1 tests."
+    },
+    "test_coverage": {
+      "verdict": "pass_with_comments",
+      "evidence": "Satisfies the literal test spec (go test ./engine/... -run TestStorageCoreCrashRecovery -race). Recommend a follow-up (tracked as a gap, not blocking this subtask) covering: (a) a crash between a real Insert and its next SaveRoot, asserting the expected (currently lossy) recovered-btree behavior, so the limitation is pinned down by a test rather than only by comments; (b) whether a future subtask should either auto-checkpoint SaveRoot periodically/on shutdown or wire RecordBTreeInsert/RecordBTreeDelete into an actual WAL-replay-based btree rebuild path, to make the literal 'via WAL replay' acceptance wording fully true for all four modules."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "Read full source of engine/btree/persist.go, insert.go, docs/LLD/btree.md, engine/catalog/recovery.go, the full TestStorageCoreCrashRecovery test body, and the commit's architecture-discovery.md. Ran build/vet/race/repeat/regression suite directly."
+    }
+  },
+  "gap_tracked": {
+    "description": "btree recovery relies on a manually-invoked SaveRoot checkpoint rather than WAL replay of RecordBTreeInsert/RecordBTreeDelete; a crash between an Insert and the next SaveRoot loses that insert from the recovered btree despite the WAL record being durably applied.",
+    "introduced_in": "pre-existing (engine/btree/persist.go, prior subtask), not introduced by 2156b0c",
+    "recommendation": "Track as a Phase 2 follow-up: either wire RecordBTreeInsert/RecordBTreeDelete into a real WAL-replay-based btree rebuild, or add periodic/automatic SaveRoot checkpointing, and add a test that exercises the currently-uncheckpointed window explicitly."
+  }
+}

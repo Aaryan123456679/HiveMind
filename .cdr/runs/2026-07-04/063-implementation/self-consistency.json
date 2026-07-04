@@ -1,0 +1,12 @@
+{
+  "subtask": "1.5.2",
+  "checks": [
+    {"check": "gofmt -l engine/integration_test.go", "result": "clean (no output)"},
+    {"check": "go vet ./... (engine module)", "result": "clean"},
+    {"check": "go test . -run TestStorageCoreCrashRecovery -race -v -count=1", "result": "PASS"},
+    {"check": "go test . -run TestStorageCoreCrashRecovery -race -count=1 x5 (flakiness check, mirrors 1.3.5 precedent)", "result": "PASS all 5 runs"},
+    {"check": "go test ./... -race -count=1 (full engine module suite: engine, btree, catalog, wal)", "result": "PASS, no regressions on 1.5.1 (TestStorageCoreIntegration) or any catalog/btree/wal test"}
+  ],
+  "validation_matrix_covered": true,
+  "note": "self-consistency only; independent verification deferred to /cdr:verify per invariant I4"
+}

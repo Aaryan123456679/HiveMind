@@ -1,0 +1,23 @@
+{
+  "subtask": "1.5.2",
+  "files_changed": [
+    {
+      "path": "engine/integration_test.go",
+      "change": "add new test function TestStorageCoreCrashRecovery",
+      "risk": "low — additive test-only change in engine_test (external) package; no production code touched"
+    }
+  ],
+  "production_code_changes": [],
+  "packages_touched_read_only": [
+    "engine/catalog (Open, NewCatalog, NewIDAllocator, OpenContentStore, RecoverFromWAL, ErrNotFound)",
+    "engine/wal (OpenWriter, AppendAndApply, NewBTreeInsertRecord, Replay via catalog.RecoverFromWAL)",
+    "engine/btree (OpenIndexFile, NewNodeStore, NewNodeAllocator, Insert, Lookup, PrefixScan, SaveRoot, LoadRoot)"
+  ],
+  "downstream_risk": "none — pure test addition; does not change any exported API or behavior of catalog/btree/wal",
+  "dependencies_on_prior_subtasks": [
+    "1.3.5 wal crash-injection idiom (TestCrashInjectionRecovery torn-tail technique)",
+    "1.4.4 catalog.RecoverFromWAL + restart idiom (TestContentDurabilityRestart)",
+    "1.2.x btree persist.go SaveRoot/LoadRoot + NodeAllocator sidecar resume",
+    "1.5.1 integration_test.go wiring conventions (insertPath closure, fileState helper struct)"
+  ]
+}

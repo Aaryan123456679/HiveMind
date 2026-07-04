@@ -1,1 +1,3 @@
 # Pending
+
+- **btree SaveRoot / WAL-replay gap (Phase 2 follow-up)**: `engine/btree`'s `SaveRoot` is a manual, out-of-band checkpoint, not auto-invoked on every `Insert`; `RecoverFromWAL` deliberately no-ops on btree WAL records. A real crash between an `Insert` and the next `SaveRoot` would silently drop that insert from the recovered btree, even though its WAL record was durably applied. Pre-existing design from issue #2 (task-1.2), surfaced and transparently documented (not fixed) during verification of task-1.5.2 (`.cdr/runs/2026-07-04/064-verification/`). Recommendation: either wire btree WAL records into real replay-based reconstruction, or add automatic/periodic `SaveRoot` checkpointing, plus an explicit test exercising the currently-uncheckpointed window.

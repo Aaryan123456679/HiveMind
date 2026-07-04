@@ -1,0 +1,35 @@
+{
+  "subtask": "1.5.2",
+  "issue": 5,
+  "status": "implemented",
+  "commit": "2156b0cf3c957aba19a7a1413489616759928e60",
+  "files_changed": ["engine/integration_test.go"],
+  "new_production_code_added": false,
+  "new_production_code_note": "None needed. Confirmed in architecture-discovery.md: every recovery primitive required already existed and was already verified (catalog.RecoverFromWAL from 1.4.4, wal.OpenWriter torn-tail auto-truncation + wal.Replay from 1.3.5, btree.SaveRoot/LoadRoot + NodeAllocator sidecar resume from earlier btree subtasks).",
+  "btree_reconstruction_flag": {
+    "needed_separate_reconstruction": true,
+    "mechanism": "NOT via catalog and NOT via WAL replay of RecordBTreeInsert/RecordBTreeDelete. btree has its own self-contained on-disk persistence: NodeStore.WriteNode durably writes every node's bytes into the index file at Insert/Delete time, and btree.SaveRoot/LoadRoot durably persist/recover the tree's current root node ID sidecar file. The test calls btree.SaveRoot after the pre-crash mutations it wants to survive, then btree.LoadRoot after 'restarting'.",
+    "why_not_via_catalog": "engine/catalog/record.go's CatalogRecord only stores PathHash (a lossy uint64 hash), never the literal topic path string, so a recovered Catalog alone cannot supply the (path, fileID) pairs needed to rebuild btree entries. This was the task brief's speculated approach and was found not to be viable with existing APIs.",
+    "why_not_via_wal_replay": "wal.Replay does carry RecordBTreeInsert/RecordBTreeDelete payloads (which do include the literal path), but replaying them was not needed here because NodeStore already durably persists node bytes directly on every Insert call (no WAL-mediated staging step for the node bytes themselves, only for the SaveRoot-committed root pointer), so re-driving Insert calls from WAL would be redundant work, not a gap-filling requirement."
+  },
+  "test_added": "TestStorageCoreCrashRecovery",
+  "test_location": "engine/integration_test.go",
+  "self_consistency": {
+    "gofmt": "clean",
+    "go_vet": "clean",
+    "race_test_single_run": "PASS",
+    "race_test_5x_flakiness_check": "PASS all 5",
+    "full_module_race_suite": "PASS, no regressions (engine, engine/btree, engine/catalog, engine/wal)"
+  },
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-04/063-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-04/063-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-04/063-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-04/063-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-04/063-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-04/063-implementation/self-consistency.json",
+    "test_function": "engine/integration_test.go:TestStorageCoreCrashRecovery"
+  },
+  "not_verified": "This agent does NOT verify its own work (invariant I4). Next step: /cdr:verify subtask 1.5.2.",
+  "issue_context": "This is the LAST subtask (1.5.2) of GitHub issue #5. Once /cdr:verify passes, issue #5 and Phase 1 as a whole (issues #1-#5) are complete."
+}

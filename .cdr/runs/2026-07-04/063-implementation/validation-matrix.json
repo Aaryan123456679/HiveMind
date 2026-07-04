@@ -1,0 +1,12 @@
+{
+  "subtask": "1.5.2",
+  "rows": [
+    {"criterion": "committed pre-crash files survive restart, cross-module consistent (btree->catalog->content)", "covered_by": "loop asserting Lookup/Get/Read for all 3 committed fileState entries incl. the appended one"},
+    {"criterion": "committed Append's content is durable and correct post-recovery", "covered_by": "committedFS.content includes appended suffix; cs2.Read compared byte-for-byte"},
+    {"criterion": "torn/incomplete mutation does not appear anywhere post-recovery (no partial/corrupted file visible)", "covered_by": "btree.Lookup not-found, catalog.Get ErrNotFound, PrefixScan count excludes it, os.Stat(ContentPath) IsNotExist"},
+    {"criterion": "WAL replay reconstructs catalog state", "covered_by": "catalog.RecoverFromWAL call in gen2 setup + assertions depend on its result"},
+    {"criterion": "btree state reconstructed consistently across restart", "covered_by": "SaveRoot pre-crash / LoadRoot post-restart + NodeStore's own durable WriteNode persistence; documented finding: no WAL-based btree rebuild needed/used"},
+    {"criterion": "recovered system remains usable, not just readable", "covered_by": "post-recovery Create+insertPath of a brand-new file via gen2 handles, read back"},
+    {"criterion": "race-safe (spec requires -race)", "covered_by": "single-threaded test body; run under go test -race"}
+  ]
+}

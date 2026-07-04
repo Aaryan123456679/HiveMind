@@ -1,0 +1,14 @@
+{
+  "run_id": "2026-07-04-065-commit",
+  "subtask": "1.5.2",
+  "produced": [
+    ".cdr/commits/task-1.5.2.md",
+    ".cdr/index/task.jsonl (task-1.5.2 -> verified, task-1.5 -> verified)",
+    ".cdr/memory/pending.md (added btree SaveRoot/WAL-replay Phase 2 follow-up bullet)"
+  ],
+  "verification_run": ".cdr/runs/2026-07-04/064-verification/verification.json",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit_sha": "2156b0cf3c957aba19a7a1413489616759928e60",
+  "closes": ["issue-#5", "task-1.5", "phase-1"],
+  "notes": "feature.jsonl checked, no Phase-1-epic-level entry exists, left untouched (consistent with issues #3/#4)."
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-063-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "1.5.2",
+  "git_head": "9ad18719b57a0d2af1af54225a63a33b70a48b67",
+  "run_key": "sha256:issue5-subtask1.5.2-9ad1871-crash-recovery-integration-test",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:30:00Z",
+  "commit": "2156b0cf3c957aba19a7a1413489616759928e60"
+}
