@@ -1,0 +1,40 @@
+{
+  "subtask": "2a.1.4",
+  "criteria": [
+    {
+      "id": "AC1",
+      "requirement": "Every version-pointer CAS is logged to the WAL before being applied",
+      "covered_by": ["TestVersionCASWAL/wal_before_apply_ordering", "walCAS implementation (WAL append precedes CompareAndSwapCurrentVersion call, structurally via wal.AppendAndApply)"]
+    },
+    {
+      "id": "AC2",
+      "requirement": "WAL record precedes pointer visibility (test spec, -race)",
+      "covered_by": ["TestVersionCASWAL/wal_before_apply_ordering: hook observes WAL durable while cat.Get(fileID).CurrentVersion still old"]
+    },
+    {
+      "id": "AC3",
+      "requirement": "Crash-inject mid-CAS; recovery reconstructs a valid pointer",
+      "covered_by": ["TestVersionCASWAL/crash_mid_cas_torn_record_discarded: torn WAL tail discarded, recovered CurrentVersion == last valid committed version", "TestVersionCASWAL/crash_after_durable_cas_recovery_applies_it: fully-durable record recovered/applied"]
+    },
+    {
+      "id": "AC4",
+      "requirement": "No lost updates / no doomed WAL records for losing CAS attempts",
+      "covered_by": ["walCAS design: re-verify expected under commit lock BEFORE any WAL write; losing attempts never touch the WAL", "TestCurrentVersionCAS (existing, 2a.1.2) still green with new w *wal.Writer param threaded through"]
+    },
+    {
+      "id": "AC5",
+      "requirement": "No regression on 2a.1.1 (VersionWriter)/2a.1.2 (CAS)/2a.1.3 (Snapshot/Read)",
+      "covered_by": ["go test ./engine/mvcc/... -race -count=1 (all existing tests, TestVersionWriter, TestCurrentVersionCAS, TestSnapshotRead, TestSnapshotReadNoVersionCommitted)"]
+    },
+    {
+      "id": "AC6",
+      "requirement": "No regression on engine/catalog RecoverFromWAL / existing catalog tests",
+      "covered_by": ["go test ./engine/catalog/... -race -count=1"]
+    },
+    {
+      "id": "AC7",
+      "requirement": "Build/vet/gofmt clean",
+      "covered_by": ["go build ./...", "go vet ./...", "gofmt -l ."]
+    }
+  ]
+}

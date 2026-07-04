@@ -1,0 +1,28 @@
+{
+  "subtask": "2a.1.4",
+  "issue": 6,
+  "files_to_modify": [
+    "engine/mvcc/write.go",
+    "engine/mvcc/write_test.go",
+    "engine/mvcc/read_test.go"
+  ],
+  "files_not_modified_but_relevant": [
+    "engine/catalog/catalog.go (CompareAndSwapCurrentVersion — signature unchanged, called only from the new commit-lock-serialized path)",
+    "engine/catalog/recovery.go (RecoverFromWAL — reused as-is, no version-CAS-specific record type needed)",
+    "engine/wal/record.go (RecordCatalogPut/NewCatalogPutRecord — reused as-is)",
+    "engine/wal/writer.go (AppendAndApply — reused as-is)"
+  ],
+  "breaking_changes": [
+    "VersionWriter.CommitVersion gains a new *wal.Writer parameter (2nd positional arg): CommitVersion(cat *catalog.Catalog, w *wal.Writer, fileID uint64, data []byte) (uint64, error). Anticipated by 2a.1.2's verification handoff (CommitVersion explicitly not WAL-safe / not to be used by real callers until this subtask)."
+  ],
+  "callers_updated": [
+    "engine/mvcc/write_test.go: TestCurrentVersionCAS (adds wal.Writer to test fixture)",
+    "engine/mvcc/read_test.go: TestSnapshotRead (adds wal.Writer to test fixture)"
+  ],
+  "no_production_callers_yet": "CommitVersion has no real (non-test) callers in the repo yet; this subtask closes the WAL-safety gap so a future caller-wiring subtask CAN use it safely.",
+  "regression_risk_areas": [
+    "engine/mvcc/read.go Snapshot/Read path (2a.1.3) — depends only on cat.Get + VersionPath, unaffected by CommitVersion's internal WAL wiring",
+    "engine/catalog RecoverFromWAL / ContentStore Create/Append — untouched, but new WAL records now also flow through the same WAL directory when CommitVersion is used against a real wal.Writer; no shared state with ContentStore's own WAL usage beyond the Writer type itself",
+    "engine/mvcc/write.go WriteVersion / scanLatestVersion — untouched"
+  ]
+}

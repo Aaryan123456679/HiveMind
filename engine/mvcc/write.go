@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
+	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
 
 // contentDirName is the fixed subdirectory (relative to VersionWriter's root) that
@@ -49,6 +50,26 @@ type VersionWriter struct {
 	// "unrelated files never contend on the same lock" convention (see
 	// engine/catalog/content.go's ContentStore doc comment on independent stripes).
 	states sync.Map
+
+	// commitLocks serializes CommitVersion's WAL-log-then-CAS critical section
+	// (see walCAS below) per fileID, keyed by fileID (uint64), values are
+	// *sync.Mutex, lazily created via LoadOrStore on first use — same shape as
+	// states above, but a distinct sync.Map: states only guards WriteVersion's
+	// "determine next N" numbering step, while commitLocks guards the separate
+	// "verify CompareAndSwapCurrentVersion's expected still holds -> WAL-log ->
+	// apply the CAS" step that follows it. Holding commitLocks across that
+	// entire step is what lets CommitVersion safely reuse the plain
+	// RecordCatalogPut WAL record type (via wal.NewCatalogPutRecord) without
+	// ever logging a record for a CAS attempt that will not actually be
+	// applied: because Catalog.CompareAndSwapCurrentVersion has no other
+	// caller in this codebase, serializing every attempt for a given fileID
+	// through this lock guarantees that once a goroutine has re-verified
+	// `expected` under it, no concurrent goroutine can have raced it before
+	// the CAS call inside apply runs. See CommitVersion's and walCAS's doc
+	// comments below, and docs/LLD/wal.md's WAL-before-apply invariant /
+	// docs/LLD/mvcc.md's "every version-pointer CAS ... goes through the WAL
+	// first".
+	commitLocks sync.Map
 }
 
 // NewVersionWriter creates (if necessary) the "content" directory under root and
@@ -111,6 +132,21 @@ func (vw *VersionWriter) WriteVersion(fileID uint64, data []byte) (uint64, error
 // started, never a blind overwrite. cat must already hold a CatalogRecord for fileID
 // (e.g. from Catalog.Put) before CommitVersion is called.
 //
+// WAL-before-apply (subtask 2a.1.4): the CAS itself is now a catalog mutation logged
+// to w, the shared WAL, BEFORE it becomes visible in cat, matching docs/LLD/wal.md's
+// invariant ("every mutation to the catalog ... must be logged to the WAL before it
+// is applied in memory or on disk") and docs/LLD/mvcc.md's "every version-pointer CAS
+// is a catalog mutation and therefore goes through the WAL first". This reuses the
+// same wal.AppendAndApply + wal.NewCatalogPutRecord primitives engine/catalog/content.go's
+// Create/Append already use, structurally guaranteeing the WAL record is durable
+// (fsynced) before the swap is applied — see walCAS below for how a losing CAS
+// attempt is prevented from ever reaching the WAL in the first place, so that a crash
+// between the WAL append and the swap's visibility can always be recovered cleanly by
+// catalog.RecoverFromWAL, which replays RecordCatalogPut records unconditionally in
+// on-disk order (no new WAL record type is needed: once durable, a version-pointer CAS
+// is just "this fileID's CatalogRecord is now X", indistinguishable from any other
+// catalog Put).
+//
 // Concurrency / "no lost updates" contract for N concurrent CommitVersion calls on
 // the SAME fileID:
 //
@@ -148,7 +184,19 @@ func (vw *VersionWriter) WriteVersion(fileID uint64, data []byte) (uint64, error
 //     durably as some retained version file (whether or not that particular file ends
 //     up referenced by CurrentVersion), and CurrentVersion always reflects the
 //     temporally last one to actually complete its full write+CAS sequence.
-func (vw *VersionWriter) CommitVersion(cat *catalog.Catalog, fileID uint64, data []byte) (uint64, error) {
+func (vw *VersionWriter) CommitVersion(cat *catalog.Catalog, w *wal.Writer, fileID uint64, data []byte) (uint64, error) {
+	return vw.commitVersionWithHook(cat, w, fileID, data, nil)
+}
+
+// commitVersionWithHook is CommitVersion's real implementation, with an internal
+// test-only seam: afterWALBeforeApply, when non-nil, runs after the version-pointer
+// CAS's WAL record has been durably appended but strictly before
+// Catalog.CompareAndSwapCurrentVersion makes the swap visible. This lets
+// write_test.go observe (without duplicating this wiring) that the WAL record
+// precedes catalog visibility, the same before/after observation technique
+// engine/catalog/content_test.go's TestContentCreate and engine/mvcc/read_test.go's
+// TestSnapshotRead already use.
+func (vw *VersionWriter) commitVersionWithHook(cat *catalog.Catalog, w *wal.Writer, fileID uint64, data []byte, afterWALBeforeApply func()) (uint64, error) {
 	for {
 		rec, err := cat.Get(fileID)
 		if err != nil {
@@ -161,18 +209,102 @@ func (vw *VersionWriter) CommitVersion(cat *catalog.Catalog, fileID uint64, data
 			return 0, fmt.Errorf("mvcc: commit version: writing version file for fileID %d: %w", fileID, err)
 		}
 
-		ok, _, err := cat.CompareAndSwapCurrentVersion(fileID, expected, version)
+		committed, err := vw.walCAS(cat, w, fileID, expected, version, afterWALBeforeApply)
 		if err != nil {
-			return 0, fmt.Errorf("mvcc: commit version: CAS for fileID %d: %w", fileID, err)
+			return 0, fmt.Errorf("mvcc: commit version: WAL-logged CAS for fileID %d: %w", fileID, err)
 		}
-		if ok {
+		if committed {
 			return version, nil
 		}
 		// Lost the race: some other CommitVersion call's CAS already advanced
-		// CurrentVersion past `expected`. Loop and retry against the winner's
-		// current state with a fresh version file, rather than corrupting state
-		// or silently dropping this call's write.
+		// CurrentVersion past `expected`, detected by walCAS before anything was
+		// logged to the WAL. Loop and retry against the winner's current state
+		// with a fresh version file, rather than corrupting state or silently
+		// dropping this call's write.
 	}
+}
+
+// walCAS performs the WAL-before-apply step of a single CommitVersion attempt for
+// fileID: swapping CurrentVersion from expected to newVersion, but only after
+// durably logging that swap to w. It returns (true, nil) if the swap was logged and
+// applied, or (false, nil) if the attempt lost the race before ever touching the WAL
+// (the caller should retry with a fresh version file), or a non-nil error for any
+// other failure.
+//
+// This is the piece that makes reusing the plain RecordCatalogPut WAL record type
+// (rather than inventing a version-CAS-specific one) correct: unlike
+// engine/catalog/content.go's Create/Append, whose "apply" (cat.Put) always succeeds
+// once the WAL record is durable, Catalog.CompareAndSwapCurrentVersion can lose a
+// race. Logging first and discovering the loss only afterward (inside apply) would
+// leave a durable WAL record describing a mutation that was never actually applied
+// live — and because catalog.RecoverFromWAL replays CatalogPut records
+// unconditionally (last write wins, no CAS re-validation on replay), a crash landing
+// between that "doomed" record and the real winning attempt's later record could
+// cause recovery to reconstruct the losing/stale value instead of the intended final
+// one.
+//
+// walCAS closes that gap by acquiring fileID's commitLocks entry and holding it across
+// the ENTIRE remaining sequence: re-reading cat.Get to re-verify expected still holds,
+// WAL-logging the resulting record via wal.AppendAndApply, and only then calling
+// Catalog.CompareAndSwapCurrentVersion inside apply. Because
+// Catalog.CompareAndSwapCurrentVersion has no other caller in this codebase, this lock
+// serializes every attempt for fileID: by the time a goroutine has re-verified
+// expected and decided to log, no concurrent goroutine can advance CurrentVersion out
+// from under it before the CAS call inside apply runs, so that CAS is guaranteed to
+// succeed. A stale `expected` is therefore always caught by the re-check BEFORE any
+// WAL write happens, not after.
+func (vw *VersionWriter) walCAS(cat *catalog.Catalog, w *wal.Writer, fileID, expected, newVersion uint64, afterWALBeforeApply func()) (bool, error) {
+	lockAny, _ := vw.commitLocks.LoadOrStore(fileID, &sync.Mutex{})
+	lock := lockAny.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	rec, err := cat.Get(fileID)
+	if err != nil {
+		return false, fmt.Errorf("re-reading catalog record for fileID %d: %w", fileID, err)
+	}
+	if rec.CurrentVersion != expected {
+		// Lost the race before ever touching the WAL: some other CommitVersion
+		// call already advanced CurrentVersion past `expected` while this call
+		// was writing its version file. Nothing has been logged, so there is
+		// nothing to undo; the caller retries with a fresh version file.
+		return false, nil
+	}
+
+	rec.CurrentVersion = newVersion
+	encoded, err := rec.Encode()
+	if err != nil {
+		return false, fmt.Errorf("encoding updated catalog record for fileID %d: %w", fileID, err)
+	}
+
+	walRec := wal.NewCatalogPutRecord(fileID, encoded)
+
+	_, err = wal.AppendAndApply(w, walRec, func() error {
+		if afterWALBeforeApply != nil {
+			afterWALBeforeApply()
+		}
+
+		ok, _, casErr := cat.CompareAndSwapCurrentVersion(fileID, expected, newVersion)
+		if casErr != nil {
+			return fmt.Errorf("applying CAS for fileID %d: %w", fileID, casErr)
+		}
+		if !ok {
+			// Should be unreachable: this goroutine is the only one that can be
+			// inside this fileID's commitLocks critical section right now, and
+			// it just re-verified expected==rec.CurrentVersion above under the
+			// same lock, so no other CAS can have intervened. Surfaced as a
+			// hard error (not silently retried here) since it would indicate a
+			// real synchronization bug — e.g. something calling
+			// Catalog.CompareAndSwapCurrentVersion directly, outside
+			// CommitVersion/walCAS.
+			return fmt.Errorf("internal inconsistency: CAS refused for fileID %d despite matching expected %d under commit lock", fileID, expected)
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // writeVersionFile durably writes data to fileID's version N path. It writes a

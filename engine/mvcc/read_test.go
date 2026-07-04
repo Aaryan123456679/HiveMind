@@ -17,6 +17,7 @@ func TestSnapshotRead(t *testing.T) {
 		t.Fatalf("NewVersionWriter: %v", err)
 	}
 	cat := newTestCatalog(t)
+	w, _ := newTestWAL(t, dir)
 
 	const fileID = uint64(55)
 	if err := cat.Put(catalog.CatalogRecord{
@@ -28,7 +29,7 @@ func TestSnapshotRead(t *testing.T) {
 	}
 
 	v1Content := []byte("version-one-content")
-	v1, err := vw.CommitVersion(cat, fileID, v1Content)
+	v1, err := vw.CommitVersion(cat, w, fileID, v1Content)
 	if err != nil {
 		t.Fatalf("CommitVersion (v1): %v", err)
 	}
@@ -71,7 +72,7 @@ func TestSnapshotRead(t *testing.T) {
 	<-pausedAtRead
 
 	v2Content := []byte("version-two-content-committed-mid-read")
-	v2, err := vw.CommitVersion(cat, fileID, v2Content)
+	v2, err := vw.CommitVersion(cat, w, fileID, v2Content)
 	if err != nil {
 		t.Fatalf("CommitVersion (v2, concurrent with paused read): %v", err)
 	}

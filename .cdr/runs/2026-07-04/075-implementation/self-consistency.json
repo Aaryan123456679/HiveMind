@@ -1,0 +1,14 @@
+{
+  "subtask": "2a.1.4",
+  "checks": {
+    "go_build": "pass (go build ./... from engine/ module dir)",
+    "go_vet": "pass (go vet ./...)",
+    "gofmt": "pass (gofmt -l . empty output from engine/ module dir)",
+    "mvcc_race_v_count1": "pass — go test ./mvcc/... -race -v -count=1: TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter (all subtests), TestCurrentVersionCAS, TestVersionCASWAL (all 3 subtests) all PASS",
+    "TestVersionCASWAL_count5": "pass — go test ./mvcc/... -race -run TestVersionCASWAL -count=5, 0 failures",
+    "TestCurrentVersionCAS_count5": "pass — go test ./mvcc/... -race -run TestCurrentVersionCAS -count=5, 0 failures (existing 2a.1.2 test still green with new w *wal.Writer param threaded through)",
+    "regression_catalog_wal_btree": "pass — go test ./catalog/... ./wal/... ./btree/... -race -count=1, no failures (RecoverFromWAL/AppendAndApply untouched by this subtask, reused as-is)"
+  },
+  "matrix_coverage": "validation-matrix.json AC1-AC7 all covered by the above test runs",
+  "not_done_by_this_run": "self-verification (I4) — /cdr:verify must independently verify this subtask"
+}
