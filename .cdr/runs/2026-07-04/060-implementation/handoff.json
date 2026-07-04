@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-060-implementation",
+  "subtask": "task-1.5.1",
+  "status": "completed",
+  "commit": "9b8e283",
+  "commit_full": "9b8e2831ecb64a2a45a935bd8143f9f758052228",
+  "files_touched": [
+    "engine/integration_test.go (new)",
+    ".cdr/index/file.jsonl (append: engine/integration_test.go entry)",
+    ".cdr/index/task.jsonl (append: task-1.5.1 implemented entry)"
+  ],
+  "test_added": "TestStorageCoreIntegration in engine/integration_test.go (package engine_test)",
+  "verify_command": "cd engine && go test ./... -run TestStorageCoreIntegration -race -v",
+  "full_suite_command": "cd engine && go test ./... -race -count=1",
+  "key_api_pointers": {
+    "catalog_open": "engine/catalog/file.go:92 catalog.Open(path) *FileManager",
+    "catalog_new": "engine/catalog/catalog.go:141 catalog.NewCatalog(fm) *Catalog",
+    "id_allocator": "engine/catalog/idalloc.go:77 catalog.NewIDAllocator(fm), Next() uint64",
+    "content_store": "engine/catalog/content.go:90,124,189,235 OpenContentStore/Create/Read/Append",
+    "wal_writer": "engine/wal/writer.go:85 wal.OpenWriter(dir, maxSegmentBytes)",
+    "wal_append_apply": "engine/wal/record.go:352 wal.AppendAndApply(w, rec, apply)",
+    "btree_insert_lookup_scan": "engine/btree/insert.go:141 Insert, engine/btree/lookup.go:135 Lookup, engine/btree/scan.go:41 PrefixScan"
+  },
+  "gaps_found": [],
+  "notes": "No new production code. One bug found and fixed during implementation (self-consistency.json): stale slice pointers from a reallocating append; fixed by pre-reserving capacity before taking &files[i] pointers. Do NOT self-verify (I4) -- handing off to /cdr:verify."
+}

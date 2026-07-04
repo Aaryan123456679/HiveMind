@@ -1,0 +1,15 @@
+{
+  "test": "TestStorageCoreIntegration",
+  "file": "engine/integration_test.go",
+  "rows": [
+    {"criterion": "create several topic files across catalog+btree+content", "covered_by": "step 2: loop allocating fileID, ContentStore.Create, btree.Insert for N files under 2 topic prefixes"},
+    {"criterion": "append to files", "covered_by": "step 3: ContentStore.Append on a subset, including one engineered to cross defaultSplitThresholdBytes"},
+    {"criterion": "look up by path", "covered_by": "step 4 (PrefixScan) and step 6 (point btree.Lookup) for every inserted path"},
+    {"criterion": "read back content, correct end-to-end", "covered_by": "step 5: ContentStore.Read byte-for-byte equality against expected content post-append; Catalog.Get SizeBytes cross-check"},
+    {"criterion": "single-threaded", "covered_by": "entire test runs in one goroutine, no t.Parallel(), no goroutines spawned"},
+    {"criterion": "consistency across all four modules", "covered_by": "step 5 cross-checks btree-resolved fileID -> catalog record SizeBytes -> actual content length -> ContentStore.Read bytes, all agreeing"},
+    {"criterion": "negative/absent-path cases", "covered_by": "step 7: PrefixScan on nonexistent prefix returns empty; Lookup on nonexistent path returns found=false"},
+    {"criterion": "race-clean", "covered_by": "go test -race (single-threaded so no expected data races; validates no accidental shared mutable state issues)"}
+  ],
+  "gaps_found": []
+}
