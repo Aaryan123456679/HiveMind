@@ -1,0 +1,30 @@
+{
+  "subtask": "1.4.4",
+  "commit": "1caf62e",
+  "issue": "#4 (last subtask; close on verification)",
+  "new_production_code": true,
+  "new_production_code_detail": "engine/catalog/recovery.go (NEW FILE): RecoverFromWAL(cat *Catalog, walDir string) error. Not pure test scaffolding -- flagged clearly per instructions. Closes a gap explicitly pre-documented in catalog.go's Catalog doc comment (empty index on load) using the already-verified wal.Replay entrypoint (engine/wal, issue #3). No changes to engine/wal itself.",
+  "files_changed": [
+    "engine/catalog/recovery.go (new, +79 lines)",
+    "engine/catalog/content_test.go (+134 lines: openGenContentStore helper + TestContentDurabilityRestart)"
+  ],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-04/057-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-04/057-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-04/057-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-04/057-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-04/057-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-04/057-implementation/self-consistency.json",
+    "new_helper": "engine/catalog/recovery.go:RecoverFromWAL",
+    "new_test": "engine/catalog/content_test.go:TestContentDurabilityRestart",
+    "new_test_helper": "engine/catalog/content_test.go:openGenContentStore"
+  },
+  "verification_scope_notes": [
+    "Verify RecoverFromWAL's correctness/completeness as a general-purpose reconstruction mechanism, not just that this one test passes -- it re-applies CatalogPut/CatalogDelete via existing Catalog.Put/Delete (delete-then-reinsert semantics on an initially-empty index), and silently skips BTree record types (by design, scoped to catalog reconstruction only) and tolerates ErrNotFound on replayed deletes (by design, defensive).",
+    "Confirm no engine/wal changes were needed (architecture-discovery.md documents why: wal.Replay's existing API/semantics fully sufficed).",
+    "Confirm test doesn't leak goroutines/fds across the two generations (gen1 handles explicitly closed before gen2 opens, verified via -race clean run).",
+    "Check whether closing issue #4 is warranted once this passes verification -- this was flagged as the last subtask."
+  ],
+  "self_consistency_summary": "gofmt/go vet/go build clean; go test ./catalog/... -run TestContentDurabilityRestart -race -v -count=1 PASS; full engine/catalog package -race -v -count=1 PASS (no regressions on 1.4.1/1.4.2/1.4.3); go test ./... (whole engine module) PASS.",
+  "no_self_verification": true
+}

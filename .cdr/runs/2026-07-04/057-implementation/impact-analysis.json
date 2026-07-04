@@ -1,0 +1,28 @@
+{
+  "subtask": "1.4.4",
+  "new_files": [
+    {
+      "path": "engine/catalog/recovery.go",
+      "reason": "No existing WAL-replay-into-Catalog reconstruction mechanism exists (confirmed via grep + catalog.go's own documented 'Known gap'). Minimal RecoverFromWAL(cat *Catalog, walDir string) error helper: wraps wal.Replay, decodes RecordCatalogPut/RecordCatalogDelete payloads via TypedRecord.AsCatalogPut/AsCatalogDelete + catalog.Decode, re-applies via cat.Put/cat.Delete. This is new production surface area beyond pure test scaffolding."
+    }
+  ],
+  "modified_files": [
+    {
+      "path": "engine/catalog/content_test.go",
+      "reason": "Add TestContentDurabilityRestart plus a helper to reopen FileManager+Catalog+wal.Writer+ContentStore against the same on-disk root, driving RecoverFromWAL before reading."
+    }
+  ],
+  "unmodified_but_read": [
+    "engine/catalog/content.go",
+    "engine/catalog/catalog.go",
+    "engine/catalog/file.go",
+    "engine/catalog/record.go",
+    "engine/wal/recovery.go",
+    "engine/wal/record.go",
+    "engine/wal/writer.go",
+    "docs/LLD/catalog.md",
+    "docs/LLD/wal.md"
+  ],
+  "risk": "Low. RecoverFromWAL only reads WAL + re-Puts records into a fresh empty Catalog/FileManager pair opened by the test against the same root; it does not touch Create/Read/Append (1.4.1-1.4.3, already verified) and does not change wal package (already verified, issue #3). Catalog.Put's delete-then-reinsert semantics mean replayed records land on fresh page slots (old slots orphaned/unreachable in the new in-memory index, but their space was already reclaimable-on-tombstone in the old process anyway) -- acceptable for this subtask's read-correctness acceptance criterion; no compaction claim is made.",
+  "regressions_checked": ["TestContentCreate", "TestContentRead", "TestContentAppend", "append concurrency/race tests from 1.4.3 fix"]
+}

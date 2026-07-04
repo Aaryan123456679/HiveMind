@@ -1,0 +1,29 @@
+{
+  "subtask": "1.4.4",
+  "rows": [
+    {
+      "criterion": "Create then restart then Read returns Create's content",
+      "covered_by": "TestContentDurabilityRestart (single Create, no Append, restart, Read)"
+    },
+    {
+      "criterion": "Create + multiple Appends then restart then Read returns full accumulated content byte-for-byte",
+      "covered_by": "TestContentDurabilityRestart main path (Create + 2-3 Appends, restart, Read)"
+    },
+    {
+      "criterion": "Restart reconstructs Catalog index via WAL replay (not via any on-disk index that doesn't exist yet)",
+      "covered_by": "RecoverFromWAL called on a brand-new, empty-index Catalog; test would fail with ErrNotFound on Read if replay didn't repopulate the index"
+    },
+    {
+      "criterion": "-race clean",
+      "covered_by": "go test ./engine/catalog/... -run TestContentDurabilityRestart -race"
+    },
+    {
+      "criterion": "No regression on 1.4.1/1.4.2/1.4.3",
+      "covered_by": "go test ./engine/catalog/... -race -v -count=1 (full package run)"
+    },
+    {
+      "criterion": "engine/wal untouched / no gap found there",
+      "covered_by": "impact-analysis.json unmodified_but_read list; architecture-discovery.md conclusion"
+    }
+  ]
+}

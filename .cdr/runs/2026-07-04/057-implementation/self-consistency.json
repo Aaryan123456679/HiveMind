@@ -1,0 +1,13 @@
+{
+  "subtask": "1.4.4",
+  "checks": [
+    {"name": "gofmt -l engine/", "result": "clean (no output)"},
+    {"name": "go vet ./...", "result": "clean"},
+    {"name": "go build ./...", "result": "clean"},
+    {"name": "go test ./catalog/... -run TestContentDurabilityRestart -race -v -count=1", "result": "PASS"},
+    {"name": "go test ./catalog/... -race -v -count=1 (full package, regression)", "result": "PASS, all prior tests (TestContentCreate, TestContentRead, TestContentAppend, TestContentAppendConcurrentSameFileID, TestCatalogFileManager*, TestFileIDAllocator*, TestSlottedPage*, TestRecordEncodeDecode*, etc.) still pass"},
+    {"name": "go test ./... (whole engine module)", "result": "PASS (btree, catalog, wal all ok; graph/loadtest/mvcc/rpc/split have no test files, unaffected)"}
+  ],
+  "validation_matrix_covered": true,
+  "note": "Self-consistency only: build/vet/gofmt/test-green internal sanity check, per I4 this is NOT verification. /cdr:verify must independently assess."
+}
