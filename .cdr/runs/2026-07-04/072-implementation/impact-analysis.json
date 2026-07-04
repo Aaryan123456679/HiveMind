@@ -1,0 +1,17 @@
+{
+  "subtask": "2a.1.3",
+  "issue": 6,
+  "new_files": [
+    "engine/mvcc/read.go",
+    "engine/mvcc/read_test.go"
+  ],
+  "modified_files": [],
+  "modules_not_touched_and_why": {
+    "engine/catalog/content.go": "Phase-1 ContentStore.Read is single-version-only by design (1.4.2); this subtask's impacted-modules scope is engine/mvcc/read.go + read_test.go only, mirroring how 2a.1.1 added VersionWriter alongside ContentStore rather than modifying it.",
+    "engine/catalog/catalog.go": "Already exposes Catalog.Get (reads CurrentVersion) and CompareAndSwapCurrentVersion (2a.1.2, verified); no new catalog API needed for a snapshot read.",
+    "engine/mvcc/write.go": "Already exposes VersionWriter.VersionPath and CommitVersion (2a.1.1/2a.1.2, verified); read.go only calls existing exported methods, no changes needed."
+  },
+  "downstream_consumers": [],
+  "risk": "low — additive-only new file, no changes to already-verified 2a.1.1/2a.1.2 code paths; read-side has no locking requirement per the immutable-version-file reasoning documented in architecture-discovery.md.",
+  "regression_surface": "engine/mvcc/write_test.go (TestVersionWriter, TestCurrentVersionCAS) must remain green — untouched by this change."
+}

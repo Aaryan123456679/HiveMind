@@ -1,0 +1,30 @@
+{
+  "subtask": "2a.1.3",
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "A reader that starts before a concurrent write commits continues to see its originally-snapshotted version for the entire read, even after the pointer advances.",
+      "covered_by": "TestSnapshotRead's paused-read/concurrent-CommitVersion interleaving: asserts Read() (resumed after v2 is committed) still returns v1's content."
+    },
+    {
+      "id": "AC2",
+      "description": "Snapshot capture reflects the pointer value at request start (not lazily re-read later).",
+      "covered_by": "TestSnapshotRead asserts Snapshot.Version() == 1 even after v2 has been committed."
+    },
+    {
+      "id": "AC3",
+      "description": "Fresh snapshots taken AFTER a commit see the new version (snapshotting isn't a permanent global freeze).",
+      "covered_by": "TestSnapshotRead's follow-up SnapshotRead call after the v2 commit, asserted to return v2 content."
+    },
+    {
+      "id": "AC4",
+      "description": "Test spec command passes.",
+      "covered_by": "go test ./engine/mvcc/... -run TestSnapshotRead -race"
+    },
+    {
+      "id": "AC5",
+      "description": "No regression on already-verified 2a.1.1/2a.1.2 behavior.",
+      "covered_by": "go test ./engine/mvcc/... -race -count=1 (full package) — TestVersionWriter, TestCurrentVersionCAS unchanged and green."
+    }
+  ]
+}

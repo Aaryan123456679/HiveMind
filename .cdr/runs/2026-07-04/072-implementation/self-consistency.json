@@ -1,0 +1,11 @@
+{
+  "subtask": "2a.1.3",
+  "checks": [
+    {"check": "gofmt -l engine/mvcc/read.go engine/mvcc/read_test.go", "result": "clean, no output"},
+    {"check": "go vet ./... (from engine/)", "result": "clean"},
+    {"check": "go build ./... (from engine/)", "result": "clean"},
+    {"check": "go test ./engine/mvcc/... -race -v -count=1", "result": "PASS — TestSnapshotRead, TestSnapshotReadNoVersionCommitted (new), TestVersionWriter (sequential/concurrent/cold_start_reopen/distinct_fileIDs_do_not_interfere), TestCurrentVersionCAS (2a.1.1/2a.1.2, unchanged) all green, no regressions"},
+    {"check": "validation-matrix.json coverage", "result": "AC1-AC5 all covered by TestSnapshotRead + TestSnapshotReadNoVersionCommitted + full-package race run"}
+  ],
+  "note": "This is internal sanity only, not verification (I4) — /cdr:verify must independently verify this subtask."
+}
