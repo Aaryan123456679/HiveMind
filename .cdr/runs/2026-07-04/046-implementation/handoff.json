@@ -2,7 +2,7 @@
   "run_id": "2026-07-04-046-implementation",
   "subtask": "1.4.1",
   "status": "completed",
-  "commit": "PENDING_POST_COMMIT_SHA",
+  "commit": "e52ce5343a8884b05e51ded4706f27feaf9d1728",
   "deliverable": "TestContentCreate (test spec's literal required test name) plus TestContentCreateInvalidFileID, implementing engine/catalog/content.go's ContentStore create/write path with WAL-before-apply ordering.",
   "files_changed": [
     "engine/catalog/content.go",
