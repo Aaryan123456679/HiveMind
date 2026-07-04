@@ -2,6 +2,7 @@ package wal
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -173,4 +174,148 @@ func TestOpenWriterResumesExistingSegments(t *testing.T) {
 	if !bytes.Equal(records[1], second) {
 		t.Errorf("record 1 = %q, want %q", records[1], second)
 	}
+}
+
+// TestOpenWriterResumeTornTailDiscardsAndTruncates closes the gap flagged in
+// subtask 1.3.1's verification (regression.jsonl): OpenWriter's resume path
+// previously did not validate a resumed segment's tail for torn/incomplete
+// records at all. It simulates a crash mid-Append by hand-truncating a
+// segment file so its last record is incomplete (both the
+// truncated-header and truncated-payload shapes), then asserts:
+//   - OpenWriter does not panic or error on the resumed, torn segment;
+//   - the torn tail is physically discarded (the file is truncated to the
+//     last valid record boundary) rather than left in place to corrupt a
+//     later append;
+//   - Writer.Offset() reports the post-truncation size, and a subsequent
+//     Append lands immediately after the last valid record, producing a
+//     segment that parses cleanly end-to-end with no torn/garbage bytes in
+//     the middle.
+func TestOpenWriterResumeTornTailDiscardsAndTruncates(t *testing.T) {
+	t.Run("torn payload (header intact, payload cut short)", func(t *testing.T) {
+		dir := t.TempDir()
+
+		const maxSegmentBytes = 4096
+		w, err := OpenWriter(dir, maxSegmentBytes)
+		if err != nil {
+			t.Fatalf("OpenWriter: %v", err)
+		}
+		first := []byte("valid-record-before-crash")
+		if _, err := w.Append(first); err != nil {
+			t.Fatalf("Append(first): %v", err)
+		}
+		validSize := w.Offset()
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		// Simulate a crash mid-Append: append a header claiming a payload
+		// that is never fully written (only part of the declared payload
+		// bytes make it to disk before the "crash").
+		path := segmentPath(dir, 0)
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Fatalf("OpenFile: %v", err)
+		}
+		var header [recordHeaderSize]byte
+		binary.LittleEndian.PutUint32(header[offRecordLength:], 100) // claims 100 payload bytes
+		binary.LittleEndian.PutUint32(header[offRecordCRC:], 0xDEADBEEF)
+		if _, err := f.Write(header[:]); err != nil {
+			t.Fatalf("writing torn header: %v", err)
+		}
+		if _, err := f.Write([]byte("only-a-few-bytes")); err != nil { // far fewer than 100
+			t.Fatalf("writing torn payload: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("Close (torn writer): %v", err)
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat: %v", err)
+		}
+		if info.Size() <= validSize {
+			t.Fatalf("test setup did not actually grow the file past the valid record: size=%d, validSize=%d", info.Size(), validSize)
+		}
+
+		w2, err := OpenWriter(dir, maxSegmentBytes)
+		if err != nil {
+			t.Fatalf("OpenWriter on torn segment: got error %v, want a clean resume with the torn tail discarded", err)
+		}
+		defer w2.Close()
+
+		if got := w2.Offset(); got != validSize {
+			t.Fatalf("Offset() after resuming torn segment = %d, want %d (post-truncation size)", got, validSize)
+		}
+
+		info2, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat after resume: %v", err)
+		}
+		if info2.Size() != validSize {
+			t.Fatalf("segment file size after resume = %d, want %d (torn tail must be physically truncated away)", info2.Size(), validSize)
+		}
+
+		second := []byte("valid-record-after-resume")
+		if _, err := w2.Append(second); err != nil {
+			t.Fatalf("Append(second) after resume: %v", err)
+		}
+
+		records, err := ReadSegment(path)
+		if err != nil {
+			t.Fatalf("ReadSegment after resume+append: %v (the torn tail must not have corrupted subsequent parsing)", err)
+		}
+		if len(records) != 2 || !bytes.Equal(records[0], first) || !bytes.Equal(records[1], second) {
+			t.Fatalf("segment contents after resume = %v, want exactly [%q, %q]", records, first, second)
+		}
+	})
+
+	t.Run("torn header (fewer than recordHeaderSize bytes trailing)", func(t *testing.T) {
+		dir := t.TempDir()
+
+		const maxSegmentBytes = 4096
+		w, err := OpenWriter(dir, maxSegmentBytes)
+		if err != nil {
+			t.Fatalf("OpenWriter: %v", err)
+		}
+		first := []byte("valid-record-before-crash")
+		if _, err := w.Append(first); err != nil {
+			t.Fatalf("Append(first): %v", err)
+		}
+		validSize := w.Offset()
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		path := segmentPath(dir, 0)
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Fatalf("OpenFile: %v", err)
+		}
+		// Crash happened while writing the header itself: only 3 of the 8
+		// header bytes made it to disk.
+		if _, err := f.Write([]byte{0x01, 0x02, 0x03}); err != nil {
+			t.Fatalf("writing torn header bytes: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("Close (torn writer): %v", err)
+		}
+
+		w2, err := OpenWriter(dir, maxSegmentBytes)
+		if err != nil {
+			t.Fatalf("OpenWriter on torn-header segment: got error %v, want a clean resume with the torn header discarded", err)
+		}
+		defer w2.Close()
+
+		if got := w2.Offset(); got != validSize {
+			t.Fatalf("Offset() after resuming torn-header segment = %d, want %d", got, validSize)
+		}
+
+		records, err := ReadSegment(path)
+		if err != nil {
+			t.Fatalf("ReadSegment after resume: %v", err)
+		}
+		if len(records) != 1 || !bytes.Equal(records[0], first) {
+			t.Fatalf("segment contents after resume = %v, want exactly [%q]", records, first)
+		}
+	})
 }

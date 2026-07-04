@@ -1,0 +1,30 @@
+{
+  "run_id": "2026-07-04-043-implementation",
+  "subtask": "1.3.5",
+  "status": "completed",
+  "commit": "PENDING_POST_COMMIT_SHA",
+  "deliverable": "TestCrashInjectionRecovery (issue #3's literal required test name) plus 4 supporting new tests, closing all 4 orchestrator-flagged deferred gaps (a)-(d) from 1.3.1/1.3.2/1.3.4's verifications.",
+  "files_changed": [
+    "engine/wal/writer.go",
+    "engine/wal/recovery.go",
+    "engine/wal/writer_test.go",
+    "engine/wal/recovery_test.go",
+    "engine/wal/crash_subprocess_test.go"
+  ],
+  "gaps_closed": {
+    "a": "OpenWriter's resume path now reads+validates the resumed segment via a new shared parseSegmentRecords helper, truncating a torn tail or failing closed on genuine CRC corruption, before reopening for append. Test: engine/wal/writer_test.go:TestOpenWriterResumeTornTailDiscardsAndTruncates.",
+    "b": "engine/wal/crash_subprocess_test.go:TestFsyncDurabilitySubprocessCrash — subprocess re-exec + self-SIGKILL immediately after Append returns; parent process re-reads from a separate process afterward. Documented limitation: proves absence of in-Go/process-local buffering, not physical-disk-level fsync durability (would need power-loss/VM fault injection).",
+    "c": "engine/wal/recovery_test.go:TestReplayCRCCorruption — flips one payload byte mid-log; Replay returns a hard CRC error at exactly that record, having applied all prior records. Also fixed a real bug found along the way: Replay previously discarded already-parsed valid records when readSegmentFrom returned any error, instead of applying them first.",
+    "d": "Added Writer.Offset() int64 (minimal, mutex-guarded getter mirroring SegmentNum())."
+  },
+  "issue_acceptance_criteria_test": "engine/wal/recovery_test.go:TestCrashInjectionRecovery (torn payload at tail + torn header at tail subtests) — matches issue #3's literal required test name and acceptance criteria (torn record detected and discarded, recovery proceeds from last valid record, no panic).",
+  "defensive_addition_beyond_scope": "engine/wal/recovery_test.go:TestCrashInjectionRecoveryTornTailInNonLastSegmentErrors — Replay now hard-errors if a torn tail appears in a non-last segment (only the actively-written last segment can legitimately have one after a real crash).",
+  "self_consistency": ".cdr/runs/2026-07-04/043-implementation/self-consistency.json — go build/vet/gofmt clean; go test ./engine/wal/... -race -v -count=1 all green (22 top-level tests, 0 regressions); -count=3 full-suite and 5x standalone repeats of the subprocess-kill test all green (no flakiness observed).",
+  "not_done_here": [
+    "docs/LLD/wal.md LLD-sync (flagged as a compounding low-risk gap across 1.3.1-1.3.4's verifications; still open, explicitly out of this subtask's scope which is the crash-injection test itself)",
+    "No wiring of engine/wal into engine/catalog or engine/btree (still not in scope per docs/LLD/wal.md's 'not yet wired' status)"
+  ],
+  "verification_not_performed_by_this_agent": true,
+  "no_push_performed": true,
+  "next_step": "Hand off to /cdr:verify for subtask 1.3.5. If verification passes, issue #3 (all 5 subtasks: 1.3.1-1.3.5) should be closable."
+}

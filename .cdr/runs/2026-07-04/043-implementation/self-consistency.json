@@ -1,0 +1,15 @@
+{
+  "checks": [
+    {"cmd": "go build ./engine/...", "result": "pass", "output": "no output"},
+    {"cmd": "go vet ./engine/...", "result": "pass", "output": "no output"},
+    {"cmd": "gofmt -l engine/wal/*.go", "result": "pass", "output": "no files listed (all formatted)"},
+    {"cmd": "go test ./engine/wal/... -race -v -count=1", "result": "pass", "detail": "22 top-level tests (incl. 4 new: TestCrashInjectionRecovery [2 subtests], TestCrashInjectionRecoveryTornTailInNonLastSegmentErrors, TestReplayCRCCorruption, TestOpenWriterResumeTornTailDiscardsAndTruncates [2 subtests], TestFsyncDurabilitySubprocessCrash), all pass, 0 regressions vs. pre-change baseline (18 pre-existing tests re-verified passing before implementation began)."},
+    {"cmd": "go test ./engine/wal/... -race -count=3", "result": "pass", "detail": "full suite, 3 repetitions, all green"},
+    {"cmd": "go test ./engine/wal/... -race -run TestFsyncDurabilitySubprocessCrash -count=1 (x5 separate invocations)", "result": "pass", "detail": "5/5 green, ~1.25s each, no flakiness observed in the subprocess-kill test"},
+    {"cmd": "(cd engine && go build ./... && go vet ./...)", "result": "pass", "detail": "whole engine module (not just wal package) builds and vets clean"}
+  ],
+  "build_green": true,
+  "validation_matrix_covered": true,
+  "regressions_detected": false,
+  "note": "This is internal sanity only (I4 invariant): implementation agent does not self-verify against the acceptance criteria as a substitute for /cdr:verify."
+}

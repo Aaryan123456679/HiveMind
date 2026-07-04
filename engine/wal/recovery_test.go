@@ -2,6 +2,7 @@ package wal
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"strconv"
@@ -351,5 +352,275 @@ func TestRecoveryReplayInvalidRecordType(t *testing.T) {
 	err = Replay(dir2, func(TypedRecord) error { return nil })
 	if err == nil {
 		t.Fatalf("Replay (dir2): got nil error, want a hard error for an unrecognized RecordType byte (99)")
+	}
+}
+
+// TestCrashInjectionRecovery is the subtask's required test (go test
+// ./engine/wal/... -run TestCrashInjectionRecovery -race): it truncates the
+// tail of a segment mid-record (both the truncated-header and
+// truncated-payload shapes a real crash mid-Append can leave) and asserts
+// recovery, per the issue's literal acceptance criteria, "does not corrupt
+// recovery; the torn record is detected and discarded, and recovery
+// proceeds from the last valid record" — i.e. no panic, a clean (nil)
+// error from Replay, every valid pre-crash record applied exactly once and
+// in order, and nothing derived from the torn bytes ever reaching apply.
+func TestCrashInjectionRecovery(t *testing.T) {
+	t.Run("torn payload at tail", func(t *testing.T) {
+		dir := t.TempDir()
+
+		const maxSegmentBytes = 4096
+		w, err := OpenWriter(dir, maxSegmentBytes)
+		if err != nil {
+			t.Fatalf("OpenWriter: %v", err)
+		}
+
+		var want []TypedRecord
+		for i := 0; i < 10; i++ {
+			rec := NewCatalogPutRecord(uint64(i), []byte(fmt.Sprintf("value-%03d", i)))
+			if _, err := w.Append(rec.Encode()); err != nil {
+				t.Fatalf("Append(%d): %v", i, err)
+			}
+			want = append(want, rec)
+		}
+		validSize := w.Offset()
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		// Simulate a crash mid-Append onto the WAL's last segment: a header
+		// claiming a large payload, with only a handful of payload bytes
+		// actually on disk when the "crash" happened.
+		path := segmentPath(dir, 0)
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Fatalf("OpenFile: %v", err)
+		}
+		var header [recordHeaderSize]byte
+		binary.LittleEndian.PutUint32(header[offRecordLength:], 500)
+		binary.LittleEndian.PutUint32(header[offRecordCRC:], 0xCAFEBABE)
+		if _, err := f.Write(header[:]); err != nil {
+			t.Fatalf("writing torn header: %v", err)
+		}
+		if _, err := f.Write([]byte("partial-payload-bytes-only")); err != nil {
+			t.Fatalf("writing torn payload: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("Close (torn writer): %v", err)
+		}
+
+		var got []TypedRecord
+		err = Replay(dir, func(rec TypedRecord) error {
+			got = append(got, rec)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Replay after crash-injected torn tail: got error %v, want nil (recovery must proceed from the last valid record)", err)
+		}
+
+		if len(got) != len(want) {
+			t.Fatalf("Replay invoked apply %d times, want %d (the torn tail must be discarded, not replayed, and must not swallow any valid preceding record)", len(got), len(want))
+		}
+		for i := range want {
+			if got[i].Type != want[i].Type || !bytes.Equal(got[i].Payload, want[i].Payload) {
+				t.Errorf("replayed record %d = {%s, %x}, want {%s, %x}", i, got[i].Type, got[i].Payload, want[i].Type, want[i].Payload)
+			}
+		}
+
+		// Recovery must also leave the directory in a state a resuming
+		// Writer can build on cleanly: reopening should discard the same
+		// torn tail and let further appends proceed normally.
+		w2, err := OpenWriter(dir, maxSegmentBytes)
+		if err != nil {
+			t.Fatalf("OpenWriter after crash: %v", err)
+		}
+		defer w2.Close()
+		if got := w2.Offset(); got != validSize {
+			t.Fatalf("Offset() after resuming post-crash: %d, want %d", got, validSize)
+		}
+	})
+
+	t.Run("torn header at tail", func(t *testing.T) {
+		dir := t.TempDir()
+
+		const maxSegmentBytes = 4096
+		w, err := OpenWriter(dir, maxSegmentBytes)
+		if err != nil {
+			t.Fatalf("OpenWriter: %v", err)
+		}
+
+		var want []TypedRecord
+		for i := 0; i < 5; i++ {
+			rec := NewBTreeInsertRecord(fmt.Sprintf("/path/%d", i), uint64(i))
+			if _, err := w.Append(rec.Encode()); err != nil {
+				t.Fatalf("Append(%d): %v", i, err)
+			}
+			want = append(want, rec)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		path := segmentPath(dir, 0)
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Fatalf("OpenFile: %v", err)
+		}
+		// Crash mid-header: only 4 of 8 header bytes made it to disk.
+		if _, err := f.Write([]byte{0xaa, 0xbb, 0xcc, 0xdd}); err != nil {
+			t.Fatalf("writing torn header bytes: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("Close (torn writer): %v", err)
+		}
+
+		var got []TypedRecord
+		err = Replay(dir, func(rec TypedRecord) error {
+			got = append(got, rec)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Replay after crash-injected torn header: got error %v, want nil", err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("Replay invoked apply %d times, want %d", len(got), len(want))
+		}
+		for i := range want {
+			if got[i].Type != want[i].Type || !bytes.Equal(got[i].Payload, want[i].Payload) {
+				t.Errorf("replayed record %d = {%s, %x}, want {%s, %x}", i, got[i].Type, got[i].Payload, want[i].Type, want[i].Payload)
+			}
+		}
+	})
+}
+
+// TestCrashInjectionRecoveryTornTailInNonLastSegmentErrors is a defensive
+// counterpart to TestCrashInjectionRecovery: a torn tail can only
+// legitimately arise in the highest-numbered (last) segment, since that is
+// the only segment a real crash could have been actively writing to.
+// Finding one in an earlier, already-rotated-away-from segment indicates a
+// different, more serious on-disk inconsistency, and Replay must surface it
+// as a hard error rather than silently discarding it the same way it would
+// a genuine crash-tail.
+func TestCrashInjectionRecoveryTornTailInNonLastSegmentErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	const maxSegmentBytes = 64 // small, to force a rotation quickly
+	w, err := OpenWriter(dir, maxSegmentBytes)
+	if err != nil {
+		t.Fatalf("OpenWriter: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		rec := NewCatalogPutRecord(uint64(i), []byte(fmt.Sprintf("value-%03d", i)))
+		if _, err := w.Append(rec.Encode()); err != nil {
+			t.Fatalf("Append(%d): %v", i, err)
+		}
+	}
+	if w.SegmentNum() == 0 {
+		t.Fatalf("test setup did not force a rotation; final SegmentNum=0")
+	}
+	lastSegNum := w.SegmentNum()
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Truncate segment 0 (not the last segment) mid-record.
+	path0 := segmentPath(dir, 0)
+	info, err := os.Stat(path0)
+	if err != nil {
+		t.Fatalf("Stat(segment 0): %v", err)
+	}
+	if info.Size() < 4 {
+		t.Fatalf("segment 0 too small to meaningfully truncate: %d bytes", info.Size())
+	}
+	if err := os.Truncate(path0, info.Size()-2); err != nil {
+		t.Fatalf("Truncate(segment 0): %v", err)
+	}
+
+	err = Replay(dir, func(TypedRecord) error { return nil })
+	if err == nil {
+		t.Fatalf("Replay: got nil error, want a hard error for a torn tail found in segment 0 while segment %d is the last segment", lastSegNum)
+	}
+}
+
+// TestReplayCRCCorruption closes the gap flagged in subtask 1.3.4's
+// verification (regression.jsonl): no test exercised a record with a valid
+// (full) declared length but corrupted payload bytes end-to-end through
+// Replay. This is a genuinely different failure mode than a torn tail (see
+// writer.go's ReadSegment doc comment): a crash mid-write can only leave a
+// record short, never full-length with flipped bits, so this must remain a
+// hard, visible error rather than being silently discarded like a torn
+// tail. The test asserts Replay returns a clear CRC error at exactly the
+// corrupted record, having correctly applied every record strictly before
+// it, and none after.
+func TestReplayCRCCorruption(t *testing.T) {
+	dir := t.TempDir()
+
+	const maxSegmentBytes = 4096
+	w, err := OpenWriter(dir, maxSegmentBytes)
+	if err != nil {
+		t.Fatalf("OpenWriter: %v", err)
+	}
+
+	var want []TypedRecord
+	var offsets []int64
+	const numRecords = 8
+	for i := 0; i < numRecords; i++ {
+		rec := NewCatalogPutRecord(uint64(i), []byte(fmt.Sprintf("value-%03d", i)))
+		offset, err := w.Append(rec.Encode())
+		if err != nil {
+			t.Fatalf("Append(%d): %v", i, err)
+		}
+		want = append(want, rec)
+		offsets = append(offsets, offset)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Corrupt one payload byte in a record that is NOT the last one, to
+	// prove corruption is detected precisely at that record (not merely "at
+	// the tail", which would be indistinguishable from a torn write).
+	const corruptIdx = 4
+	path := segmentPath(dir, 0)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	// The corrupted record's payload begins recordHeaderSize bytes after its
+	// on-disk offset (offsets[corruptIdx] is the offset Append returned,
+	// which points at the record's header, matching writer.go's contract).
+	payloadStart := offsets[corruptIdx] + recordHeaderSize
+	original := data[payloadStart]
+	data[payloadStart] ^= 0xFF // flip every bit of one payload byte
+	if data[payloadStart] == original {
+		t.Fatalf("test setup failed to actually change the byte at offset %d", payloadStart)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile (corrupted): %v", err)
+	}
+
+	// Sanity: confirm the flipped byte actually breaks this record's CRC
+	// as parsed by the package's own parser, so the assertions below are
+	// exercising a genuine CRC failure rather than an unrelated one.
+	if _, _, _, perr := parseSegmentRecords(data, int(offsets[corruptIdx])); perr == nil {
+		t.Fatalf("test setup: corrupting one payload byte at offset %d did not trigger a CRC mismatch as expected", payloadStart)
+	}
+
+	var got []TypedRecord
+	err = Replay(dir, func(rec TypedRecord) error {
+		got = append(got, rec)
+		return nil
+	})
+	if err == nil {
+		t.Fatalf("Replay: got nil error, want a hard CRC error for the corrupted record at index %d", corruptIdx)
+	}
+
+	if len(got) != corruptIdx {
+		t.Fatalf("Replay invoked apply %d times before erroring, want exactly %d (every record strictly before the corrupted one, and none at or after it)", len(got), corruptIdx)
+	}
+	for i := 0; i < corruptIdx; i++ {
+		if got[i].Type != want[i].Type || !bytes.Equal(got[i].Payload, want[i].Payload) {
+			t.Errorf("replayed record %d = {%s, %x}, want {%s, %x}", i, got[i].Type, got[i].Payload, want[i].Type, want[i].Payload)
+		}
 	}
 }

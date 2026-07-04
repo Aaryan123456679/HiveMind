@@ -1,9 +1,7 @@
 package wal
 
 import (
-	"encoding/binary"
 	"fmt"
-	"hash/crc32"
 	"os"
 	"sort"
 	"strconv"
@@ -91,9 +89,25 @@ func Replay(dir string, apply func(TypedRecord) error) error {
 		}
 
 		path := segmentPath(dir, int(n))
-		records, err := readSegmentFrom(path, startOffset)
-		if err != nil {
-			return fmt.Errorf("wal: replay: reading segment %d in %s: %w", n, dir, err)
+		// readErr (a CRC-corruption error; see writer.go's parseSegmentRecords)
+		// is intentionally NOT checked here, before applying records: even
+		// when readSegmentFrom hits a corrupt record and stops, the records
+		// slice it returns already contains every record parsed strictly
+		// before the corrupt one, and those must still be applied, in
+		// order, exactly once — replay must not discard already-valid,
+		// already-durable mutations just because a later record in the same
+		// segment turned out to be corrupt. readErr is surfaced below, once
+		// everything parsed so far has been applied.
+		records, tornTail, readErr := readSegmentFrom(path, startOffset)
+		if tornTail && n != lastSegment {
+			// A torn tail can only legitimately arise in the segment a
+			// crashed process was actively writing to at the moment of the
+			// crash — necessarily the highest-numbered (last) segment.
+			// Finding one in an earlier segment means something other than
+			// "the tail of the WAL was cut short by a crash", so this is
+			// treated as a hard on-disk inconsistency rather than silently
+			// discarded like a genuine torn tail.
+			return fmt.Errorf("wal: replay: segment %d in %s ends in a torn record but is not the last segment (%d); on-disk state is inconsistent", n, dir, lastSegment)
 		}
 
 		for _, raw := range records {
@@ -109,6 +123,16 @@ func Replay(dir string, apply func(TypedRecord) error) error {
 					return fmt.Errorf("wal: replay: applying %s record from segment %d: %w", rec.Type, n, err)
 				}
 			}
+		}
+
+		if readErr != nil {
+			// A hard parse error (genuine CRC corruption; a torn tail never
+			// reaches this point, since readSegmentFrom reports that via
+			// tornTail with a nil error, not readErr). Every record parsed
+			// strictly before the corrupt one has already been applied
+			// above; surface the error now so the caller knows replay
+			// stopped early and did not cover the rest of the WAL.
+			return fmt.Errorf("wal: replay: reading segment %d in %s: %w", n, dir, readErr)
 		}
 	}
 
@@ -128,58 +152,37 @@ func isValidRecordType(t RecordType) bool {
 }
 
 // readSegmentFrom parses the segment file at path starting at byte offset
-// startOffset, returning the payload of every record from that point to the
-// end of the file, in on-disk order. It errors on a truncated header, a
-// truncated payload, or a payload whose CRC32 does not match its header —
-// the same integrity checks as ReadSegment (writer.go), which parses a
-// segment in full from offset 0; readSegmentFrom differs only in accepting
-// an arbitrary starting offset, needed so recovery can skip records already
-// covered by a checkpoint that lands partway through a segment.
+// startOffset, returning the payload of every record from that point,
+// applying this package's crash-tolerant parsing rule (see writer.go's
+// ReadSegment doc comment for the torn-tail-vs-CRC-corruption distinction):
+// a torn tail (truncated header or truncated payload at the end of the
+// file) stops parsing cleanly and is reported via tornTail=true with a nil
+// error; a CRC mismatch on a full-length record is a hard error.
+// readSegmentFrom differs from ReadSegment only in accepting an arbitrary
+// starting offset, needed so recovery can skip records already covered by a
+// checkpoint that lands partway through a segment.
 //
 // startOffset must land exactly on a record boundary (as every
 // CheckpointPointer.OffsetInSegment does, by construction: it is always one
-// of Writer.Append's returned per-record offsets). If startOffset equals the
-// file's total size, readSegmentFrom returns an empty slice and a nil error
-// (nothing left in this segment to replay).
-func readSegmentFrom(path string, startOffset int64) ([][]byte, error) {
+// of Writer.Append's/Writer.Offset's returned per-record offsets). If
+// startOffset equals the file's total size, readSegmentFrom returns an
+// empty slice, tornTail=false, and a nil error (nothing left in this
+// segment to replay).
+func readSegmentFrom(path string, startOffset int64) (records [][]byte, tornTail bool, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("wal: reading segment %s: %w", path, err)
+		return nil, false, fmt.Errorf("wal: reading segment %s: %w", path, err)
 	}
 
 	if startOffset < 0 || int(startOffset) > len(data) {
-		return nil, fmt.Errorf("wal: segment %s: start offset %d out of range (segment is %d bytes)", path, startOffset, len(data))
+		return nil, false, fmt.Errorf("wal: segment %s: start offset %d out of range (segment is %d bytes)", path, startOffset, len(data))
 	}
 
-	var records [][]byte
-	off := int(startOffset)
-	for off < len(data) {
-		if off+recordHeaderSize > len(data) {
-			return nil, fmt.Errorf("wal: segment %s: truncated record header at offset %d (%d bytes remain, need %d)", path, off, len(data)-off, recordHeaderSize)
-		}
-
-		length := binary.LittleEndian.Uint32(data[off+offRecordLength:])
-		wantCRC := binary.LittleEndian.Uint32(data[off+offRecordCRC:])
-
-		payloadStart := off + recordHeaderSize
-		payloadEnd := payloadStart + int(length)
-		if payloadEnd > len(data) {
-			return nil, fmt.Errorf("wal: segment %s: truncated record payload at offset %d (declared length %d, %d bytes remain)", path, off, length, len(data)-payloadStart)
-		}
-
-		payload := data[payloadStart:payloadEnd]
-		if gotCRC := crc32.ChecksumIEEE(payload); gotCRC != wantCRC {
-			return nil, fmt.Errorf("wal: segment %s: record at offset %d failed CRC check (want %08x, got %08x)", path, off, wantCRC, gotCRC)
-		}
-
-		out := make([]byte, len(payload))
-		copy(out, payload)
-		records = append(records, out)
-
-		off = payloadEnd
+	records, _, tornTail, err = parseSegmentRecords(data, int(startOffset))
+	if err != nil {
+		return records, tornTail, fmt.Errorf("wal: segment %s: %w", path, err)
 	}
-
-	return records, nil
+	return records, tornTail, nil
 }
 
 // listSegmentNumbers scans dir for "wal-<N>.log" segment files and returns

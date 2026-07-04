@@ -1,0 +1,52 @@
+{
+  "issue_acceptance_criteria": [
+    {
+      "criterion": "Simulating a crash after a partial/torn record write does not corrupt recovery.",
+      "covered_by": ["TestCrashInjectionRecovery", "TestOpenWriterResumeTornTailDiscardsAndTruncates"]
+    },
+    {
+      "criterion": "The torn record is detected and discarded.",
+      "covered_by": ["TestCrashInjectionRecovery (asserts torn bytes never appear as a replayed record)", "TestOpenWriterResumeTornTailDiscardsAndTruncates (asserts on-disk file is physically truncated)"]
+    },
+    {
+      "criterion": "Recovery proceeds from the last valid record.",
+      "covered_by": ["TestCrashInjectionRecovery (asserts all pre-crash valid records are applied, and Replay returns nil, not an error)"]
+    },
+    {
+      "criterion": "Test spec: truncate/corrupt the tail of a segment mid-record, run recovery, assert clean state with no panic and no corrupted-record replay.",
+      "covered_by": ["TestCrashInjectionRecovery"]
+    }
+  ],
+  "deferred_gaps": [
+    {
+      "id": "a",
+      "description": "OpenWriter's resume path did not validate a resumed segment's tail for torn/incomplete records.",
+      "covered_by": ["TestOpenWriterResumeTornTailDiscardsAndTruncates"],
+      "closure": "OpenWriter now reads+validates the resumed segment before reopening for append; truncates a torn tail, fails closed on real corruption."
+    },
+    {
+      "id": "b",
+      "description": "TestFsyncBeforeApply proves ordering, not literal fsync-occurrence; needs a real process-boundary test.",
+      "covered_by": ["TestFsyncDurabilitySubprocessCrash"],
+      "closure": "Subprocess re-exec, SIGKILL self-kill immediately after Append returns, parent re-reads from a separate process. Documented limitation: proves no in-Go/process-local buffering, not physical-disk fsync durability (would require power-loss/VM testing)."
+    },
+    {
+      "id": "c",
+      "description": "No CRC-corruption-through-Replay test.",
+      "covered_by": ["TestReplayCRCCorruption"],
+      "closure": "Flips a payload byte mid-log (not at the tail); asserts Replay returns a hard, clear CRC error at exactly that record, having applied all prior records exactly once, none after."
+    },
+    {
+      "id": "d",
+      "description": "Writer lacks a public Offset()/Size() getter a real checkpoint caller would need.",
+      "covered_by": ["TestOpenWriterResumeTornTailDiscardsAndTruncates", "TestFsyncDurabilitySubprocessCrash (uses Offset() to size-check the appended record)"],
+      "closure": "Added Writer.Offset() int64, a minimal, mutex-guarded getter mirroring the existing SegmentNum(). No other API changes."
+    }
+  ],
+  "regression_guard": [
+    "TestSegmentWriter", "TestAppendOversizedRecordHardErrors", "TestOpenWriterResumesExistingSegments",
+    "record_test.go's existing tests (encode/decode roundtrip, fsync-before-apply, apply-error durability, append-failure-skips-apply)",
+    "checkpoint_test.go's existing tests (manifest roundtrip, archivable segments, load-checkpoint-no-manifest)",
+    "TestRecoveryReplay", "TestRecoveryReplayNoOpWhenCheckpointCoversEverything", "TestRecoveryReplayNoCheckpointStartsFromBeginning", "TestRecoveryReplayInvalidRecordType"
+  ]
+}

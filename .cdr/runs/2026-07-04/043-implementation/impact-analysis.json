@@ -1,0 +1,42 @@
+{
+  "subtask": "1.3.5",
+  "risk_level": "high",
+  "risk_reason": "Final closing subtask for the WAL's crash-safety guarantees; changes touch parsing behavior shared by OpenWriter (resume), ReadSegment, and Replay across all four already-verified WAL files.",
+  "modules_touched": [
+    "engine/wal/writer.go",
+    "engine/wal/recovery.go",
+    "engine/wal/writer_test.go",
+    "engine/wal/recovery_test.go",
+    "engine/wal/crash_subprocess_test.go (new)"
+  ],
+  "behavioral_changes": [
+    {
+      "change": "ReadSegment tolerates (silently discards) a torn tail instead of erroring on it; CRC-mismatch behavior unchanged (still a hard error).",
+      "backward_compat": "No existing test constructs a genuinely torn segment via ReadSegment; behavior for all currently-passing inputs (well-formed segments, and CRC-corrupted segments) is unchanged. Purely additive tolerance for a previously-untested input shape.",
+      "risk": "low"
+    },
+    {
+      "change": "OpenWriter's resume path now reads and validates the resumed segment before reopening it, truncating a torn tail or failing closed on real (CRC) corruption.",
+      "backward_compat": "Adds one os.ReadFile + parse pass on resume only (not on fresh-WAL opens). Existing TestOpenWriterResumesExistingSegments continues to pass unchanged (its segment is well-formed, so validation is a no-op other than the extra read).",
+      "risk": "medium — new failure mode (OpenWriter can now return an error it never could before, for a corrupt resumed segment); this is intentional and matches gap (a)'s ask, but is a genuine new observable API behavior for real callers, not just tests."
+    },
+    {
+      "change": "readSegmentFrom's signature changes from ([][]byte, error) to ([][]byte, bool, error) (adds tornTail).",
+      "backward_compat": "readSegmentFrom is unexported and has exactly one caller (Replay, in the same file); no external impact.",
+      "risk": "low"
+    },
+    {
+      "change": "Replay now tolerates a torn tail in the last segment (proceeds cleanly, no error) but hard-errors if a torn tail is found in a non-last segment.",
+      "backward_compat": "All 4 existing recovery_test.go tests use well-formed segments (no torn tails), so this new branch is never hit by them; existing pass/fail assertions unaffected.",
+      "risk": "low"
+    },
+    {
+      "change": "Writer gains a new exported method, Offset() int64.",
+      "backward_compat": "Purely additive; no existing method signatures change.",
+      "risk": "low"
+    }
+  ],
+  "regression_gaps_closed": ["a", "b", "c", "d"],
+  "test_plan_summary": "New TestCrashInjectionRecovery (issue's literal required test name) covers torn-header and torn-payload tails through Replay; new writer_test.go test covers the same through OpenWriter's resume path; new TestReplayCRCCorruption covers gap (c) end-to-end; new subprocess-kill test covers gap (b). All prior tests re-run with -race to confirm no regressions.",
+  "rollback_plan": "Single, self-contained commit; revertable via `git revert` with no downstream dependents (engine/catalog, engine/btree do not yet call into engine/wal per docs/LLD/wal.md's 'not yet wired' status)."
+}

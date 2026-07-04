@@ -96,25 +96,46 @@ func OpenWriter(dir string, maxSegmentBytes int64) (*Writer, error) {
 		return nil, err
 	}
 
+	path := segmentPath(dir, segmentNum)
+
+	var size int64
+	if resuming {
+		// Subtask 1.3.5: a resumed segment may end in a torn record if the
+		// prior process crashed mid-Append (a header claiming N payload
+		// bytes with fewer than N actually on disk, or a header itself cut
+		// short). Validate the resumed segment's own bytes BEFORE reopening
+		// it for append, and physically discard any torn tail by truncating
+		// the file to the last valid record boundary — the same
+		// detect-and-discard rule ReadSegment/Replay apply when parsing
+		// (see ReadSegment's doc comment below), so a resumed Writer's
+		// on-disk state and a fresh Replay's view of that same directory
+		// always agree on where "the last valid record" ends.
+		//
+		// A CRC mismatch on a full-length record, by contrast, is genuine
+		// corruption, not a torn write, and is NOT silently discarded here:
+		// OpenWriter fails closed with a clear error rather than resuming
+		// (and therefore appending) onto a segment already known to be
+		// corrupt.
+		validSize, truncated, verr := repairTornTail(path)
+		if verr != nil {
+			return nil, fmt.Errorf("wal: opening segment %s: %w", path, verr)
+		}
+		if truncated {
+			if err := os.Truncate(path, validSize); err != nil {
+				return nil, fmt.Errorf("wal: truncating torn tail of segment %s to %d bytes: %w", path, validSize, err)
+			}
+		}
+		size = validSize
+	}
+
 	flags := os.O_RDWR | os.O_CREATE
 	if resuming {
 		flags |= os.O_APPEND
 	}
 
-	path := segmentPath(dir, segmentNum)
 	f, err := os.OpenFile(path, flags, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("wal: opening segment %s: %w", path, err)
-	}
-
-	var size int64
-	if resuming {
-		info, err := f.Stat()
-		if err != nil {
-			f.Close()
-			return nil, fmt.Errorf("wal: stat segment %s: %w", path, err)
-		}
-		size = info.Size()
 	}
 
 	return &Writer{
@@ -124,6 +145,27 @@ func OpenWriter(dir string, maxSegmentBytes int64) (*Writer, error) {
 		file:            f,
 		size:            size,
 	}, nil
+}
+
+// repairTornTail validates the segment file at path against this package's
+// crash-tolerant parsing rule (see ReadSegment's doc comment below) and
+// reports the byte length it should be truncated to, if any torn tail is
+// present. It does not itself modify path; a caller that wants the torn
+// tail physically discarded must truncate to the returned validSize itself
+// when truncated is true. A CRC mismatch (genuine corruption, not a torn
+// write) is returned as a hard error instead of a truncation instruction.
+func repairTornTail(path string) (validSize int64, truncated bool, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false, fmt.Errorf("resumed segment %s: %w", path, err)
+	}
+
+	_, validEnd, tornTail, err := parseSegmentRecords(data, 0)
+	if err != nil {
+		return 0, false, fmt.Errorf("resumed segment %s failed integrity validation (corrupt record, not just a torn write): %w", path, err)
+	}
+
+	return int64(validEnd), tornTail, nil
 }
 
 // segmentPath returns the conventional on-disk path for segment n within dir.
@@ -253,6 +295,24 @@ func (w *Writer) SegmentNum() int {
 	return w.segmentNum
 }
 
+// Offset returns the number of bytes already durably written to the segment
+// Writer is currently appending to (equivalently, the byte offset the NEXT
+// Append call will return). Combined with SegmentNum(), this gives callers
+// exactly the (segment, offset) pair checkpoint.go's CheckpointPointer /
+// Checkpoint expect, e.g.:
+//
+//	Checkpoint(dir, uint64(w.SegmentNum()), w.Offset())
+//
+// This is a small, deliberately minimal addition for subtask 1.3.5: a real
+// checkpoint caller needs a way to read Writer's current position without
+// reaching into its unexported size field; it is not a broader API
+// refactor.
+func (w *Writer) Offset() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.size
+}
+
 // Close closes the current segment file. It does not fsync (Append already
 // fsyncs after every write), but does flush the file descriptor via the
 // underlying os.File.Close.
@@ -266,24 +326,64 @@ func (w *Writer) Close() error {
 }
 
 // ReadSegment parses a single segment file at path in full, returning the
-// payload of every record in on-disk order. It returns an error if the file
-// contains a truncated header, a truncated payload, or a payload whose CRC32
-// does not match its header — all of which indicate a torn/corrupted record.
-// This exists both to support this subtask's own tests (verifying that a
-// segment's own bytes fully and cleanly parse, with no split records) and as
-// a starting point for subtask 1.3.4's recovery replay and 1.3.5's
-// crash-injection detection.
+// payload of every record in on-disk order.
+//
+// Subtask 1.3.5 (crash-injection recovery) establishes this package's
+// crash-tolerant parsing rule, applied here via parseSegmentRecords: a
+// truncated header or truncated payload at the tail of the file — exactly
+// what a crash mid-Append produces, since Append only ever writes a header
+// then its payload, in that order, and nothing else is ever appended after
+// them until the next record — is treated as an incomplete write, NOT an
+// error: parsing stops cleanly at that point and the records parsed so far
+// are returned with a nil error. This directly implements the literal 1.3.5
+// acceptance criterion ("the torn record is detected and discarded, and
+// recovery proceeds from the last valid record").
+//
+// A payload whose CRC32 does not match its header, by contrast, is a
+// different failure mode: a full-length record cannot be produced by a
+// crash mid-write (the crash leaves a record short, never full-length with
+// flipped bits), so a CRC mismatch indicates real bit-level corruption. This
+// remains a hard error, closing the gap flagged in 1.3.4's verification (no
+// CRC-corruption-through-Replay test existed): ReadSegment/Replay must never
+// silently treat genuine corruption as if it were just a torn tail.
 func ReadSegment(path string) ([][]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("wal: reading segment %s: %w", path, err)
 	}
 
-	var records [][]byte
-	off := 0
+	records, _, _, err := parseSegmentRecords(data, 0)
+	if err != nil {
+		return nil, fmt.Errorf("wal: segment %s: %w", path, err)
+	}
+	return records, nil
+}
+
+// parseSegmentRecords parses records from data starting at byte offset
+// startOffset, in on-disk order, applying this package's crash-tolerant
+// parsing rule (see ReadSegment's doc comment above for the
+// torn-tail-vs-CRC-corruption distinction this implements):
+//
+//   - A truncated header or truncated payload at the tail of data stops
+//     parsing cleanly: the records parsed so far are returned with a nil
+//     error, tornTail=true, and validEnd set to the byte offset immediately
+//     before the torn bytes (i.e. what the segment should be truncated to,
+//     to physically discard them).
+//   - A payload whose CRC32 does not match its header's checksum is a hard
+//     error: parsing stops immediately, with records/validEnd reflecting
+//     only what was parsed strictly before the corrupt record.
+//   - Reaching len(data) exactly (off == len(data)) ends the loop normally:
+//     records, validEnd=len(data), tornTail=false, err=nil.
+//
+// Shared by ReadSegment (starts at offset 0) and recovery.go's
+// readSegmentFrom (starts at an arbitrary checkpoint-relative offset), so
+// both this package's own tests and 1.3.4's recovery replay observe
+// identical torn-tail/corruption semantics.
+func parseSegmentRecords(data []byte, startOffset int) (records [][]byte, validEnd int, tornTail bool, err error) {
+	off := startOffset
 	for off < len(data) {
 		if off+recordHeaderSize > len(data) {
-			return nil, fmt.Errorf("wal: segment %s: truncated record header at offset %d (%d bytes remain, need %d)", path, off, len(data)-off, recordHeaderSize)
+			return records, off, true, nil
 		}
 
 		length := binary.LittleEndian.Uint32(data[off+offRecordLength:])
@@ -292,12 +392,12 @@ func ReadSegment(path string) ([][]byte, error) {
 		payloadStart := off + recordHeaderSize
 		payloadEnd := payloadStart + int(length)
 		if payloadEnd > len(data) {
-			return nil, fmt.Errorf("wal: segment %s: truncated record payload at offset %d (declared length %d, %d bytes remain)", path, off, length, len(data)-payloadStart)
+			return records, off, true, nil
 		}
 
 		payload := data[payloadStart:payloadEnd]
 		if gotCRC := crc32.ChecksumIEEE(payload); gotCRC != wantCRC {
-			return nil, fmt.Errorf("wal: segment %s: record at offset %d failed CRC check (want %08x, got %08x)", path, off, wantCRC, gotCRC)
+			return records, off, false, fmt.Errorf("record at offset %d failed CRC check (want %08x, got %08x)", off, wantCRC, gotCRC)
 		}
 
 		// Copy the payload out so callers don't retain a reference into the
@@ -309,5 +409,5 @@ func ReadSegment(path string) ([][]byte, error) {
 		off = payloadEnd
 	}
 
-	return records, nil
+	return records, off, false, nil
 }
