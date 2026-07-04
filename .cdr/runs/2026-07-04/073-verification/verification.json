@@ -1,0 +1,60 @@
+{
+  "subtask": "2a.1.3",
+  "issue": 6,
+  "commit_verified": "9338164b3f7a15211c250960bb1d3e56fd0a5b2e",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "Snapshot/NewSnapshot/Version/Read/SnapshotRead in engine/mvcc/read.go implement the acceptance criteria verbatim: NewSnapshot pins CurrentVersion via catalog.Get at one instant; Read always reads that pinned VersionPath regardless of later CommitVersion calls. TestSnapshotRead (engine/mvcc/read_test.go) drives exactly the required interleaving via a real test-only hook and asserts pre-write content is returned."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "Matches docs/LLD/mvcc.md 'Read path' section exactly ('Readers snapshot the current version pointer at the start of the request and read that specific version to completion, regardless of concurrent writers advancing the pointer afterward'). Correctly defers GC to the not-yet-implemented epoch-refcount scheme described in the LLD's 'Garbage collection' section."
+    },
+    "load_bearing_assumption_no_mutation_or_deletion_of_version_files": {
+      "verdict": "pass",
+      "evidence": "Traced engine/mvcc/write.go's CommitVersion in full: on CAS loss it loops, re-reads the catalog record, and calls WriteVersion again -- WriteVersion always assigns a brand-new, never-reused version number (state.next+1, or scanLatestVersion on cold start), so a 'losing' attempt's version file is left orphaned on disk but is NEVER deleted, truncated, or reopened for rewrite by CommitVersion itself. writeVersionFile uses write-to-temp + os.Rename (atomic, one-shot) -- there is no code path in engine/mvcc or engine/catalog that opens an existing <fileID>.vN.md for writing a second time, nor any os.Remove/os.Truncate call targeting a committed version file anywhere in the current codebase. engine/catalog's CompareAndSwapCurrentVersion only tombstones/reinserts the CatalogRecord's own slot in catalog.dat -- it never touches engine/mvcc's content/ directory. Therefore the only thing that could ever race a Read for a given version's file is the not-yet-implemented epoch-GC compactor (2a.2), which does not exist yet. This confirms the design comment's claim is currently airtight, contingent on 2a.2's future compactor correctly deferring to a refcount of zero before deleting -- that correctness is out of scope for this subtask and appropriately deferred."
+    },
+    "catalog_get_atomicity": {
+      "verdict": "pass",
+      "evidence": "engine/catalog/catalog.go's Get takes stripes[stripeFor(fileID)] for the duration of the index lookup + readSlot + Decode, the SAME stripe lock used by Put and CompareAndSwapCurrentVersion for that fileID, so NewSnapshot's read of CurrentVersion is genuinely atomic/linearizable with any concurrent CAS on the same fileID -- not a racy field access."
+    },
+    "zero_version_handling": {
+      "verdict": "pass",
+      "evidence": "TestSnapshotReadNoVersionCommitted seeds a CatalogRecord with CurrentVersion:0 and asserts SnapshotRead returns a non-nil error. Read()->readWithHook calls os.ReadFile(VersionPath(fileID,0)), which does not exist (WriteVersion always starts numbering at 1), so os.ReadFile returns a wrapped *PathError, propagated via a clearly-labeled fmt.Errorf('mvcc: snapshot read: reading version %d for fileID %d: %w', ...) -- no panic, no confusing message, includes the offending path via the wrapped PathError."
+    },
+    "interleaving_test_realism": {
+      "verdict": "pass",
+      "evidence": "TestSnapshotRead: snap.readWithHook is launched in a real goroutine with a hook that closes pausedAtRead then blocks on <-writerDone; the main test goroutine blocks on <-pausedAtRead before calling vw.CommitVersion (a real, second, concurrently-committed version), verifies CurrentVersion advanced via cat.Get, THEN closes writerDone to unblock the paused read, and only then reads the result off readResult/readErr channels. This is genuine channel-handoff concurrency (mirrors engine/wal's TestFsyncBeforeApply / engine/catalog's TestContentCreate pattern already used elsewhere in this repo), not a fake sequential test -- confirmed by running with -race -count=10 with no failures."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "go build ./... && go vet ./... clean. go test ./mvcc/... -race -v -count=1 all green (TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter/*, TestCurrentVersionCAS). go test ./mvcc/... -race -run TestSnapshotRead -count=10 clean, no flakiness. Full go test ./... -race -count=1 across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal all pass -- no regressions on 2a.1.1/2a.1.2 or elsewhere."
+    },
+    "edge_cases": {
+      "verdict": "pass",
+      "evidence": "Zero-version case covered (see above). A version number with no corresponding file (would only occur if an invariant elsewhere were violated, e.g. disk corruption) produces a clear wrapped os.ReadFile error via readWithHook, not a panic or silent empty read -- reasonable given this can only happen if an upstream invariant (2a.1.1/2a.1.2) is already broken."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "No new attack surface: VersionPath is built from vw.dir (fixed root) plus fileID/version, both uint64 formatted via %d (no path-traversal-capable string ever concatenated into the path). No new external input parsing."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Doc comments are thorough, cross-reference docs/LLD/mvcc.md and analogous test patterns elsewhere in the repo (engine/wal/record_test.go, engine/catalog/content_test.go), and explicitly reason through the correctness argument in-code rather than only in commit message / architecture-discovery.md."
+    },
+    "test_coverage_gap": {
+      "verdict": "comment",
+      "evidence": "TestSnapshotRead only exercises ONE concurrent CommitVersion racing a paused read, then a second fresh SnapshotRead after. There is no test for a long-lived Snapshot surviving MULTIPLE subsequent commits (e.g. snapshot at v1, then v2 AND v3 both commit before the paused read resumes, asserting it still returns v1's content) -- would strengthen confidence that the guarantee holds under an arbitrary number of intervening writes, not just one. Not required by the stated acceptance criteria/test spec, so not blocking, but recommended as a follow-up improvement."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "The subtask's single load-bearing assumption (no code path anywhere mutates/deletes a version file once written) was traced end-to-end through CommitVersion's CAS-retry loop, WriteVersion's per-fileID monotonic numbering, and writeVersionFile's temp+rename durability pattern, and holds given the current codebase (GC does not exist yet)."
+    }
+  },
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "No test for a snapshot surviving multiple (2+) subsequent commits during its lifetime, only one. Recommend adding as a follow-up strengthening test, not required by stated acceptance criteria."
+  ]
+}
