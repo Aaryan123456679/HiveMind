@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-047-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "1.4.1",
+  "git_head": "61a58d731155d12e7659951505d5d18251c586df",
+  "run_key": "sha256(macro=cdr:verify,version=1,subtask=1.4.1,git_head=61a58d731155d12e7659951505d5d18251c586df,inputs=issue4-checklist-1.4.1,commit=e52ce5343a8884b05e51ded4706f27feaf9d1728)",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:45:00Z"
+}

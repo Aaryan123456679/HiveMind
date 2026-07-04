@@ -1,0 +1,20 @@
+{
+  "subtask": "1.4.2",
+  "criteria": [
+    {
+      "criterion": "Reading a file by fileID returns its current full markdown content exactly as last written",
+      "test": "TestContentRead",
+      "status": "covered"
+    },
+    {
+      "criterion": "Read on a fileID that was never created must be distinguishable from other errors",
+      "test": "TestContentReadNotFound",
+      "status": "covered"
+    },
+    {
+      "criterion": "No regression to 1.4.1's create/write path",
+      "test": "TestContentCreate, TestContentCreateInvalidFileID",
+      "status": "covered (pre-existing, re-run green)"
+    }
+  ]
+}

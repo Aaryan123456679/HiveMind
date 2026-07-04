@@ -1,0 +1,15 @@
+{
+  "gofmt_clean": true,
+  "go_vet_clean": true,
+  "go_build_clean": true,
+  "test_command": "go test ./catalog/... -race -v -count=1 (run from engine/ module dir)",
+  "test_result": "PASS",
+  "tests": [
+    "TestContentCreate (pre-existing, no regression)",
+    "TestContentCreateInvalidFileID (pre-existing, no regression)",
+    "TestContentRead (new)",
+    "TestContentReadNotFound (new)"
+  ],
+  "validation_matrix_covered": true,
+  "notes": "repo-root `go build ./...` errors on go.work module resolution; this is a pre-existing environment quirk unrelated to this change (engine module builds/tests cleanly standalone from engine/)."
+}

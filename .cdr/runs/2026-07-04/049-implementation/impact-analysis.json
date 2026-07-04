@@ -1,0 +1,16 @@
+{
+  "subtask": "1.4.2",
+  "modules_touched": [
+    "engine/catalog/content.go",
+    "engine/catalog/content_test.go"
+  ],
+  "modules_read_only": [
+    "engine/catalog/catalog.go (ErrNotFound sentinel, cat.Get convention)",
+    "docs/LLD/catalog.md"
+  ],
+  "new_public_api": [
+    "func (cs *ContentStore) Read(fileID uint64) ([]byte, error)"
+  ],
+  "risk": "low — additive method, no changes to Create/OpenContentStore/existing tests",
+  "dependencies": ["subtask 1.4.1 (ContentStore, Create, ContentPath, ErrNotFound convention)"]
+}
