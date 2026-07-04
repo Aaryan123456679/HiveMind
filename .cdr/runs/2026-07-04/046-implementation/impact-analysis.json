@@ -1,0 +1,38 @@
+{
+  "affected_files": [
+    {
+      "path": "engine/catalog/content.go",
+      "change": "new file — ContentStore: content/<fileID>.v1.md create/write path, WAL-before-apply via engine/wal.AppendAndApply"
+    },
+    {
+      "path": "engine/catalog/content_test.go",
+      "change": "new file — TestContentCreate and ordering/verification tests"
+    }
+  ],
+  "dependencies": [
+    {
+      "module": "engine/wal",
+      "usage": "wal.NewCatalogPutRecord, wal.AppendAndApply, wal.Writer, wal.ReadSegment (test only)",
+      "change_required": false,
+      "reason": "read-only dependency on already-verified public API (task-1.3, merged)"
+    },
+    {
+      "module": "engine/catalog (existing: catalog.go, record.go, idalloc.go, file.go)",
+      "usage": "Catalog.Put, CatalogRecord.Encode, InvalidFileID",
+      "change_required": false,
+      "reason": "content.go is additive; no existing catalog.go/record.go behavior is modified"
+    }
+  ],
+  "dependents": [
+    {
+      "module": "future subtasks 1.4.2/1.4.3/1.4.4 (issue #4)",
+      "impact": "will build read/version/delete paths on top of ContentStore introduced here"
+    }
+  ],
+  "risk_level": "low",
+  "risk_notes": [
+    "Additive-only change: new files, no modification to engine/wal or existing engine/catalog files.",
+    "Single-threaded Phase 1 assumption preserved: no new cross-cutting locking introduced; content-write+catalog-Put is not made atomic as a unit beyond WAL-before-apply ordering (concurrency hardening deferred to Epic 2A per repo convention).",
+    "Content path uses a hardcoded 'v1' version segment (pre-MVCC, single-version scope per issue title) rather than CatalogRecord.CurrentVersion, to avoid scope creep into MVCC versioning (a separate, later epic)."
+  ]
+}

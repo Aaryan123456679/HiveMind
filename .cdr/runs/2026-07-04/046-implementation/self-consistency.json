@@ -1,0 +1,11 @@
+{
+  "build": "go build ./engine/... : clean",
+  "vet": "go vet ./engine/... : clean",
+  "gofmt": "gofmt -l engine/catalog/content.go engine/catalog/content_test.go : clean (no output)",
+  "tests": {
+    "targeted": "go test ./engine/catalog/... -run TestContentCreate -race -v -count=1 : PASS (TestContentCreate, TestContentCreateInvalidFileID)",
+    "full_package": "go test ./engine/catalog/... -race -count=1 : PASS (56.8s, all existing catalog tests still green)"
+  },
+  "matrix_coverage": "all 3 validation-matrix.json entries (AC-1, AC-2, TS-1) exercised by TestContentCreate",
+  "note": "This is internal sanity only, not verification (I4): no self-audit beyond compile/test-green performed."
+}

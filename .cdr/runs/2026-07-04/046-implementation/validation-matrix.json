@@ -1,0 +1,22 @@
+{
+  "criteria": [
+    {
+      "id": "AC-1",
+      "text": "Creating a new topic file writes content/<fileID>.v1.md",
+      "check": "TestContentCreate: read back the file at ContentStore.ContentPath(fileID), assert bytes equal input data",
+      "status": "planned"
+    },
+    {
+      "id": "AC-2",
+      "text": "the corresponding catalog mutation is logged to the WAL before the file is considered committed (WAL-before-apply)",
+      "check": "TestContentCreate (ordering sub-test): via createWithHook, observe the WAL segment already contains the RecordCatalogPut record while cat.Get still returns ErrNotFound, then confirm cat.Get succeeds after Create returns",
+      "status": "planned"
+    },
+    {
+      "id": "TS-1",
+      "text": "go test ./engine/catalog/... -run TestContentCreate -race: create file, assert WAL record precedes catalog visibility, assert content bytes on disk match input",
+      "check": "TestContentCreate covers all three assertions in one test function per the test spec",
+      "status": "planned"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "run_id": "2026-07-04-046-implementation",
+  "subtask": "1.4.1",
+  "status": "completed",
+  "commit": "PENDING_POST_COMMIT_SHA",
+  "deliverable": "TestContentCreate (test spec's literal required test name) plus TestContentCreateInvalidFileID, implementing engine/catalog/content.go's ContentStore create/write path with WAL-before-apply ordering.",
+  "files_changed": [
+    "engine/catalog/content.go",
+    "engine/catalog/content_test.go"
+  ],
+  "acceptance_criteria_mapping": {
+    "content_path": "ContentStore.ContentPath(fileID) -> <root>/content/<fileID>.v1.md (engine/catalog/content.go, contentDirName/contentVersionSuffix constants)",
+    "wal_before_apply": "ContentStore.createWithHook builds wal.NewCatalogPutRecord and delegates to wal.AppendAndApply, whose apply callback (content file write + cat.Put) only runs after the WAL append durably fsyncs -- same structural guarantee as engine/wal's own TestFsyncBeforeApply idiom.",
+    "test": "engine/catalog/content_test.go:TestContentCreate -- proves WAL-record-precedes-catalog-visibility via an internal test-only hook seam (createWithHook's afterWALBeforeApply), observing the WAL segment is already durable while cat.Get still returns ErrNotFound at that point; also asserts content bytes on disk match input exactly."
+  },
+  "self_consistency": ".cdr/runs/2026-07-04/046-implementation/self-consistency.json -- go build/vet/gofmt clean; go test ./engine/catalog/... -run TestContentCreate -race -v -count=1 green; full package go test ./engine/catalog/... -race -count=1 green (no regressions, 56.8s).",
+  "not_done_here": [
+    "docs/LLD/catalog.md not updated with content/ layout (out of this subtask's impacted-modules scope: engine/catalog/content.go, engine/catalog/content_test.go only)",
+    "No read/version-bump/delete path for content (deferred to subtasks 1.4.2-1.4.4 under issue #4)",
+    "Content version is hardcoded to 'v1' (pre-MVCC, single-version scope per issue title); no CurrentVersion-driven multi-version file naming"
+  ],
+  "verification_not_performed_by_this_agent": true,
+  "no_push_performed": true,
+  "next_step": "Hand off to /cdr:verify for subtask 1.4.1."
+}

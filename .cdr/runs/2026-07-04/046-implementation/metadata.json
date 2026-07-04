@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-046-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "task-1.4.1",
+  "git_head": "8fc380eae15b4868295b84c6432a3802d073baa8",
+  "run_key": "task-1.4.1|8fc380eae15b4868295b84c6432a3802d073baa8|content-store-create-write-wal-before-apply",
+  "status": "completed",
+  "last_completed_step": "self-consistency",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:30:00Z"
+}
