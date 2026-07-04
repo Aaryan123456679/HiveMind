@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
@@ -290,6 +291,58 @@ func TestContentAppendNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Append(missing) err = %v, want wrapping ErrNotFound", err)
+	}
+}
+
+// TestContentAppendConcurrentSameFileID is a regression test for the fix cycle
+// responding to 1.4.3's verification finding: Append's read-modify-write of the
+// content file was unsynchronized, so concurrent Append calls against the SAME
+// fileID could race, each read the same pre-append bytes, and each write back a
+// result reflecting only its own appended data -- silently losing every other
+// goroutine's update (reproduced upstream as 49/50 one-byte appends lost, final
+// content length 1 instead of 50, with catalog SizeBytes matching the corrupted
+// result and no error surfaced anywhere). This test reproduces that exact repro
+// shape (N concurrent 1-byte Append calls to one fileID) and asserts the final
+// content length and catalog SizeBytes reflect ALL appends, not a lost-update
+// count. Must be run with -race (per this repo's test spec) to also catch any
+// data race the fix might reintroduce, not just the logical lost-update outcome.
+func TestContentAppendConcurrentSameFileID(t *testing.T) {
+	cs, cat, _ := newTestContentStore(t)
+
+	const fileID = uint64(7)
+	rec := testContentRecord(fileID)
+	if _, err := cs.Create(rec, nil); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const numAppends = 50 // matches the verification agent's exact repro count
+
+	var wg sync.WaitGroup
+	for i := 0; i < numAppends; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := cs.Append(fileID, []byte("x")); err != nil {
+				t.Errorf("Append: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	got, err := cs.Read(fileID)
+	if err != nil {
+		t.Fatalf("Read after concurrent Appends: %v", err)
+	}
+	if len(got) != numAppends {
+		t.Fatalf("content length after %d concurrent 1-byte Appends = %d, want %d (lost update)", numAppends, len(got), numAppends)
+	}
+
+	gotRec, err := cat.Get(fileID)
+	if err != nil {
+		t.Fatalf("cat.Get after concurrent Appends: %v", err)
+	}
+	if gotRec.SizeBytes != uint64(numAppends) {
+		t.Fatalf("SizeBytes after %d concurrent 1-byte Appends = %d, want %d (lost update)", numAppends, gotRec.SizeBytes, numAppends)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
@@ -39,12 +40,27 @@ const defaultSplitThresholdBytes = 8 * 1024
 // provides by building on engine/wal's AppendAndApply idiom (the same fsync-before-apply
 // primitive engine/wal/record_test.go's TestFsyncBeforeApply demonstrates).
 //
-// Phase 1 (pre-Epic 2A) assumption: no additional locking is introduced here beyond what
-// Catalog and wal.Writer already provide internally. A single logical "create a file"
-// operation (content write + WAL record + catalog Put) is not itself made atomic against
-// a concurrent second operation on the SAME fileID racing it; that concurrency hardening
-// is explicitly deferred, matching the precedent set by catalog.go's own documented
-// known-gap comments for this phase.
+// Concurrency: Append performs a read-modify-write of fileID's content file (read
+// existing bytes, append, write the combined result), which is unsafe to run
+// concurrently against itself for the SAME fileID without serialization — two
+// concurrent Appends could both read the same "existing" bytes and each write back
+// a result that only reflects their own appended data, silently losing the other's
+// update (and there is no error to surface this: cat.Put would happily accept
+// whichever write landed last). ContentStore therefore reuses this repo's
+// documented striped-mutex convention (docs/LLD/catalog.md's "Striped mutexes (~256
+// stripes, hashed by fileID) instead of one global lock", the same pattern
+// Catalog.stripes implements at catalog.go's Catalog doc comment) via its own
+// independent stripes array (see below) — independent from, not shared with,
+// Catalog's own stripes, because Append's critical section calls cs.cat.Put
+// internally, and cs.cat.Put takes Catalog's OWN stripe lock for rec.FileID; reusing
+// the exact same lock instance would deadlock a non-reentrant sync.Mutex on that
+// call. Create does not need this same protection: it is only ever called once per
+// fileID, with a freshly-allocated fileID that by construction (engine/idalloc's
+// monotonic Next()) cannot yet have a concurrent second Create call racing it for
+// the same fileID; there is no existing content to race a read-modify-write against.
+// Read does not need it either: it never performs a read-modify-write, and
+// writeContentFile's write-to-temp-then-rename technique makes a single Read always
+// observe either the fully-old or fully-new content, never a torn/partial one.
 type ContentStore struct {
 	dir string // absolute/relative path to the "content" directory itself
 	cat *Catalog
@@ -56,6 +72,15 @@ type ContentStore struct {
 	// OpenContentStore; overridable directly by callers (e.g. tests) that
 	// need a different threshold. See Append's doc comment.
 	splitThresholdBytes uint64
+
+	// stripes serializes Append's read-modify-write critical section per fileID,
+	// keyed by stripeFor(fileID) (the same hashing scheme Catalog.stripes uses,
+	// reused here as its own independent array — see the ContentStore doc comment
+	// above for why it must be independent rather than shared with cs.cat's
+	// stripes). Concurrent Appends to DIFFERENT fileIDs still proceed without
+	// contending on each other's stripe, preserving this repo's "unrelated files
+	// never contend on the same lock" design goal.
+	stripes [numStripes]sync.Mutex
 }
 
 // OpenContentStore creates (if necessary) a "content" directory under root and returns a
@@ -200,7 +225,18 @@ func (cs *ContentStore) Read(fileID uint64) ([]byte, error) {
 // Task 1.4.3 is pre-MVCC, single-version only, matching Create/Read: Append
 // always mutates the single "v1" content file regardless of
 // rec.CurrentVersion.
+//
+// Concurrency: Append's read-existing/append/write-back critical section is
+// serialized per fileID via cs.stripes (keyed by stripeFor(fileID)), so
+// concurrent Append calls against the SAME fileID cannot lose an update; see
+// the ContentStore doc comment for why this is an independent stripes array
+// rather than reusing Catalog's own. Concurrent Appends to DIFFERENT fileIDs
+// still proceed in parallel (different stripes, in the common case).
 func (cs *ContentStore) Append(fileID uint64, data []byte) (bool, error) {
+	stripe := stripeFor(fileID)
+	cs.stripes[stripe].Lock()
+	defer cs.stripes[stripe].Unlock()
+
 	rec, err := cs.cat.Get(fileID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
