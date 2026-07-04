@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-051-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "commit",
+  "subtask": "1.4.2",
+  "git_head": "3982e48c056ca97886a5734558ce8c38d44806d6",
+  "run_key": "cdr-commit-v1-task-1.4.2-3982e48",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:05:00Z"
+}

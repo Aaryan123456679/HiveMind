@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-07-04-051-commit",
+  "subtask": "1.4.2",
+  "status": "completed",
+  "commit_sha": null,
+  "artifacts": {
+    "commit_doc": ".cdr/commits/task-1.4.2.md",
+    "task_index_entry": ".cdr/index/task.jsonl"
+  },
+  "notes": "task-1.4.2 marked verified (PASS_WITH_COMMENTS, run 2026-07-04-050-verification). Parent task-1.4 intentionally left as planned pending subtasks 1.4.3-1.4.4."
+}
