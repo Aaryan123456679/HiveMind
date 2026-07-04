@@ -1,0 +1,57 @@
+{
+  "subtask": "2a.1.1",
+  "commit": "34bc95d28b46cbced5c97f5a8710b7d8acc686de",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "engine/mvcc VersionWriter satisfies the acceptance criteria: strictly increasing per-fileID version numbers, no collisions, prior versions untouched. The highest-risk concern (first-touch TOCTOU race) was traced and is NOT present: sync.Map.LoadOrStore atomically creates/returns a single shared *fileState per fileID even under concurrent first calls, and the per-fileID mutex is acquired BEFORE the disk scan (write.go lines 79-90), so concurrent first-touch callers for a brand-new fileID serialize correctly through the same mutex before either computes 'next N'. Glob/prefix matching is correctly anchored (prefix includes '.v' separator, verified '4.v' does not match '42.v3.md'). Temp-file-then-rename is correctly implemented (write+fsync+close before rename, same directory so rename is atomic, cleanup on every error path). Design is single-process only (sync.Map/in-proc mutex), consistent with AGON/AGENT.md's stated architecture that the Go engine is the sole owner of on-disk MVCC/WAL state and Python runtime never shares process memory with it -- this is an appropriate, non-hidden assumption for this subtask, not a bug.",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "WriteVersion returns strictly increasing N per fileID starting at (max existing on disk)+1; scanLatestVersion resumes correctly after cold restart (verified by cold_start_reopen test and traced code path). Prior version files are never reopened for writing (each write targets a fresh, never-before-used path), so they are provably left untouched -- also directly asserted by the 'sequential' test via content+mtime re-checks after each subsequent write."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "docs/LLD/mvcc.md's 'Write path' section specifies exactly 'content/<fileID>.vN.md' immutable version files; write.go implements this literally (contentDirName='content', VersionPath format '%d.v%d.md'). LLD explicitly scopes CAS of the catalog CurrentVersion pointer and WAL integration as separate concerns ('An atomic CAS swaps the current version pointer... once the new version is durably written' -- read path/CAS, not addressed here), and the commit message / code comments correctly defer that to 2a.1.2/2a.1.4, matching this subtask's stated scope. engine/catalog/record.go already has a CurrentVersion uint64 field ready for that future CAS integration -- informational, not this subtask's concern."
+    },
+    "first_touch_toctou_race": {
+      "verdict": "pass_not_present",
+      "evidence": "Traced write.go:78-101. stateAny, _ := vw.states.LoadOrStore(fileID, &fileState{}) is called first; sync.Map.LoadOrStore is documented to atomically return the FIRST-stored value for a given key even when multiple goroutines race to store concurrently, so all concurrent first-touch callers for the same fileID obtain the SAME *fileState pointer. Only after this does the code call state.mu.Lock() (line 82) and then check `if state.next == 0` to trigger scanLatestVersion (lines 85-90). Because the mutex is per-fileID and shared correctly via LoadOrStore, the lock is effectively held BEFORE any scan+increment for a given fileID happens, and it's the SAME lock for every concurrent first-touch caller. This eliminates the TOCTOU window described in the task: no two goroutines can simultaneously scan-and-compute 'next N=1' for a brand-new fileID, because the second goroutine blocks on state.mu.Lock() until the first has both scanned AND written and updated state.next."
+    },
+    "glob_pattern_anchoring": {
+      "verdict": "pass",
+      "evidence": "scanLatestVersion uses prefix := fmt.Sprintf(\"%d.v\", fileID) and strings.HasPrefix, where the prefix embeds the '.v' separator. For fileID=4, prefix='4.v'; '42.v3.md' does not have this prefix ('42.' != '4.v'), so no false match. Confirmed by the 'distinct fileIDs do not interfere' test using exactly 4 vs 42, which passed under -race."
+    },
+    "atomicity_temp_rename": {
+      "verdict": "pass",
+      "evidence": "writeVersionFile (lines 108-136): os.CreateTemp in the SAME directory as the final path (so rename is same-filesystem/atomic), Write, Sync (fsync before visibility), Close, then os.Rename to final path; every error path removes the temp file. No window exists where a partially-written file is visible under its final versioned name."
+    },
+    "single_process_assumption": {
+      "verdict": "pass_confirmed_intentional",
+      "evidence": "sync.Map + per-fileID sync.Mutex only provide safety within one OS process. AGENT.md states the Go engine (catalog/btree/mvcc/wal) and the Python agents/ runtime never share process memory, and nothing elsewhere in the repo suggests multiple Go engine processes writing the same content directory concurrently. This is a reasonable, explicit single-process design, not a silently hidden multi-process gap, for a subtask scoped to the in-process write primitive."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comment",
+      "evidence": "Version numbers are uint64 -- effectively unbounded for this use case, no realistic overflow risk. One minor gap: if scanLatestVersion's os.ReadDir fails mid-way for reasons other than 'directory missing' (e.g. transient EIO), the fileState.next remains 0 permanently for that fileID even after the error is returned to the caller, since the failed scan happens under the lock but doesn't cache a sentinel -- a subsequent call will simply retry the scan (harmless), but there is no test exercising a disk-scan failure path. Low priority given os.ReadDir failures are rare/fatal-class in this engine's operating environment."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "No user-controlled path traversal risk observed at this layer (fileID is uint64, not attacker-controlled string); file permissions follow os.CreateTemp defaults (0600) consistent with other content files in the repo. No new attack surface introduced by this subtask."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Small, well-commented, single-responsibility file (177 lines). Comments explicitly cross-reference docs/LLD/mvcc.md and engine/catalog/content.go conventions. Sane foundation for 2a.1.2's catalog-CAS integration: WriteVersion's return value (the new version number) is exactly what a subsequent CAS against CatalogRecord.CurrentVersion would need as its new value, and the per-fileID mutex used here could plausibly be reused/coordinated with a future catalog-side CAS retry loop without restructuring this file."
+    },
+    "test_coverage": {
+      "verdict": "pass_with_comment",
+      "evidence": "TestVersionWriter's 'concurrent' subtest launches 50 goroutines against fileID=99 in a FRESH tempdir/VersionWriter -- this is genuinely the first-touch scenario (not steady-state re-writes after cache warm), and all 50 calls race for the very first LoadOrStore on that fileID. Ran under -race with -count=5 repeats plus verbose -count=1: all pass, no data race reports. One coverage gap: the goroutines are launched via a plain `go func(){...}()` loop with no explicit start barrier (e.g. a closed channel/WaitGroup gate) to force them to all begin the LoadOrStore/scan/write attempt at close to the same instant; this relies on Go's scheduler/GOMAXPROCS to produce actual contention, which is common practice but slightly weaker than an explicit barrier. Given the code was independently traced and shown correct regardless of scheduling (the mutex ordering guarantees correctness even without genuine simultaneity), this is a minor test-robustness suggestion, not a correctness gap. No dedicated sub-test for scanLatestVersion's error path (disk read failure) exists."
+    },
+    "regression": {
+      "verdict": "pass",
+      "evidence": "go build ./... and go vet ./... clean. go test ./mvcc/... -race -v -count=1 all pass. go test ./mvcc/... -race -count=5 all pass (no flakiness). Full go test ./... -race -count=1 passes across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal with no regressions; engine/graph, engine/loadtest, engine/rpc, engine/split have no test files (pre-existing, unrelated to this change)."
+    }
+  },
+  "comments_for_followup": [
+    "Consider adding an explicit start-barrier (channel close or sync.WaitGroup gate) to the concurrent sub-test so all 50 goroutines provably attempt WriteVersion at the same instant, strengthening confidence the first-touch race is being genuinely exercised rather than incidentally scheduled that way.",
+    "Consider a sub-test exercising scanLatestVersion's os.ReadDir error path to confirm state.next is left safely at 0 (retryable) rather than poisoned.",
+    "2a.1.2 will need to decide whether WriteVersion's mutex and the future catalog CAS retry loop are coordinated or independent -- worth an explicit design note before that subtask starts, but out of scope here."
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "run_id": "2026-07-04-068-commit",
+  "subtask": "2a.1.1",
+  "status": "completed",
+  "outputs": {
+    "commit_doc": ".cdr/commits/task-2a.1.1.md",
+    "task_index_entry": ".cdr/index/task.jsonl#task-2a.1.1",
+    "verification_run": ".cdr/runs/2026-07-04/067-verification/",
+    "implementation_run": ".cdr/runs/2026-07-04/066-implementation/"
+  },
+  "notes": "Parent task-2a.1 left as planned (state unchanged); subtasks 2a.1.2-2a.1.5 still pending."
+}

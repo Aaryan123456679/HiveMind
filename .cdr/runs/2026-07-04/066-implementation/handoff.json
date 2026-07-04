@@ -1,0 +1,26 @@
+{
+  "subtask": "2a.1.1",
+  "commit": "34bc95d28b46cbced5c97f5a8710b7d8acc686de",
+  "new_package": "engine/mvcc",
+  "files": {
+    "implementation": "engine/mvcc/write.go",
+    "test": "engine/mvcc/write_test.go"
+  },
+  "key_symbols": {
+    "type": "VersionWriter (engine/mvcc/write.go)",
+    "constructor": "NewVersionWriter(root string) (*VersionWriter, error)",
+    "write_api": "(*VersionWriter).WriteVersion(fileID uint64, data []byte) (uint64, error)",
+    "path_helper": "(*VersionWriter).VersionPath(fileID, version uint64) string",
+    "internal_scan": "(*VersionWriter).scanLatestVersion(fileID uint64) (uint64, error)"
+  },
+  "test_entrypoint": "go test ./engine/mvcc/... -run TestVersionWriter -race -v -count=1",
+  "docs_reference": "docs/LLD/mvcc.md (Write path section, lines ~15-19)",
+  "out_of_scope_left_for_later_subtasks": [
+    "2a.1.2: CatalogRecord.CurrentVersion CAS pointer swap after a version is durably written",
+    "2a.1.4: WAL-before-apply integration for the version-pointer swap",
+    "read path for a specific version (currently only VersionPath/on-disk existence)",
+    "GC/compaction of old versions"
+  ],
+  "self_consistency_run": ".cdr/runs/2026-07-04/066-implementation/self-consistency.json",
+  "next_step": "run /cdr:verify against commit 34bc95d28b46cbced5c97f5a8710b7d8acc686de"
+}

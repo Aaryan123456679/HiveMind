@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "067-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "2a.1.1",
+  "git_head": "34bc95d28b46cbced5c97f5a8710b7d8acc686de",
+  "run_key": "sha256:2a1.1-mvcc-writego-34bc95d28b46cbced5c97f5a8710b7d8acc686de",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:30:00Z"
+}
