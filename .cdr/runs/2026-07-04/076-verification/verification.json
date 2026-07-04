@@ -1,0 +1,52 @@
+{
+  "subtask": "2a.1.4",
+  "issue": 6,
+  "commit": "909059071af23a0508647af742ca9bb09ea4293d",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "CommitVersion now takes *wal.Writer; every CAS's resulting CatalogRecord is logged via wal.NewCatalogPutRecord + wal.AppendAndApply BEFORE Catalog.CompareAndSwapCurrentVersion applies it (engine/mvcc/write.go walCAS, lines ~257-306). Matches docs/wal.md invariant ('every mutation to the catalog ... must be logged in the WAL') and docs/mvcc.md's 'every version-pointer CAS is a catalog mutation and therefore goes through the WAL first' verbatim."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "Reuses existing wal.AppendAndApply/RecordCatalogPut primitives, same pattern as engine/catalog/content.go's Create/Append (no new WAL record type, no engine/catalog changes) — consistent with existing striped-lock + WAL-before-apply idiom in the codebase."
+    },
+    "concurrency_locking": {
+      "status": "PASS",
+      "evidence": "Traced full lock graph: commitLocks[fileID] (VersionWriter, new) is held across the whole re-verify->WAL-append->apply sequence. Inside that critical section, cat.Get and Catalog.CompareAndSwapCurrentVersion each acquire/release Catalog's stripe lock (engine/catalog/catalog.go stripeFor) transiently and non-overlapping; wal.Writer.Append acquires/releases its own w.mu transiently and non-overlapping (engine/wal/writer.go:227 Append returns before AppendAndApply invokes apply()). At no point does this goroutine hold two of {commitLocks, catalog stripe lock, wal.Writer.mu} simultaneously except commitLocks as the sole outer lock, and none of the inner locks ever call back into commitLocks or each other. ContentStore.Append (Phase 1 1.4.3) uses an analogous but textually distinct cs.stripes array, never interacts with VersionWriter.commitLocks, and follows the identical non-nested pattern (content.go:235-280) — no shared mutex, no cross-lock cycle possible. No lock-ordering inversion found; the claimed 're-verify immediately before logging prevents a losing CAS from reaching the WAL' property holds because commitLocks serializes ALL attempts for a given fileID and CompareAndSwapCurrentVersion has no other caller in the codebase."
+    },
+    "fail_closed_on_wal_error": {
+      "status": "PASS",
+      "evidence": "wal.AppendAndApply calls w.Append first; if it errors, apply() is never invoked (engine/wal/record.go:352-367), so Catalog.CompareAndSwapCurrentVersion never runs. walCAS returns (false, err), commitVersionWithHook returns the wrapped error without ever treating it as a lost-race retry, and the deferred lock.Unlock() releases commitLocks[fileID] cleanly on every return path — a subsequent retry is not deadlocked."
+    },
+    "recovery_replay_correctness": {
+      "status": "PASS",
+      "evidence": "catalog.RecoverFromWAL (engine/catalog/recovery.go:44-64) replays RecordCatalogPut records unconditionally via cat.Put in on-disk log order; verified via TestVersionCASWAL/crash_after_durable_cas_recovery_applies_it that two successive durable CAS records for the same fileID replay last-write-wins to the correct final CurrentVersion (2), and .../crash_mid_cas_torn_record_discarded confirms a torn tail record is discarded (not partially applied), leaving CurrentVersion at the last fully-durable value (1)."
+    },
+    "test_coverage": {
+      "status": "PASS",
+      "evidence": "TestVersionCASWAL has 3 real subtests: (1) wal_before_apply_ordering — genuine hook-based proof, independently re-reads the WAL segment from disk inside the hook (not just sequential assertions) and asserts cat.Get still shows old CurrentVersion at that point; (2) crash_mid_cas_torn_record_discarded — genuinely tears a WAL record via raw file append with a bogus length header + truncated payload (same recipe as engine/wal/recovery_test.go's TestCrashInjectionRecovery), confirms recovery reverts to pre-CAS value; (3) crash_after_durable_cas_recovery_applies_it — clean-durable-record case, confirms recovery applies the latest value. Both required scenarios (torn vs. durable) are genuinely distinguished, not just one tested."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "go build ./... and go vet ./... clean (engine module). go test ./mvcc/... -race -v -count=1: all tests pass including TestVersionCASWAL and pre-existing TestCurrentVersionCAS/TestVersionWriter/TestSnapshotRead. go test ./mvcc/... -race -run 'TestVersionCASWAL|TestCurrentVersionCAS' -count=10: completed in ~36s, no hang, no race detector output. go test ./... -race -count=1 across full engine module (engine, btree, catalog, mvcc, wal): all green, completed in ~2 min wall time monitored with a kill-on-timeout guard, no deadlock observed."
+    },
+    "security": {
+      "status": "PASS",
+      "evidence": "No new external inputs; CAS payload is the existing CatalogRecord encoding. No secrets/paths introduced."
+    },
+    "maintainability": {
+      "status": "PASS_WITH_COMMENTS",
+      "evidence": "commitLocks sync.Map grows one entry per distinct fileID ever committed and is never pruned — same unbounded-growth shape as the pre-existing 'states' sync.Map in the same struct (2a.1.2), so not a new regression, but worth flagging for a future cleanup/eviction pass across both maps."
+    },
+    "confidence": {
+      "status": "HIGH",
+      "evidence": "Full diff read, lock graph traced against all three relevant locks (commitLocks, Catalog stripe, wal.Writer.mu) and their call sites, recovery replay path read end-to-end, all claimed tests executed and re-run for flakiness, full regression suite executed with hang-guard."
+    }
+  },
+  "notes": [
+    "CommitVersion's signature change (added *wal.Writer param) has zero non-test callers in the codebase today, so this cannot yet regress any real caller; commit message correctly scopes this as 'may now be wired into real callers' rather than claiming it is wired in.",
+    "Minor, non-blocking: commitLocks sync.Map has no eviction/pruning, mirroring the existing states map's same limitation from 2a.1.2 — flag for a later maintenance subtask rather than blocking this one."
+  ]
+}
