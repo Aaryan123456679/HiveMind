@@ -1,0 +1,29 @@
+{
+  "subtask": "2a.1.4",
+  "issue": 6,
+  "commit": "909059071af23a0508647af742ca9bb09ea4293d",
+  "files": {
+    "modified": [
+      "engine/mvcc/write.go",
+      "engine/mvcc/write_test.go",
+      "engine/mvcc/read_test.go"
+    ]
+  },
+  "key_symbols": {
+    "VersionWriter.commitLocks": "engine/mvcc/write.go (new field, sync.Map fileID -> *sync.Mutex)",
+    "VersionWriter.CommitVersion": "engine/mvcc/write.go — signature changed: now (cat *catalog.Catalog, w *wal.Writer, fileID uint64, data []byte) (uint64, error)",
+    "VersionWriter.commitVersionWithHook": "engine/mvcc/write.go — CommitVersion's real implementation with test-only afterWALBeforeApply seam",
+    "VersionWriter.walCAS": "engine/mvcc/write.go — WAL-before-apply CAS step; per-fileID commit lock re-verifies expected before ever logging to WAL"
+  },
+  "design_decision": "Reused wal.RecordCatalogPut / wal.NewCatalogPutRecord verbatim (no new WAL record type); no changes to engine/catalog/catalog.go or engine/catalog/recovery.go. Justification and rejected alternative (WAL param on Catalog.CompareAndSwapCurrentVersion itself) recorded in architecture-discovery.md and plan.md.",
+  "breaking_change": "VersionWriter.CommitVersion gains a new *wal.Writer parameter (2nd positional arg). No production callers existed yet (this was the whole point of 2a.1.2's verification-flagged gap); test callers in write_test.go/read_test.go updated.",
+  "tests": {
+    "TestVersionCASWAL": "engine/mvcc/write_test.go — 3 subtests: wal_before_apply_ordering (hook-based, mirrors TestContentCreate/TestSnapshotRead), crash_mid_cas_torn_record_discarded (crash-injection recipe from engine/wal/recovery_test.go's TestCrashInjectionRecovery, reused via manual torn-header append to wal-0.log), crash_after_durable_cas_recovery_applies_it",
+    "existing_regressions_checked": "TestCurrentVersionCAS (2a.1.2), TestSnapshotRead/TestSnapshotReadNoVersionCommitted (2a.1.3), TestVersionWriter (2a.1.1) — all green; engine/catalog, engine/wal, engine/btree full suites green"
+  },
+  "validation_matrix": ".cdr/runs/2026-07-04/075-implementation/validation-matrix.json",
+  "self_consistency": ".cdr/runs/2026-07-04/075-implementation/self-consistency.json",
+  "is_commit_version_now_safe_for_real_callers": "YES — this subtask closes the gap 2a.1.2's verification flagged. Every version-pointer CAS is now durably WAL-logged (fsynced) strictly before the catalog pointer swap becomes visible, and a crash at any point recovers cleanly via catalog.RecoverFromWAL (already-generic unconditional CatalogPut replay, unmodified). A future caller-wiring subtask may now invoke CommitVersion from real code paths, provided it passes the same long-lived *wal.Writer used for that catalog's WAL directory (same precondition ContentStore already imposes on its callers).",
+  "not_done_by_this_run": "self-verification (I4) — /cdr:verify must independently verify this subtask before it is marked verified in .cdr/index/task.jsonl",
+  "next_step": "run /cdr:verify against commit 909059071af23a0508647af742ca9bb09ea4293d for subtask 2a.1.4"
+}
