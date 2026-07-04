@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.3.4",
+  "risk_level": "high",
+  "risk_rationale": "This is the culmination of the whole WAL subsystem's correctness contract: exactly-once, in-order, no-double-apply replay from a checkpoint pointer. It also closes a previously flagged decode-validation gap (RecordTypeInvalid / unrecognized RecordType bytes not rejected by DecodeTypedRecord), and it is the last piece before 1.3.5's crash-injection test builds directly on top of it.",
+  "new_files": [
+    "engine/wal/recovery.go",
+    "engine/wal/recovery_test.go"
+  ],
+  "modified_files": [],
+  "unmodified_but_read_in_full": [
+    "engine/wal/writer.go",
+    "engine/wal/record.go",
+    "engine/wal/checkpoint.go"
+  ],
+  "downstream_consumers": [
+    "engine/wal (subtask 1.3.5: crash-injection recovery test, builds directly on Replay)",
+    "Phase 2a catalog/btree integration (future, real apply wiring into engine/catalog and engine/btree; explicitly out of scope for 1.3.4, see architecture-discovery.md's Scope boundary section)"
+  ],
+  "regression_gaps_addressed": [
+    {
+      "source_run": "2026-07-04-038-verification",
+      "subtask": "1.3.2",
+      "gap": "DecodeTypedRecord performs no validation rejecting RecordTypeInvalid or any unrecognized RecordType byte.",
+      "resolution": "Replay validates Type immediately after DecodeTypedRecord succeeds, before invoking apply; rejects RecordTypeInvalid (0) and any value outside the 4 known valid RecordType constants with a hard error. Genuinely tested via TestRecoveryReplayInvalidRecordType (a segment with a hand-crafted invalid Type byte causes Replay to return an error).",
+      "status": "closed"
+    }
+  ],
+  "regression_gaps_not_addressed_here": [
+    {
+      "source_run": "2026-07-04-036-verification",
+      "subtask": "1.3.1",
+      "gap": "OpenWriter's resume path does not validate/tolerate a torn tail on the resumed segment before further Appends.",
+      "status": "deferred_to_1.3.5",
+      "reason": "Explicitly documented in writer.go/OpenWriter's own doc comment as deferred to 1.3.4/1.3.5. This subtask adds a separate, explicit Replay entrypoint invoked on startup; it does not touch OpenWriter. Torn-tail detection/truncation-on-resume is 1.3.5's crash-injection scope, which by design simulates an actual mid-write crash (a torn trailing record) -- this subtask's own test spec instead pre-populates a WELL-FORMED WAL (no injected torn record) and only tests the checkpoint-forward replay contract plus the RecordType validation gap."
+    }
+  ],
+  "files_intentionally_not_modified_and_why": [
+    {
+      "file": "engine/wal/writer.go",
+      "reason": "Already verified (1.3.1). ReadSegment's full-segment-from-offset-0 behavior remains correct and used as-is elsewhere; recovery.go adds its own small offset-aware parser (readSegmentFrom) rather than modifying ReadSegment's signature, to avoid re-opening verification surface on an already-verified file for a single new caller's need."
+    },
+    {
+      "file": "engine/wal/record.go",
+      "reason": "Already verified (1.3.2). The RecordTypeInvalid regression note names the recovery-replay dispatch point as the required closure location ('closing it ... before 1.3.4's recovery replay dispatches on Type directly'), so validation is added at that one call site in recovery.go rather than inside DecodeTypedRecord itself."
+    },
+    {
+      "file": "engine/wal/checkpoint.go",
+      "reason": "Already verified (1.3.3). CheckpointPointer/LoadCheckpoint/ArchivableSegments are consumed as-is; no functional gap found requiring a change here."
+    },
+    {
+      "file": "docs/LLD/wal.md",
+      "reason": "Confirmed stale/scaffold-only, flagged across three consecutive verifications (1.3.1/1.3.2/1.3.3). An LLD-sync pass is out of scope for this implementation subtask, whose issue-stated impacted modules are only recovery.go/recovery_test.go. Left as a known, pre-existing, already-tracked gap (not newly introduced by this subtask)."
+    }
+  ]
+}

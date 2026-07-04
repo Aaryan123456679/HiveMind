@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.3.4",
+  "note": "Internal sanity only (build green, matrix covered). This is NOT verification (invariant I4); verification is delegated to /cdr:verify.",
+  "checks": [
+    {
+      "command": "go build ./engine/...",
+      "result": "pass"
+    },
+    {
+      "command": "go vet ./engine/...",
+      "result": "pass"
+    },
+    {
+      "command": "go test ./engine/wal/... -race -v -count=1",
+      "result": "pass",
+      "summary": "All prior tests (1.3.1 writer_test.go: TestSegmentWriter, TestAppendOversizedRecordHardErrors, TestOpenWriterResumesExistingSegments; 1.3.2 record_test.go: TestRecordEncodeDecodeRoundTrip, TestAsXxxTypeMismatch, TestFsyncBeforeApply, TestAppendAndApplyErrorFromApply, TestAppendAndApplyWriterErrorSkipsApply; 1.3.3 checkpoint_test.go: TestCheckpointManifest, TestLoadCheckpointNoManifest) plus new recovery_test.go tests (TestRecoveryReplay, TestRecoveryReplayNoOpWhenCheckpointCoversEverything, TestRecoveryReplayNoCheckpointStartsFromBeginning, TestRecoveryReplayInvalidRecordType) all pass under -race, no regressions."
+    },
+    {
+      "command": "go test ./engine/wal/... -run TestRecoveryReplay -v -count=1",
+      "result": "pass",
+      "summary": "Exact test-spec invocation from the issue; all 4 recovery tests (subtest name prefix match) pass."
+    }
+  ],
+  "validation_matrix_fully_covered": true
+}

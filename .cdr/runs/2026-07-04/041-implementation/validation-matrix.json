@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "subtask": "1.3.4",
+  "rows": [
+    {
+      "requirement": "On startup, replay reapplies every logged-but-not-yet-checkpointed mutation, in order, exactly once",
+      "test": "TestRecoveryReplay",
+      "covered": true,
+      "notes": "Asserts replayed sequence length and per-record (Type, Payload) equality against the exact original sub-sequence from the checkpoint index forward, in order; also cross-checks convergent final state vs. applying all mutations directly from scratch."
+    },
+    {
+      "requirement": "Records before the checkpoint pointer are not replayed (no double-application)",
+      "test": "TestRecoveryReplay",
+      "covered": true,
+      "notes": "Explicit negative-assertion loop checks no pre-checkpoint record's (Type, Payload) appears in the replayed sequence."
+    },
+    {
+      "requirement": "No-op if the checkpoint pointer already covers all segments",
+      "test": "TestRecoveryReplayNoOpWhenCheckpointCoversEverything",
+      "covered": true,
+      "notes": "Checkpoints at (last segment number, last segment's os.Stat size); asserts apply call count stays 0 and Replay returns nil."
+    },
+    {
+      "requirement": "No checkpoint yet (fresh WAL) starts replay from segment 0, offset 0",
+      "test": "TestRecoveryReplayNoCheckpointStartsFromBeginning",
+      "covered": true,
+      "notes": "No Checkpoint call at all; asserts every originally-appended record (across multiple segments) is replayed in order."
+    },
+    {
+      "requirement": "Closes the 1.3.2-flagged gap: RecordTypeInvalid / unrecognized RecordType byte must cause a hard error during replay, not a silent skip or silent success",
+      "test": "TestRecoveryReplayInvalidRecordType",
+      "covered": true,
+      "notes": "Two sub-cases: hand-crafted RecordTypeInvalid(0) and hand-crafted RecordType(99) (never assigned to any constant); both assert Replay returns a non-nil error, and the first sub-case additionally asserts apply was called exactly once (only for the valid record preceding the bad one), proving replay does not silently continue past the bad record either."
+    },
+    {
+      "requirement": "Multi-segment traversal: checkpoint's own segment (skip-then-replay-rest) plus full replay of every later segment",
+      "test": "TestRecoveryReplay",
+      "covered": true,
+      "notes": "maxSegmentBytes=128 with 40 records forces multiple rotations; checkpoint chosen at the first index reaching segment >= 1, with test-setup assertions that Writer.SegmentNum() continued further past the checkpoint's segment before Close."
+    }
+  ],
+  "gaps": []
+}
