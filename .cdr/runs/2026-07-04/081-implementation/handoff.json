@@ -1,0 +1,28 @@
+{
+  "subtask": "task-2a.2.1",
+  "commit": "3579336",
+  "new_files": {
+    "engine/mvcc/gc.go": "EpochManager type (full struct starts line ~30), API: NewEpochManager, CurrentEpoch, AdvanceEpoch, AcquireCurrentEpoch, Release, RefCount, MinReferencedEpoch",
+    "engine/mvcc/gc_test.go": "TestEpochRefcount (sequential bookkeeping, non-LIFO release order, double-release detection, MinReferencedEpoch transitions) + TestEpochRefcountConcurrent (goroutine stress under -race)"
+  },
+  "epoch_model_for_2a.2.2_2a.2.3": {
+    "scope": "global (store-wide), NOT per-fileID",
+    "counter_semantics": "uint64 starting at 1 (0 reserved as sentinel); epoch N = 'state of the world after the Nth AdvanceEpoch call'",
+    "intended_future_wiring": [
+      "VersionWriter.CommitVersion (write.go) should call EpochManager.AdvanceEpoch() exactly once per successful CAS (not per retry attempt) so epoch boundaries align with a fileID's CurrentVersion actually advancing store-wide",
+      "Snapshot (read.go) NewSnapshot should call EpochManager.AcquireCurrentEpoch() and store the returned epoch on the Snapshot struct",
+      "A new Snapshot.Close() method (does not exist yet) should call EpochManager.Release(storedEpoch) — this requires updating 2a.1.3's TestSnapshotRead and 2a.1.5's TestConcurrentReadersWriters call sites to call Close(), OR deciding Close() is optional/best-effort; NOT decided in this subtask, left open for 2a.2.2",
+      "GC/compactor logic: a version superseded strictly before EpochManager.MinReferencedEpoch() (or when MinReferencedEpoch's ok==false, meaning no live snapshots at all) is safe to reclaim"
+    ],
+    "explicit_tradeoff": "As of this commit, EpochManager exists and is fully unit-tested in isolation but is NOT yet called from anywhere in write.go/read.go — refcounting is not yet load-bearing for real reads/writes. This was a deliberate scoping decision (see architecture-discovery.md/plan.md in this run dir) to avoid touching 2a.1.3/2a.1.5's existing passing tests within a subtask whose own acceptance criteria is only about the refcounting primitive itself."
+  },
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-04/081-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-04/081-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-04/081-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-04/081-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-04/081-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-04/081-implementation/self-consistency.json"
+  },
+  "next_step": "/cdr:verify for task-2a.2.1"
+}

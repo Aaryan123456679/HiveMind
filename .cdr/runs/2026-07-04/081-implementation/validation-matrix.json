@@ -1,0 +1,15 @@
+{
+  "subtask": "task-2a.2.1",
+  "rows": [
+    {"criterion": "epoch refcount increments on 'snapshot' creation (Acquire)", "test": "TestEpochRefcount step 2", "covered": true},
+    {"criterion": "epoch refcount decrements on completion (Release)", "test": "TestEpochRefcount step 4", "covered": true},
+    {"criterion": "refcount correct at every intermediate step, not just end", "test": "TestEpochRefcount steps 2-5 assert after each call", "covered": true},
+    {"criterion": "reaches zero exactly when last referencing snapshot closes", "test": "TestEpochRefcount step 4", "covered": true},
+    {"criterion": "refcount never goes negative, even under double-release", "test": "TestEpochRefcount step 6 (errors, not panics/corrupts)", "covered": true},
+    {"criterion": "overlapping snapshots across different epochs tracked independently", "test": "TestEpochRefcount steps 3-5 (epoch 1 vs epoch 2 refcounts independent)", "covered": true},
+    {"criterion": "close in non-LIFO order still correct", "test": "TestEpochRefcount step 4 (release 2nd, then 1st, then 3rd)", "covered": true},
+    {"criterion": "race-clean under concurrent acquire/release", "test": "TestEpochRefcount step 7 + `go test -race`", "covered": true},
+    {"criterion": "GC query surface for future subtasks (MinReferencedEpoch)", "test": "TestEpochRefcount step 5", "covered": true},
+    {"criterion": "no regression to 2a.1.* mvcc tests", "test": "full `go test ./engine/mvcc/... -race -v -count=1` re-run in self-consistency", "covered": true}
+  ]
+}

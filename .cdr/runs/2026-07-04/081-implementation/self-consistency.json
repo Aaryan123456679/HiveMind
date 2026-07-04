@@ -1,0 +1,12 @@
+{
+  "subtask": "task-2a.2.1",
+  "checks": [
+    {"check": "gofmt -l ./mvcc/", "result": "clean (no output)"},
+    {"check": "go vet ./...", "result": "clean"},
+    {"check": "go build ./...", "result": "BUILD_OK"},
+    {"check": "go test ./mvcc/... -race -v -count=1", "result": "PASS (all 8 top-level tests: TestEpochRefcount, TestEpochRefcountConcurrent, TestConcurrentReadersWriters, TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter (+4 subtests), TestCurrentVersionCAS, TestVersionCASWAL (+3 subtests)) — 13.284s, no races"}
+  ],
+  "validation_matrix_covered": true,
+  "regressions": "none — all pre-existing 2a.1.* tests (write_test.go, read_test.go, mvcc_test.go) re-ran green under -race",
+  "note": "This is internal sanity only (build green, matrix covered); NOT independent verification. /cdr:verify must run separately."
+}

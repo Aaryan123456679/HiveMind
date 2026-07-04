@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-081-implementation",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "task-2a.2.1",
+  "git_head": "018f69a18fc66a55e9842d2af1ae7a0b546f125c",
+  "run_key": "task-2a.2.1@018f69a18fc66a55e9842d2af1ae7a0b546f125c",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-04T00:00:00Z",
+  "ended_at": "2026-07-04T00:30:00Z",
+  "commit": "3579336"
+}

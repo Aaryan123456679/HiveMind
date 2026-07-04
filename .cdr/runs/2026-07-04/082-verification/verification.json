@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-2a.2.1",
+  "issue": 7,
+  "commit": "3579336c80ebd4c8a3c5c005982fb470baefdeee",
+  "verdict": "PASS_WITH_COMMENTS",
+  "central_question": {
+    "question": "Does deferring EpochManager wiring into Snapshot/CommitVersion violate this subtask's literal acceptance criteria ('each snapshot increments its epoch's refcount on creation')?",
+    "judgment": "NOT a genuine gap. The original planner decomposition (.cdr/runs/2026-07-03/002-planner/plan.json, written before implementation) explicitly scopes 2a.2.1's impacted modules to engine/mvcc/gc.go and gc_test.go ONLY, excluding read.go/write.go, and separately assigns 'a version file is deleted only once its epoch's refcount is zero' to 2a.2.2, whose AC/test requires 'hold some snapshots open, run compactor' -- i.e. actual Snapshot<->EpochManager wiring is pre-planned to land alongside the compactor in 2a.2.2, not 2a.2.1. The 2a.2.1 test spec's phrase 'open/close overlapping snapshots' is satisfied by directly calling AcquireCurrentEpoch/Release on EpochManager in gc_test.go, modeling snapshot lifecycle abstractly -- consistent with what was built. This is pre-existing scope from planning, not the implementer retroactively narrowing the requirement. Accepted as a reasonably-scoped incremental step.",
+    "residual_risk": "Until 2a.2.2 actually wires NewSnapshot->AcquireCurrentEpoch and adds Snapshot.Close()->Release, the literal English of the AC ('each snapshot increments...') is unmet by the real Snapshot type -- EpochManager today has zero live callers anywhere in the codebase. This is flagged as PASS_WITH_COMMENTS rather than plain PASS specifically so 2a.2.2's verification explicitly confirms the wiring actually lands as promised; if 2a.2.2 ships without wiring Snapshot end-to-end, this should be escalated to CHANGES_REQUESTED at that point."
+  },
+  "dimensions": {
+    "requirements": {
+      "status": "pass_with_comments",
+      "evidence": "Refcounting primitive (increment on acquire, decrement on release, never negative, reaches 0 on full release) is implemented and tested exactly per AC text when read as 'the refcounting primitive itself'. See central_question for the literal-vs-scoped nuance."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches docs/LLD/mvcc.md's Garbage collection section verbatim ('each snapshot increments an epoch's refcount on start and decrements on completion; a version is eligible for GC once its epoch's refcount reaches zero and it is not the current version'). Global (not per-fileID) counter choice is documented and reasoned in gc.go doc comments and plan.md; consistent with LLD's 'simplified Postgres-vacuum-style visibility scheme' framing. No modification to read.go/write.go, matching planner's own module scoping for this subtask."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "gc.go is 100% new/additive; no existing symbol modified. Full suite go test ./engine/... ./api/... -race -count=1 passes (engine, engine/btree, engine/catalog, engine/mvcc, engine/wal all ok; graph/loadtest/rpc/split/api have no test files). engine/mvcc specifically: 27.5s, all PASS including pre-existing TestConcurrentReadersWriters, TestSnapshotRead, TestVersionWriter, TestCurrentVersionCAS, TestVersionCASWAL."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Traced by hand: (1) non-LIFO release order (test releases 3 acquisitions of epoch 1 in arbitrary order) -- correct, since a bare per-epoch counter doesn't care about acquisition order. (2) double-release on an already-zero epoch: Release checks `count, ok := refcounts[epoch]; if !ok || count <= 0 { return error }` BEFORE decrementing, so refcount is structurally guaranteed to never go negative; test explicitly asserts a non-nil error (not panic) and RefCount stays 0 afterward -- genuine, not a fake assertion. (3) Release on an epoch number never acquired at all (epoch 999): also correctly errors via the same `!ok` check. (4) MinReferencedEpoch with a gap: hand-traced scenario 'epochs 1,2,3 with live refs on 1 and 3, none on 2' -> MinReferencedEpoch()=1 (the true global minimum among refcount>0 entries), which is the CORRECT and safe answer for GC: a live snapshot at epoch 1 could still be reading a version that predates epoch 1, so GC must not reclaim anything superseded before epoch 1 regardless of epoch 2 being empty. This is conservative (foregoes reclaiming epoch-2-only garbage) by design, matching the LLD's 'simplified' global watermark scheme, not a correctness bug."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new external inputs, no I/O, no injection surface. Pure in-memory counter/map guarded by a single mutex."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "O(1) Acquire/Release/CurrentEpoch/AdvanceEpoch under a single mutex; MinReferencedEpoch is O(#distinct-nonzero-epochs) map scan, acceptable for a GC-frequency operation. No obvious hot-path impact since nothing calls this yet."
+    },
+    "maintainability": {
+      "status": "pass_with_comments",
+      "evidence": "Doc comments are unusually thorough and explicitly cross-reference the LLD and future subtasks. Minor nit: AcquireCurrentEpoch's name emphasizes 'get the current epoch' but its primary side effect is incrementing a refcount (like a reference-counted acquire); a future caller skimming the name alone could plausibly assume it's a pure read like CurrentEpoch(). The doc comment does clarify this well, so this is a naming style nit, not a defect."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestEpochRefcount covers: initial state, sequential acquire with per-step assertions, cross-epoch AdvanceEpoch while old epoch still referenced, non-LIFO release with per-step assertions, MinReferencedEpoch at multiple transition points, double-release and never-acquired-epoch error paths. TestEpochRefcountConcurrent runs 20 goroutines x 50 ops with -race, asserting terminal invariants (all refcounts 0, MinReferencedEpoch ok=false). Ran TestEpochRefcount and TestEpochRefcountConcurrent at -count=10 -race: no flakes."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Verified build/vet, full race test suite, hand-traced edge cases, and cross-checked the central scoping question against the pre-implementation planner artifact (plan.json from 2026-07-03), which independently corroborates the implementer's scoping decision was pre-planned, not invented post-hoc."
+    },
+    "possible_improvements": [
+      "Consider renaming AcquireCurrentEpoch to something like AcquireEpoch or IncrefCurrentEpoch to make the refcount side effect more discoverable from the name alone.",
+      "2a.2.2's verification MUST explicitly confirm NewSnapshot calls AcquireCurrentEpoch and a Snapshot.Close() (new method) calls Release -- this is the single most important carry-forward check from this subtask.",
+      "MinReferencedEpoch's global (not per-fileID) watermark is intentionally coarse; document this trade-off (versions between two live-referenced epochs cannot be reclaimed even though nothing references the epoch in between) directly in the GC/compactor design doc for 2a.2.2 so it isn't mistaken for a bug later."
+    ]
+  },
+  "commands_run": [
+    "(cd engine && go build ./... && go vet ./...)  -> OK",
+    "go test ./engine/mvcc/... -race -v -count=1  -> all PASS",
+    "go test ./engine/mvcc/... -race -run TestEpochRefcount$ -count=10  -> OK, no flakes",
+    "go test ./engine/mvcc/... -race -run TestEpochRefcountConcurrent$ -count=10  -> OK, no flakes",
+    "go test ./engine/... ./api/... -race -count=1  -> all PASS, zero regressions"
+  ]
+}

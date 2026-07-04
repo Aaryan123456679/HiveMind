@@ -1,0 +1,24 @@
+{
+  "subtask": "task-2a.2.1",
+  "new_files": [
+    "engine/mvcc/gc.go",
+    "engine/mvcc/gc_test.go"
+  ],
+  "modified_files": [],
+  "unchanged_but_reviewed": [
+    "engine/mvcc/write.go",
+    "engine/mvcc/read.go",
+    "engine/mvcc/write_test.go",
+    "engine/mvcc/read_test.go",
+    "engine/mvcc/mvcc_test.go",
+    "docs/LLD/mvcc.md"
+  ],
+  "regression_risk": "none expected — new additive type in a new file; no existing symbol signatures change; existing tests (TestSnapshotRead, TestConcurrentReadersWriters, write_test.go, mvcc_test.go) do not reference gc.go and are unaffected.",
+  "downstream_dependents": [
+    "task-2a.2.2 (compactor: will call EpochManager.AdvanceEpoch from CommitVersion, MinReferencedEpoch to decide reclaimable versions)",
+    "task-2a.2.3 (will likely add Snapshot.Close() wired to EpochManager.Release, using AcquireCurrentEpoch from NewSnapshot)"
+  ],
+  "docs_to_update_later": [
+    "docs/LLD/mvcc.md already describes the target design pre-emptively; no change needed for this subtask, but 2a.2.2/2a.2.3 should update it once wiring lands (e.g. 'last_synced_commit' bump)."
+  ]
+}
