@@ -1,0 +1,25 @@
+{
+  "subtask": "2a.1.1",
+  "criteria": [
+    {
+      "criterion": "Each write creates a new immutable version file with N strictly increasing per fileID",
+      "test": "TestVersionWriter/sequential",
+      "covered": true
+    },
+    {
+      "criterion": "Prior version files are left untouched",
+      "test": "TestVersionWriter/sequential (content+mtime assertions), TestVersionWriter/concurrent",
+      "covered": true
+    },
+    {
+      "criterion": "Concurrent writes to same fileID: no collisions, strictly increasing",
+      "test": "TestVersionWriter/concurrent (-race, many goroutines, assert distinct contiguous version set)",
+      "covered": true
+    },
+    {
+      "criterion": "Monotonic numbering correct across process restart (cold start)",
+      "test": "TestVersionWriter/cold_start_reopen",
+      "covered": true
+    }
+  ]
+}

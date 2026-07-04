@@ -1,0 +1,12 @@
+{
+  "subtask": "2a.1.1",
+  "checks": [
+    {"check": "gofmt -l .", "result": "clean (no output)"},
+    {"check": "go build ./...", "result": "pass"},
+    {"check": "go vet ./...", "result": "pass"},
+    {"check": "go test ./engine/mvcc/... -run TestVersionWriter -race -v -count=1", "result": "PASS (sequential, concurrent, cold_start_reopen, distinct fileIDs subtests all pass)"},
+    {"check": "go test ./... -count=1 (full repo, no -race, sanity for no regressions)", "result": "PASS across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal"}
+  ],
+  "validation_matrix_covered": true,
+  "note": "Internal sanity only, not a verification pass; /cdr:verify still required."
+}

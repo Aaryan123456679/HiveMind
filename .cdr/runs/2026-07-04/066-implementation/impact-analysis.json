@@ -1,0 +1,22 @@
+{
+  "subtask": "2a.1.1",
+  "new_files": [
+    "engine/mvcc/write.go",
+    "engine/mvcc/write_test.go"
+  ],
+  "modified_files": [],
+  "touched_but_unmodified_reference_files": [
+    "engine/catalog/content.go",
+    "engine/catalog/record.go",
+    "engine/catalog/catalog.go",
+    "engine/wal/writer.go",
+    "docs/LLD/mvcc.md"
+  ],
+  "risk": "low - purely additive new package, no existing package's public API, on-disk format, or behavior changes",
+  "backward_compat": "N/A - new package, no consumers yet",
+  "out_of_scope_confirmed": [
+    "catalog CatalogRecord.CurrentVersion CAS wiring (2a.1.2)",
+    "WAL integration for version-pointer swap (2a.1.4)",
+    "GC/compaction of old versions (later subtask per docs/LLD/mvcc.md)"
+  ]
+}
