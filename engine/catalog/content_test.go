@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -178,5 +179,46 @@ func TestContentCreateInvalidFileID(t *testing.T) {
 	rec := testContentRecord(InvalidFileID)
 	if _, err := cs.Create(rec, []byte("data")); err == nil {
 		t.Fatal("Create with InvalidFileID: want error, got nil")
+	}
+}
+
+// TestContentRead covers subtask 1.4.2's full test spec: writing content via
+// Create then reading it back via Read must return byte-for-byte identical
+// content to what was written.
+func TestContentRead(t *testing.T) {
+	cs, _, _ := newTestContentStore(t)
+
+	const fileID = uint64(7)
+	data := []byte("# Read Path\n\nContent written then read back verbatim.\n")
+	rec := testContentRecord(fileID)
+	rec.SizeBytes = uint64(len(data))
+
+	if _, err := cs.Create(rec, data); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := cs.Read(fileID)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("Read(%d) = %q, want %q", fileID, got, data)
+	}
+}
+
+// TestContentReadNotFound confirms Read reports a wrapped ErrNotFound (rather
+// than an os.ReadFile-shaped error) for a fileID that was never created, so
+// callers can distinguish "never created" from other read failures the same
+// way catalog.go's Get/Delete already let callers distinguish ErrNotFound.
+func TestContentReadNotFound(t *testing.T) {
+	cs, _, _ := newTestContentStore(t)
+
+	const missingFileID = uint64(999)
+	got, err := cs.Read(missingFileID)
+	if got != nil {
+		t.Fatalf("Read(missing) data = %q, want nil", got)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Read(missing) err = %v, want wrapping ErrNotFound", err)
 	}
 }

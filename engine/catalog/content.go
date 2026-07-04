@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -120,6 +121,42 @@ func (cs *ContentStore) createWithHook(rec CatalogRecord, data []byte, afterWALB
 		return offset, fmt.Errorf("catalog: content create: %w", err)
 	}
 	return offset, nil
+}
+
+// Read returns the current full markdown content for fileID exactly as last
+// written by Create (byte-for-byte).
+//
+// Read resolves fileID through the catalog first (cs.cat.Get), mirroring the
+// catalog-is-source-of-truth convention Create already relies on for visibility:
+// a fileID with no catalog record is reported as ErrNotFound (wrapped, matching
+// catalog.go's Get/Delete convention), the same sentinel content_test.go already
+// asserts against via cat.Get. Only once the catalog confirms the fileID exists
+// does Read touch disk at ContentPath(fileID).
+//
+// If the catalog record exists but the content file itself is missing or
+// unreadable, that is reported as a distinct (non-ErrNotFound) error: it
+// indicates an internal inconsistency (e.g. a crash between catalog Put and
+// content file write in some future non-atomic path, or WAL replay not yet
+// implemented) rather than "this fileID was never created", so callers must be
+// able to tell the two apart.
+//
+// Task 1.4.2 is pre-MVCC, single-version only (see content.go's package-level
+// doc comment and contentVersionSuffix): Read always serves the single "v1"
+// file regardless of rec.CurrentVersion; version-aware path resolution is
+// deferred to the later MVCC subtask.
+func (cs *ContentStore) Read(fileID uint64) ([]byte, error) {
+	if _, err := cs.cat.Get(fileID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, fmt.Errorf("catalog: content read: %w: fileID %d", ErrNotFound, fileID)
+		}
+		return nil, fmt.Errorf("catalog: content read: looking up fileID %d: %w", fileID, err)
+	}
+
+	data, err := os.ReadFile(cs.ContentPath(fileID))
+	if err != nil {
+		return nil, fmt.Errorf("catalog: content read: reading content file for fileID %d: %w", fileID, err)
+	}
+	return data, nil
 }
 
 // writeContentFile durably writes data to fileID's content path. It writes to a temporary
