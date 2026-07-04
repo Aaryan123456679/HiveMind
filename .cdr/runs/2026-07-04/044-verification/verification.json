@@ -1,0 +1,78 @@
+{
+  "run_id": "2026-07-04-044-verification",
+  "subtask": "1.3.5",
+  "verdict": "PASS_WITH_COMMENTS",
+  "findings": [
+    {
+      "dimension": "requirements_conformance",
+      "severity": "info",
+      "description": "Literal acceptance criteria satisfied: TestCrashInjectionRecovery truncates both a torn-payload and a torn-header tail on the last segment, asserts Replay returns nil error, applies all prior valid records exactly once in order, and discards the torn bytes. Test name and -run pattern match the issue's test spec exactly. The torn-vs-corrupt distinction (torn = incomplete bytes at tail, silently discarded; corrupt = full-length record with bad CRC, hard error) is applied consistently in three places sharing one code path (parseSegmentRecords): OpenWriter's resume path (repairTornTail), ReadSegment, and readSegmentFrom/Replay. Verified by reading writer.go/recovery.go and their diffs — no place applies discard-on-CRC-mismatch or hard-errors-on-genuine-torn-tail, so the two failure modes are not conflated in either direction."
+    },
+    {
+      "dimension": "architecture_conformance",
+      "severity": "medium",
+      "description": "docs/LLD/wal.md is stale scaffold-only prose (no reference to segment record header format, torn-tail/CRC distinction, fsync-durability semantics, Offset()/checkpoint pairing, or per-segment torn-tail-only-on-last-segment rule). This predates 1.3.5 and was already flagged as an open LLD-sync gap in prior verification runs; 1.3.5 does not update it. Not a code defect, but the LLD continues to drift further from the as-built invariants (e.g. it says nothing about the non-last-segment torn-tail hard-error policy this subtask newly introduces). Recommend a follow-up LLD sync subtask before closing out the WAL crash-safety epic, since new consumers (e.g. the future Checkpoint caller referenced in Offset()'s doc comment) will rely on documented invariants, not just code comments."
+    },
+    {
+      "dimension": "regression_risk",
+      "severity": "low",
+      "description": "Confirmed via `git diff --stat` and `git diff -- engine/wal/writer_test.go engine/wal/recovery_test.go` that all changes to the two pre-existing test files are purely additive (no deleted/modified lines), and full `go test ./...` at the engine module root passes together with all previously-listed regression-guard tests (TestSegmentWriter, TestAppendOversizedRecordHardErrors, TestOpenWriterResumesExistingSegments, record_test.go and checkpoint_test.go suites, TestRecoveryReplay*, TestRecoveryReplayInvalidRecordType) unmodified and green. The recovery.go refactor (readSegmentFrom now returns tornTail bool and records-before-error) changes Replay's internal control flow but is behavior-preserving for all pre-existing passing scenarios: the new readErr-after-apply-loop ordering only changes behavior in the previously-buggy case (CRC corruption after valid records), which is exactly the bug fix claimed and is now covered by TestReplayCRCCorruption."
+    },
+    {
+      "dimension": "edge_cases",
+      "severity": "info",
+      "description": "Tested/verified: empty segment (parseSegmentRecords loop never executes when data is empty -> tornTail=false, no false positive on freshly rotated empty last segment); torn header vs torn payload (both covered by dedicated subtests); torn tail exactly at record boundary (off == len(data) exits loop cleanly, tornTail=false, matches readSegmentFrom's documented contract for a checkpoint offset landing exactly at segment end); multi-segment scenario for the non-last-segment hard-error case (TestCrashInjectionRecoveryTornTailInNonLastSegmentErrors forces rotation across many small segments then truncates a non-last one)."
+    },
+    {
+      "dimension": "security",
+      "severity": "none",
+      "description": "No new I/O paths, no secrets/credentials handled; crash_subprocess_test.go only re-execs the test binary itself with an internal env-var flag scoped to the test process tree and reads back plain WAL record bytes it wrote itself. No plaintext credential exposure introduced."
+    },
+    {
+      "dimension": "concurrency_correctness",
+      "severity": "low",
+      "description": "Offset() takes w.mu identically to SegmentNum(), so it's correctly serialized against Append/rotateLocked. `go test -race` is clean across the whole package, run 5x with the subprocess-crash test targeted, no flakes. Minor coverage gap: no test exercises Offset() called concurrently from another goroutine while Append is in-flight (a race would only be caught if such a test existed) — low severity since the locking pattern is a direct, trivial mirror of the pre-existing SegmentNum()."
+    },
+    {
+      "dimension": "test_coverage",
+      "severity": "low",
+      "description": "TestCrashInjectionRecoveryTornTailInNonLastSegmentErrors's stricter-than-literal behavior (hard error on torn tail in a non-last segment) does not contradict the issue's literal wording, which only specifies behavior for 'the' torn record produced by a crash (necessarily in the actively-written, i.e. last, segment); the new test covers a scenario the issue is silent on and the added policy is a defensible closed-world invariant (only the last segment can legitimately be torn), not a weakening of the required discard-and-proceed behavior. No test exists for a torn tail in a non-last segment when there is only one segment total (i.e., last-segment-only WAL) combined with a checkpoint pointer referencing an already-archived, deleted segment — an edge case outside this subtask's scope but worth flagging as a coverage gap for whichever subtask implements checkpoint archival/truncation."
+    },
+    {
+      "dimension": "maintainability",
+      "severity": "none",
+      "description": "parseSegmentRecords is now the single shared implementation behind OpenWriter's repairTornTail, ReadSegment, and readSegmentFrom, eliminating the previous duplicated hand-rolled parsing loop in readSegmentFrom (confirmed via diff: the old ~30-line manual loop in recovery.go was deleted and replaced with a call into writer.go's shared helper). This reduces the risk of the torn/corrupt semantics drifting apart between the writer-resume path and the replay path, which is exactly the previously-deferred gap (a) this subtask targets."
+    }
+  ],
+  "regression_check": {
+    "pre_existing_tests_modified": false,
+    "pre_existing_tests_all_pass": true,
+    "full_engine_module_tests_pass": true,
+    "tests_verified": [
+      "TestSegmentWriter", "TestAppendOversizedRecordHardErrors", "TestOpenWriterResumesExistingSegments",
+      "TestRecordEncodeDecodeRoundTrip", "TestAsXxxTypeMismatch", "TestFsyncBeforeApply",
+      "TestAppendAndApplyErrorFromApply", "TestAppendAndApplyWriterErrorSkipsApply",
+      "TestCheckpointManifest", "TestLoadCheckpointNoManifest",
+      "TestRecoveryReplay", "TestRecoveryReplayNoOpWhenCheckpointCoversEverything",
+      "TestRecoveryReplayNoCheckpointStartsFromBeginning", "TestRecoveryReplayInvalidRecordType"
+    ]
+  },
+  "test_run_summary": {
+    "commands_run": [
+      "go build ./... (engine module)",
+      "go vet ./... (engine module)",
+      "go test ./wal/... -race -v -count=1",
+      "go test ./wal/... -run 'TestFsyncDurabilitySubprocessCrash|TestCrashInjectionRecovery' -race -count=1 -v (x5, checking for flakiness)",
+      "go test ./... (full engine module)"
+    ],
+    "result": "all green, no flakes across 5 repeated runs of the subprocess-crash and crash-injection tests",
+    "new_tests_confirmed_passing": [
+      "TestCrashInjectionRecovery/torn_payload_at_tail",
+      "TestCrashInjectionRecovery/torn_header_at_tail",
+      "TestOpenWriterResumeTornTailDiscardsAndTruncates",
+      "TestFsyncDurabilitySubprocessCrash",
+      "TestReplayCRCCorruption",
+      "TestCrashInjectionRecoveryTornTailInNonLastSegmentErrors"
+    ]
+  }
+}
