@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-07-04-048-commit",
+  "subtask": "1.4.1",
+  "status": "completed",
+  "commit_sha": "d20e6263ec0d7f12eefe64723d67c96f397c5686",
+  "artifacts": {
+    "commit_doc": ".cdr/commits/task-1.4.1.md",
+    "task_index_entry": ".cdr/index/task.jsonl:53"
+  },
+  "notes": "task-1.4.1 marked verified. Parent task-1.4 intentionally left as planned pending subtasks 1.4.2-1.4.4."
+}

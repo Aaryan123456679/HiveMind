@@ -7,8 +7,8 @@
   "subtask": "1.4.1",
   "git_head": "61a58d731155d12e7659951505d5d18251c586df",
   "run_key": "cdr-commit-v1-task-1.4.1-61a58d7",
-  "status": "in_progress",
-  "last_completed_step": "init",
+  "status": "completed",
+  "last_completed_step": "commit",
   "started_at": "2026-07-04T00:00:00Z",
-  "ended_at": null
+  "ended_at": "2026-07-04T00:05:00Z"
 }
