@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-059-commit",
+  "subtask": "1.4.4",
+  "status": "completed",
+  "artifacts": {
+    "commit_doc": ".cdr/commits/task-1.4.4.md",
+    "task_index": ".cdr/index/task.jsonl (task-1.4.4, task-1.4 lines)",
+    "verification_source": ".cdr/runs/2026-07-04/058-verification/verification.json"
+  },
+  "issue_closed": {
+    "github_issue_number": 4,
+    "task_id": "task-1.4",
+    "reasoning": "task-1.4 is a pure container for subtasks 1.4.1-1.4.4 with no separate deliverable (per .cdr/runs/2026-07-03/002-planner/plan.json); all 4 subtasks now verified, so task-1.4 marked verified, closing issue #4."
+  },
+  "feature_index_checked": true,
+  "feature_index_entry_found": false
+}

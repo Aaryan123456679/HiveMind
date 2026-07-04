@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "run_id": "058-verification",
+  "subtask": "1.4.4",
+  "commit_verified": "1caf62e26b569c82e772297980d508030abb5a21",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "RecoverFromWAL is genuine, correct new production functionality (not a superficial pass): it closes the documented Catalog gap (empty in-memory index on reopen) by driving the already-verified wal.Replay and re-applying CatalogPut/CatalogDelete records via cat.Put/cat.Delete. TestContentDurabilityRestart is a real restart simulation (separate FileManager/Catalog/wal.Writer generations against the same on-disk root, first generation's handles fully closed before the second is opened) and covers both Create and multiple Appends, asserting byte-for-byte content equality read through the newly-reconstructed Catalog. All targeted and full engine test suites pass with -race, no regressions.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Acceptance criteria (write/append, simulate restart via reopen WAL+catalog+content store, read matches) is met by TestContentDurabilityRestart: gen1 writes+appends, closes fm1/w1 (no in-memory state carried over), gen2 opens fresh FileManager+Catalog+wal.Writer+ContentStore against same root, calls RecoverFromWAL, reads back and compares bytes exactly to pre-restart content."
+    },
+    "architecture_conformance": {
+      "status": "pass_with_comment",
+      "evidence": "docs/LLD/wal.md and docs/LLD/catalog.md are marked 'Status: scaffold only' and are stale relative to the actual, already-implemented engine/wal package. RecoverFromWAL does NOT reimplement checkpoint-skip logic itself -- it delegates entirely to wal.Replay, which (per engine/wal/recovery.go, already verified under issue #3) already loads the checkpoint pointer via LoadCheckpoint and skips segments/offsets already covered, replaying only from the checkpoint forward. So there is no full-from-scratch replay concern to flag: the checkpoint-aware behavior described in wal.md's Recovery section is honored transitively. This is architecturally sound layering (RecoverFromWAL stays a thin catalog-specific consumer of wal.Replay, never duplicating WAL internals), though the stale LLD docs mean this alignment had to be verified by reading engine/wal/recovery.go directly rather than the docs."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "engine/wal package is untouched by this diff (git show confirms only engine/catalog/recovery.go and engine/catalog/content_test.go changed). Full `go test ./... -count=1` across engine module (btree, catalog, wal) passes; `go test ./catalog/... -race -v -count=1` (50s, all prior 1.4.1/1.4.2/1.4.3 tests plus new test) and a -count=3 targeted rerun of TestContentDurabilityRestart alone all pass cleanly."
+    },
+    "edge_cases": {
+      "status": "gap_noted",
+      "evidence": "Only one new test scenario is added (Create + two Appends then restart). Not covered: (a) restart with zero prior writes (empty WAL, fresh catalog -- RecoverFromWAL against an empty/no-segment WAL dir), (b) restart mid-way through a multi-append sequence with additional writers/appenders interleaved, (c) restart after a WAL torn tail (issue #3's torn-tail tolerance is inherited via wal.Replay but not exercised end-to-end through RecoverFromWAL/ContentStore in this diff), (d) a WAL stream containing an actual RecordCatalogDelete (ContentStore never calls Catalog.Delete today, so RecoverFromWAL's Delete-handling branch, including its ErrNotFound-swallowing logic, is currently dead code from a real-caller perspective and untested). None of these are correctness defects in the shipped code, but they are meaningful coverage gaps given this is new recovery-path production code."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "walDir is caller-supplied and trusted (same pattern as existing wal.OpenWriter usage elsewhere in the codebase); no new untrusted-input surface. Error messages wrap fileID/dir context via %w without leaking anything sensitive."
+    },
+    "performance": {
+      "status": "pass_with_comment",
+      "evidence": "RecoverFromWAL relies on wal.Replay's checkpoint-forward replay (not full-from-genesis), so this is not the 'replay everything, always' simplification the task description hypothesized -- performance scales with un-checkpointed WAL tail size, which is the intended long-term model, not a placeholder. The doc comment in recovery.go correctly notes original per-generation page slots become orphaned (compaction is out of scope), which is a storage-efficiency note, not a correctness or perf regression for this subtask."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "recovery.go is well-positioned: package-scoped to engine/catalog, single exported function with a thorough doc comment explaining the gap it closes, its relationship to wal.Replay, and explicitly scoped non-goals (compaction, cross-package record types). This is a reasonable foundation for Epic 2A's real MVCC-aware recovery to extend rather than a throwaway hack, though it will likely need to grow additional record types (e.g. BTreeInsert/Delete once engine/btree needs its own recovery) at that point."
+    },
+    "test_coverage": {
+      "status": "gap_noted",
+      "evidence": "See edge_cases. Test spec's literal command (`go test ./engine/catalog/... -run TestContentDurabilityRestart -race`) passes. Broader restart-scenario coverage (zero writes, torn tail, delete replay) is recommended as follow-up but does not block this subtask's narrowly-scoped acceptance criteria."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Read full diff, engine/catalog/catalog.go's Put/Delete/index semantics, engine/wal/recovery.go's checkpoint-aware Replay implementation, and ran build/vet/race tests (single and -count=3) with all green, zero regressions across the whole engine module."
+    }
+  },
+  "verification_commands_run": [
+    "cd engine && go build ./... && go vet ./...",
+    "cd engine && go test ./catalog/... -race -run TestContentDurabilityRestart -v -count=3",
+    "cd engine && go test ./catalog/... -race -v -count=1",
+    "cd engine && go test ./wal/... -race -count=1",
+    "cd engine && go test ./... -count=1"
+  ],
+  "recommendation": "Close issue #4. Optionally file a fast-follow subtask for additional restart edge-case tests (zero-write restart, torn-tail restart, CatalogDelete replay) once engine/split or another module starts exercising Catalog.Delete for real."
+}
