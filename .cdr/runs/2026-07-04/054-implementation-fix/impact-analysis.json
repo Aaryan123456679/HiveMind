@@ -1,0 +1,16 @@
+{
+  "subtask": "1.4.3",
+  "fix_cycle_for": "053-verification (CHANGES_REQUESTED)",
+  "files_touched": [
+    "engine/catalog/content.go",
+    "engine/catalog/content_test.go"
+  ],
+  "files_not_touched_by_design": [
+    "engine/catalog/catalog.go (existing striped-mutex convention reused, not modified)",
+    "engine/catalog/record.go",
+    "engine/wal/*"
+  ],
+  "blast_radius": "engine/catalog package only; ContentStore.Append signature unchanged (still (bool, error)); no caller-visible API change, only internal serialization added. No regression risk to Create/Read call sites.",
+  "risk_if_not_fixed": "Silent lost-update data corruption for any concurrent same-fileID Append callers (e.g. multiple agents/goroutines appending to the same topic file), with catalog SizeBytes reporting the corrupted length and no error surfaced -- exactly the highest-risk correctness surface docs/LLD/split.md flags for this module.",
+  "risk_of_fix": "Low: reuses an existing, already-tested locking convention (Catalog.stripes/stripeFor) rather than inventing new synchronization; independent stripes array avoids reentrant-lock deadlock risk from cs.cat.Put's internal locking."
+}

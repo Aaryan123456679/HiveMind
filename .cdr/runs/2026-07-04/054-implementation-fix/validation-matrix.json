@@ -1,0 +1,42 @@
+{
+  "subtask": "1.4.3",
+  "fix_cycle": true,
+  "matrix": [
+    {
+      "case": "50 concurrent 1-byte Append calls to the same fileID",
+      "expected": "final content length == 50, catalog SizeBytes == 50, no lost updates",
+      "test": "engine/catalog/content_test.go:TestContentAppendConcurrentSameFileID",
+      "status": "covered"
+    },
+    {
+      "case": "concurrent Append calls to DIFFERENT fileIDs still proceed without unnecessary contention",
+      "expected": "no deadlock, all appends succeed (indirectly exercised by existing TestCatalogConcurrentDistinctFileIDs-style precedent; not separately re-benchmarked here since scope is the lost-update fix, not a new contention-proof test)",
+      "test": "N/A (out of the narrow fix scope; existing stripe design already proven non-contending in catalog_test.go)",
+      "status": "not_added (deliberately, see requirement.md scope)"
+    },
+    {
+      "case": "sanity check: bug reproduces without the fix",
+      "expected": "new test fails with length 1 (not 50) when content.go fix is stashed",
+      "test": "manual git-stash sanity check (see plan.md step 6), not a persisted test",
+      "status": "verified_during_implementation"
+    },
+    {
+      "case": "existing 1.4.1/1.4.2/1.4.3 tests (boundary, WAL ordering, sizeBytes accounting) unaffected",
+      "expected": "all still pass under -race",
+      "test": "engine/catalog/content_test.go (full file) + engine/catalog/catalog_test.go",
+      "status": "covered, PASS"
+    },
+    {
+      "case": "flakiness of new concurrency test",
+      "expected": "consistently passes across repeated runs",
+      "test": "go test ./catalog/... -race -run TestContentAppendConcurrentSameFileID -count=5",
+      "status": "PASS x5, no flakiness observed"
+    }
+  ],
+  "build_and_test": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "go_test_race_full_catalog_pkg": "pass (58.956s, count=1)",
+    "go_test_race_new_test_only_count5": "pass, 6.556s, no flakiness"
+  }
+}

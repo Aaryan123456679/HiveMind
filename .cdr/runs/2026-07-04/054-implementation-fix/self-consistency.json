@@ -1,0 +1,31 @@
+{
+  "subtask": "1.4.3",
+  "fix_cycle_for": "053-verification (CHANGES_REQUESTED)",
+  "commit": "d10a468",
+  "gofmt_clean": true,
+  "go_build_ok": true,
+  "go_vet_ok": true,
+  "tests": {
+    "cmd": "go build ./... && go vet ./... && go test ./catalog/... -race -v -count=1",
+    "result": "PASS",
+    "duration": "58.956s",
+    "new_test": "TestContentAppendConcurrentSameFileID",
+    "new_test_flakiness_check": {
+      "cmd": "go test ./catalog/... -race -run TestContentAppendConcurrentSameFileID -count=5 -v",
+      "result": "PASS x5, no flakiness"
+    },
+    "bug_repro_sanity_check": "confirmed new test fails (length 1, want 50) when content.go fix is stashed out, reproducing verification's exact finding",
+    "regression_tests_still_passing": [
+      "TestContentCreate", "TestContentCreateInvalidFileID", "TestContentRead",
+      "TestContentAppend", "TestContentAppendNotFound", "TestContentReadNotFound",
+      "TestCatalogPutGetDeleteRoundTrip", "TestCatalogConcurrentDistinctFileIDs",
+      "TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs", "TestCatalogGetDeleteNotFound",
+      "TestCatalogStripeForSanity", "TestCatalogFileManager", "TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO",
+      "TestFileIDAllocator", "TestSlottedPageInsertReadDelete", "TestSlottedPageOverflow",
+      "TestSlottedPageReuseAfterDelete", "TestRecordEncodeDecode",
+      "TestEncodeRejectsTooManyRedirectTargets", "TestEncodeAcceptsExactlyMaxRedirectTargets",
+      "TestDecodeRejectsWrongLength", "TestDecodeRejectsOutOfRangeRedirectCount"
+    ]
+  },
+  "note": "Self-consistency only (build green, matrix covered, bug-repro sanity-checked). Not a substitute for /cdr:verify -- this fix cycle still requires re-verification of subtask 1.4.3."
+}

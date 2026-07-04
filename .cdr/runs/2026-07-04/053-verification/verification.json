@@ -1,0 +1,50 @@
+{
+  "subtask": "1.4.3",
+  "commit": "f09f1c94038040c176ce8e395a42d6fc432fb40c",
+  "verdict": "CHANGES_REQUESTED",
+  "summary": "Boundary semantics, WAL-before-apply ordering, and sizeBytes accounting are all correct and well tested. However, ContentStore.Append performs a fully unsynchronized read-modify-write of the content file (no per-fileID lock, unlike Catalog's striped-mutex design), causing silent lost-update data corruption under concurrent Append calls on the same fileID -- reproduced experimentally (49/50 concurrent 1-byte appends silently lost, catalog SizeBytes matched the corrupted result, no error surfaced).",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "sizeBytes updates correctly (engine/catalog/content.go:222 updatedRec.SizeBytes = newSize, cumulative not overwritten -- existing content is read via os.ReadFile and prepended). Threshold-crossing signal implements 'exceeds' as strict '>': thresholdCrossed := oldSize <= threshold && newSize > threshold (content.go:239). This is the correct reading of the literal acceptance-criteria word 'exceeds' (strictly greater than, not >=), and matches docs/LLD/split.md's 'Trigger: File size exceeds a tunable threshold' wording."
+    },
+    "architecture_conformance": {
+      "status": "concern",
+      "evidence": "WAL-before-apply ordering for Append mirrors Create exactly (wal.AppendAndApply wraps writeContentFile+cat.Put, content.go:210-232) -- correct, not copy-paste-broken. However catalog.go documents striped per-fileID mutexes (~256 stripes) specifically so unrelated files don't contend and same-file ops are serialized; Append bypasses this protection for the content-file read-modify-write, which is an architectural gap relative to the module's own stated concurrency discipline (and directly relevant given split.md flags 'many goroutines appending same file simultaneously' as split's core known risk)."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Create/Read untouched by diff; full `go test ./engine/catalog/... -race -v -count=1` passes all 1.4.1/1.4.2/1.4.3 tests plus catalog/page/WAL tests, 56s, zero failures."
+    },
+    "edge_cases": {
+      "status": "fail",
+      "evidence": "Concurrent Append to the SAME fileID is a genuine lost-update bug: reproduced with 50 concurrent 1-byte Append() goroutines against one fileID -> final content length 1 (not 50), catalog SizeBytes silently matches the corrupted (wrong) result, no error returned to any caller. Sequential edge cases (empty-data append, single append larger than the whole threshold, append to never-created fileID) are all handled correctly (verified by inspection and TestContentAppendNotFound)."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new attack surface; fileID validated through cat.Get before any disk I/O; no path traversal (ContentPath derives purely from fileID uint64)."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "O(n) full-file read + copy per append is consistent with 1.4.1/1.4.2's whole-file model; acceptable for pre-split (~8KB) file sizes per stated scope."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Doc comments are thorough and explicit about the exactly-once crossing semantics and pre-MVCC/no-split-execution scope."
+    },
+    "test_coverage": {
+      "status": "concern",
+      "evidence": "TestContentAppend explicitly asserts crossed matches wantCrossed at EVERY iteration (not just checking crossingCount==1), so the 'false on all appends after crossing' behavior IS actually tested, not just asserted in aggregate -- this specific ask is satisfied. Gap: no concurrent/-race test exists for Append against the same fileID, so the lost-update bug above has zero coverage and would not be caught by CI."
+    },
+    "confidence": {
+      "status": "medium",
+      "evidence": "High confidence in the boundary-condition and WAL-ordering correctness (both directly verified); high confidence the concurrency gap is a real bug (reproduced, not theoretical)."
+    }
+  },
+  "build_and_test": {
+    "go_build": "pass (engine module)",
+    "go_vet": "pass (engine module)",
+    "go_test_race": "pass, 56.192s, no failures, no regressions in 1.4.1/1.4.2 tests"
+  },
+  "recommendation": "Add a per-fileID lock (or reuse Catalog's striped-mutex mechanism) around Append's read-modify-write of the content file before this path is exposed to any caller that could invoke it concurrently for the same fileID, and add a `go test -race` concurrent-Append test analogous to TestCatalogConcurrentDistinctFileIDs. Given 1.4.3 is scoped as a stub ahead of Epic 2B's real split/concurrency work, this could alternatively be explicitly documented as a single-writer-only precondition in Append's doc comment if concurrent safety is truly deferred -- but as shipped it is silently unsafe with no caller-visible warning."
+}
