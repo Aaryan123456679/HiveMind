@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "run_id": "002-implementation-fix",
+  "subtask": "task-2a.2.2",
+  "issue": 7,
+  "fix_for_verdict": "CHANGES_REQUESTED",
+  "verification_run_referenced": ".cdr/runs/2026-07-05/001-verification/verification.json",
+  "commit": "acc7601",
+  "commit_full": "acc760129ececc8eb83938123c05f9a94af8eccc",
+  "files_changed": [
+    "engine/mvcc/read.go",
+    "engine/mvcc/gc_test.go"
+  ],
+  "summary": "Reordered NewSnapshot (engine/mvcc/read.go) to call em.AcquireCurrentEpoch() BEFORE cat.Get(fileID), closing a TOCTOU race where a concurrent CommitVersion completing between the old order's two steps could cause RunCompaction to prematurely delete a version file still pinned by a live Snapshot. Releases the acquired epoch if the subsequent cat.Get fails, to avoid a refcount leak. Rewrote the previously-inaccurate race-note doc comment with a full proof of race-freedom. Added engine/mvcc/gc_test.go:TestNewSnapshotClosesEpochAcquireVersionReadRace, a hook-based regression test (using a new newSnapshotWithHook test seam in read.go) that pauses NewSnapshot between epoch-acquire and version-read, runs a concurrent CommitVersion + RunCompaction to completion in that window, and asserts the pinned version file survives and reads correctly.",
+  "race_free_proof_pointer": ".cdr/runs/2026-07-05/002-implementation-fix/plan.md (section 'Fix'), and engine/mvcc/read.go NewSnapshot doc comment (lines ~52-99)",
+  "sanity_check": "Confirmed the new regression test actually catches the race: temporarily reverted the ordering, observed TestNewSnapshotClosesEpochAcquireVersionReadRace fail with 'version 1 file deleted by RunCompaction while a snapshot was mid-acquire and about to pin to it', then restored the fix and reconfirmed pass.",
+  "commands_run": [
+    "gofmt -l engine/mvcc -> clean",
+    "cd engine && go build ./... && go vet ./... -> OK",
+    "go test ./mvcc/... -race -v -count=1 -> all PASS (TestEpochRefcount, TestEpochRefcountConcurrent, TestCompactor, TestNewSnapshotClosesEpochAcquireVersionReadRace, TestConcurrentReadersWriters, TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter, TestCurrentVersionCAS, TestVersionCASWAL)",
+    "go test ./mvcc/... -run 'TestNewSnapshotClosesEpochAcquireVersionReadRace|TestCompactor' -race -count=10 -> no flakes",
+    "go test ./... -race -count=1 (from engine/) -> zero regressions across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal"
+  ],
+  "not_self_verified": true,
+  "next_step": "Run /cdr:verify against commit acc7601 for task-2a.2.2 (re-verification of the fix, since prior verdict was CHANGES_REQUESTED).",
+  "task_index_updated": ".cdr/index/task.jsonl task-2a.2.2 entry set back to state=implemented with this run id and commit acc7601"
+}

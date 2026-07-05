@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-2a.2.2",
+  "fix_for_issue": 7,
+  "verdict_addressed": "CHANGES_REQUESTED",
+  "verification_run": ".cdr/runs/2026-07-05/001-verification/verification.json",
+  "root_cause": "NewSnapshot read CurrentVersion via cat.Get() BEFORE acquiring the epoch via em.AcquireCurrentEpoch(). A concurrent CommitVersion that fully completed (CAS applied, AdvanceEpoch called, recordVersionEpoch called) in the gap between those two steps could leave the snapshot holding an acquired epoch >= supersededAtEpoch(V) while still pinned to the OLD version V, causing RunCompaction to delete V's file while the snapshot still referenced it.",
+  "fix": "Reordered NewSnapshot (engine/mvcc/read.go) to call em.AcquireCurrentEpoch() FIRST, then cat.Get(fileID) second (releasing the epoch if Get then fails). Added newSnapshotWithHook test seam. No changes needed to CommitVersion's existing CAS-then-AdvanceEpoch-then-recordVersionEpoch sequence in write.go, nor to gc.go's RunCompaction skip-condition logic -- only NewSnapshot's use of them was incorrect.",
+  "race_free_proof_summary": "Let E0 = epoch acquired by NewSnapshot at time T_acquire, V = CurrentVersion observed at time T_read > T_acquire. Since Catalog.CompareAndSwapCurrentVersion is a linearizable, monotonically-forward, per-fileID-locked CAS, observing CurrentVersion==V at T_read implies any CAS superseding V applies at T_cas > T_read. commitVersionWithHook calls em.AdvanceEpoch() only after its CAS applies, so the epoch E' recorded as V's supersededAtEpoch is produced at T_advance > T_cas > T_read > T_acquire. AcquireCurrentEpoch and AdvanceEpoch are both critical sections under the same em.mu; because T_acquire < T_advance in real time and no operation in between touches em.mu, AcquireCurrentEpoch's critical section (reading em.current == E0) must fully precede AdvanceEpoch's critical section (computing E' = em.current-then + 1). Hence E' >= E0 + 1 > E0, always. Therefore RunCompaction's skip condition minRef < supersededAtEpoch(V) is guaranteed true whenever this snapshot's E0 is the (or a) minimum live-referenced epoch, since minRef <= E0 < E'. No retry/seqlock loop required.",
+  "changes": [
+    "engine/mvcc/read.go: reordered AcquireCurrentEpoch/cat.Get in NewSnapshot; added newSnapshotWithHook test seam with epoch-release on Get failure; rewrote the (previously incorrect) race-note doc comment with the full proof",
+    "engine/mvcc/gc_test.go: added TestNewSnapshotClosesEpochAcquireVersionReadRace, a hook-based regression test pausing NewSnapshot between epoch-acquire and version-read, racing a concurrent CommitVersion+RunCompaction to completion in that gap, and asserting the pinned version file survives and is still correctly readable"
+  ],
+  "sanity_check_performed": "Temporarily reverted the ordering (version-read first, epoch-acquire second) to confirm the new regression test FAILS without the fix (observed: 'version 1 file deleted by RunCompaction while a snapshot was mid-acquire and about to pin to it'), then restored the fix and re-confirmed the test passes -- proving the test actually exercises and catches the race, not just a tautology.",
+  "commands_run": [
+    "gofmt -l engine/mvcc -> no output, clean",
+    "(cd engine && go build ./... && go vet ./...) -> OK, clean",
+    "go test ./mvcc/... -race -v -count=1 -> all PASS: TestEpochRefcount, TestEpochRefcountConcurrent, TestCompactor (both subtests), TestNewSnapshotClosesEpochAcquireVersionReadRace (new), TestConcurrentReadersWriters, TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter (all subtests), TestCurrentVersionCAS, TestVersionCASWAL (all subtests)",
+    "go test ./mvcc/... -run 'TestNewSnapshotClosesEpochAcquireVersionReadRace|TestCompactor' -race -count=10 -> OK, no flakes",
+    "go test ./... -race -count=1 (from engine/) -> all PASS across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal; zero regressions"
+  ],
+  "build_green": true,
+  "validation_matrix_covered": true,
+  "self_verification_disclaimer": "This is internal sanity only (build green, tests pass, matrix covered) -- NOT independent verification. /cdr:verify must still review this fix."
+}
