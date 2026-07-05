@@ -1,6 +1,8 @@
 package btree
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -491,4 +493,251 @@ func TestDelete(t *testing.T) {
 	t.Run("InsertLookupIntegration", TestDeleteInsertLookupIntegration)
 	t.Run("EmptiesSingleLeafTree", TestDeleteEmptiesSingleLeafTree)
 	t.Run("ThreeLevelNoSiblingTypeMismatchDataLoss", TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss)
+}
+
+// ---------------------------------------------------------------------------
+// 2a.4.3: TestCrabbingDelete -- the concurrent latch-crabbing delete test
+// spec (GitHub issue #9): `go test ./engine/btree/... -race -run
+// TestCrabbingDelete`. ALWAYS run with -timeout, per this package's history
+// of a real 40+ minute deadlock hang during 2a.4.2's development.
+// ---------------------------------------------------------------------------
+
+func TestCrabbingDelete(t *testing.T) {
+	t.Run("DisjointSubtrees", testCrabbingDeleteDisjointSubtrees)
+	t.Run("SameKeyRace", testCrabbingDeleteSameKeyRace)
+	t.Run("InterleavedWithInsert", testCrabbingDeleteInterleavedWithInsert)
+}
+
+// testCrabbingDeleteDisjointSubtrees pre-builds a moderately large tree
+// (multiple leaves, multiple internal levels), then runs many goroutines
+// concurrently, each confined to deleting its own disjoint subset of the
+// pre-built keys (assigned round-robin, so different goroutines' targets
+// land throughout the tree rather than in isolated far-apart ranges,
+// exercising real shared-parent contention on the borrow/merge repair path
+// without any two goroutines racing on the very same key). Asserts every
+// deleted key is absent, every surviving key is still look-up-able with the
+// correct fileID, and the final tree is structurally valid with no
+// dangling/aliased pointers.
+func testCrabbingDeleteDisjointSubtrees(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	const n = 3000
+	rootID, inserted := insertN(t, store, alloc, n)
+	tree := NewTree(store, alloc, rootID)
+
+	// Delete every key at an index congruent to 0 mod 3, forcing many leaves
+	// across the tree to underflow and trigger borrow/merge concurrently.
+	var toDelete []string
+	for i := 0; i < n; i++ {
+		if i%3 == 0 {
+			toDelete = append(toDelete, genKey(i))
+		}
+	}
+
+	const goroutines = 24
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines)
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := g; idx < len(toDelete); idx += goroutines {
+				key := toDelete[idx]
+				found, err := tree.Delete(key)
+				if err != nil {
+					errCh <- fmt.Errorf("goroutine %d: Delete(%q): %w", g, key, err)
+					return
+				}
+				if !found {
+					errCh <- fmt.Errorf("goroutine %d: Delete(%q): expected found=true, got false", g, key)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	finalRoot := tree.Root()
+	assertAbsent(t, store, finalRoot, toDelete)
+
+	remaining := make(map[string]uint64, len(inserted)-len(toDelete))
+	for i := 0; i < n; i++ {
+		if i%3 != 0 {
+			key := genKey(i)
+			remaining[key] = inserted[key]
+		}
+	}
+	assertAllLookupable(t, store, finalRoot, remaining)
+	assertStructuralInvariants(t, store, finalRoot, len(remaining))
+	assertNoOrphanedPointers(t, store, finalRoot)
+}
+
+// testCrabbingDeleteSameKeyRace has many goroutines race to Delete the exact
+// same key concurrently: exactly one must observe found=true, every other
+// must observe found=false, and no goroutine may see a spurious error --
+// exercising the leaf-level "already refilled/already repaired" benign-race
+// retry path in repairEmptyLeafAtParent (and crabDeleteOnce's own absent-key
+// path) under real contention.
+func testCrabbingDeleteSameKeyRace(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	const n = 500
+	rootID, _ := insertN(t, store, alloc, n)
+	tree := NewTree(store, alloc, rootID)
+
+	target := genKey(n / 2)
+
+	const goroutines = 16
+	var wg sync.WaitGroup
+	foundCount := make([]bool, goroutines)
+	errCh := make(chan error, goroutines)
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			found, err := tree.Delete(target)
+			if err != nil {
+				errCh <- fmt.Errorf("goroutine %d: Delete(%q): %w", g, target, err)
+				return
+			}
+			foundCount[g] = found
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	trueCount := 0
+	for _, f := range foundCount {
+		if f {
+			trueCount++
+		}
+	}
+	if trueCount != 1 {
+		t.Fatalf("expected exactly 1 goroutine to observe found=true racing to delete %q, got %d", target, trueCount)
+	}
+
+	finalRoot := tree.Root()
+	assertAbsent(t, store, finalRoot, []string{target})
+	assertStructuralInvariants(t, store, finalRoot, n-1)
+	assertNoOrphanedPointers(t, store, finalRoot)
+}
+
+// testCrabbingDeleteInterleavedWithInsert is this subtask's core acceptance
+// test: concurrent deletes interleaved with concurrent inserts, hitting
+// overlapping key ranges (adjacent, interleaved index positions, not just
+// far-apart disjoint subtrees) so real contention -- merges from deletes AND
+// splits from inserts -- happens in the very same physical region of the
+// tree at the same time. The final tree is compared against a
+// serial-execution oracle: every operation targets a key derived
+// deterministically from its own goroutine/index assignment, with delete
+// targets and insert targets drawn from disjoint key spaces (so, exactly
+// like TestStripedConcurrencyStress in engine/catalog/catalog_test.go, the
+// oracle's final expected state is unambiguous regardless of scheduling
+// order, while the physical layout genuinely interleaves them).
+func testCrabbingDeleteInterleavedWithInsert(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	const n = 4000
+	rootID, inserted := insertN(t, store, alloc, n)
+	tree := NewTree(store, alloc, rootID)
+
+	// newKey(i) sorts strictly between genKey(i) and genKey(i+1) (a longer
+	// string sharing genKey(i)'s exact prefix sorts after it, and the digit
+	// difference at position len("topic000") guarantees it sorts before
+	// genKey(i+1) regardless of suffix) -- so concurrently inserting
+	// newKey(i) routes into the very same leaf genKey(i) already lives in,
+	// forcing real shared-leaf contention with any concurrent delete of a
+	// neighboring genKey index.
+	newKey := func(i int) string { return genKey(i) + "-new" }
+
+	var toDelete []string // indices where i%3 == 0
+	var toInsert []int    // indices where i%3 == 1
+	for i := 0; i < n; i++ {
+		switch i % 3 {
+		case 0:
+			toDelete = append(toDelete, genKey(i))
+		case 1:
+			toInsert = append(toInsert, i)
+		}
+	}
+
+	const delGoroutines = 16
+	const insGoroutines = 16
+	var wg sync.WaitGroup
+	errCh := make(chan error, delGoroutines+insGoroutines)
+
+	for g := 0; g < delGoroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := g; idx < len(toDelete); idx += delGoroutines {
+				key := toDelete[idx]
+				found, err := tree.Delete(key)
+				if err != nil {
+					errCh <- fmt.Errorf("delete goroutine %d: Delete(%q): %w", g, key, err)
+					return
+				}
+				if !found {
+					errCh <- fmt.Errorf("delete goroutine %d: Delete(%q): expected found=true, got false", g, key)
+					return
+				}
+			}
+		}()
+	}
+	for g := 0; g < insGoroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := g; idx < len(toInsert); idx += insGoroutines {
+				i := toInsert[idx]
+				key := newKey(i)
+				fileID := uint64(1_000_000 + i)
+				if err := tree.Insert(key, fileID); err != nil {
+					errCh <- fmt.Errorf("insert goroutine %d: Insert(%q): %w", g, key, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	finalRoot := tree.Root()
+
+	// Oracle: every original key at an index NOT congruent to 0 mod 3
+	// survives with its original fileID; every newKey(i) for i%3==1 is
+	// present with its inserted fileID; every original key at i%3==0 is
+	// absent.
+	wantPresent := make(map[string]uint64)
+	var wantAbsent []string
+	for i := 0; i < n; i++ {
+		key := genKey(i)
+		if i%3 == 0 {
+			wantAbsent = append(wantAbsent, key)
+			continue
+		}
+		wantPresent[key] = inserted[key]
+		if i%3 == 1 {
+			wantPresent[newKey(i)] = uint64(1_000_000 + i)
+		}
+	}
+
+	assertAllLookupable(t, store, finalRoot, wantPresent)
+	assertAbsent(t, store, finalRoot, wantAbsent)
+	assertStructuralInvariants(t, store, finalRoot, len(wantPresent))
+	assertNoOrphanedPointers(t, store, finalRoot)
 }

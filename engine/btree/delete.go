@@ -400,3 +400,649 @@ func shrinkParentAfterMerge(store *NodeStore, chain []uint64, parentIdx int, rem
 
 	return chain[0], nil
 }
+
+// ---------------------------------------------------------------------------
+// 2a.4.3: latch-crabbing concurrent delete.
+//
+// This section adds Tree.Delete, a concurrency-safe entry point for delete
+// that reuses the exact TryLock + full-release + restart-from-root discipline
+// established by 2a.4.2's insert (see insert.go's errRestartFromRoot doc
+// comment for the full deadlock-avoidance argument, which applies unchanged
+// here). It deliberately does NOT redesign the single-threaded Delete's
+// merge-or-tombstone policy above -- only adds concurrency-safe locking
+// around the same borrow/merge/root-collapse decisions.
+//
+// Lock-window discipline (see plan.md for the full writeup):
+//   - Descent: window-of-2 (parent+child), TryLock-based, identical in shape
+//     to crabInsert/findParent. Duplicated as crabDeleteOnce below rather
+//     than refactoring crabInsertOnce, since the latter is not generic and
+//     insert.go must not be touched (conservative, per this subtask's scope).
+//   - Leaf-level borrow/merge: a WIDER, 3-latch window (parent, empty leaf,
+//     chosen sibling) -- delete's genuine extra complexity vs insert, since
+//     merging touches two sibling leaves plus their shared parent at once.
+//     The 3rd latch is acquired via TryLock only (never blocking Lock),
+//     with full release of all three and restart-from-root on a miss --
+//     preserving deadlock-freedom by the same construction as insert.
+//   - Ancestor cascade (parent degenerates to 0 keys/1 child, possible root
+//     collapse): back to a 1-latch-at-a-time window, structurally identical
+//     to propagate's climbing loop (rootMu check, fresh findParent, isolated
+//     blocking Lock on the newly-located ancestor).
+// ---------------------------------------------------------------------------
+
+// Delete removes path from t using latch-crabbing (2a.4.3): at all times
+// holds at most a parent-and-child pair of per-node latches during descent,
+// briefly widening to a parent+leaf+sibling (3-node) window only for the
+// leaf-level borrow/merge decision (see this section's doc comment above),
+// so concurrent Delete/Insert calls into disjoint subtrees never block each
+// other, while calls that touch the same node(s) are correctly serialized
+// node-by-node.
+//
+// Mirrors the free Delete function's semantics: found=false (nil error)
+// means path was genuinely absent, matching Lookup's "not-found is normal"
+// convention. A non-nil error means genuine I/O/decode failure or a violated
+// internal structural invariant.
+func (t *Tree) Delete(path string) (found bool, err error) {
+	t.rootMu.Lock()
+	if t.root == reservedNodeID {
+		t.rootMu.Unlock()
+		return false, nil
+	}
+	root := t.root
+	t.rootMu.Unlock()
+
+	return t.crabDelete(root, path)
+}
+
+// crabDelete retries crabDeleteOnce from the root on every errRestartFromRoot
+// (a hand-over-hand TryLock miss), with jittered backoff between attempts --
+// identical retry shape to crabInsert/findParent.
+func (t *Tree) crabDelete(rootID uint64, path string) (bool, error) {
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			crabRetryBackoff(attempt)
+		}
+		found, err := t.crabDeleteOnce(rootID, path)
+		if err == errRestartFromRoot {
+			continue
+		}
+		return found, err
+	}
+}
+
+// crabDeleteOnce performs a single attempt at crabDelete's descent. It is a
+// deliberate structural duplicate of crabInsertOnce's window-of-2 TryLock
+// descent (including the identical NextLeaf/NextSibling move-right recovery
+// for a node visited mid-split) -- not a refactor of it, since
+// crabInsertOnce is insert-specific (it takes a fileID and calls
+// insert-only leaf logic) and insert.go's now-hard-won-correct crabbing code
+// is deliberately left untouched by this subtask. Every restart-worthy
+// TryLock miss is entirely read-only up to this point (no mutation has
+// happened yet), so restarting from scratch on a miss is always safe, exactly
+// as documented on crabInsertOnce.
+func (t *Tree) crabDeleteOnce(rootID uint64, path string) (bool, error) {
+	store := t.Store
+
+	store.Lock(rootID)
+	currentID := rootID
+	for {
+		isLeaf, leaf, internal, err := store.ReadNode(currentID)
+		if err != nil {
+			store.Unlock(currentID)
+			return false, err
+		}
+
+		if isLeaf {
+			for {
+				if len(leaf.Keys) == 0 || path >= leaf.Keys[0] {
+					if leaf.NextLeaf == noSibling {
+						break
+					}
+					nextID := leaf.NextLeaf
+					if !store.TryLock(nextID) {
+						store.Unlock(currentID)
+						if crabRetryHook != nil {
+							crabRetryHook(nextID)
+						}
+						return false, errRestartFromRoot
+					}
+					nextIsLeaf, nextLeaf, _, err := store.ReadNode(nextID)
+					if err != nil {
+						store.Unlock(nextID)
+						store.Unlock(currentID)
+						return false, err
+					}
+					if !nextIsLeaf {
+						store.Unlock(nextID)
+						store.Unlock(currentID)
+						return false, fmt.Errorf("btree: internal invariant violated: NextLeaf chain led to non-leaf node %d", nextID)
+					}
+					if len(nextLeaf.Keys) > 0 && path < nextLeaf.Keys[0] {
+						store.Unlock(nextID)
+						break
+					}
+					store.Unlock(currentID)
+					currentID = nextID
+					leaf = nextLeaf
+					continue
+				}
+				break
+			}
+			return t.deleteFromLeafAndRepair(currentID, leaf, path)
+		}
+
+		if internal.NextSibling != noSibling {
+			nextID := internal.NextSibling
+			if !store.TryLock(nextID) {
+				store.Unlock(currentID)
+				if crabRetryHook != nil {
+					crabRetryHook(nextID)
+				}
+				return false, errRestartFromRoot
+			}
+			nextIsLeaf, _, nextInternal, err := store.ReadNode(nextID)
+			if err != nil {
+				store.Unlock(nextID)
+				store.Unlock(currentID)
+				return false, err
+			}
+			if nextIsLeaf {
+				store.Unlock(nextID)
+				store.Unlock(currentID)
+				return false, fmt.Errorf("btree: internal invariant violated: NextSibling chain led to a leaf node %d", nextID)
+			}
+			if nextInternal.LowKey != "" && path >= nextInternal.LowKey {
+				store.Unlock(currentID)
+				currentID = nextID
+				internal = nextInternal
+				continue
+			}
+			store.Unlock(nextID)
+		}
+
+		i := sort.Search(len(internal.Keys), func(i int) bool { return path < internal.Keys[i] })
+		childID := internal.Children[i]
+
+		if !store.TryLock(childID) {
+			store.Unlock(currentID)
+			if crabRetryHook != nil {
+				crabRetryHook(childID)
+			}
+			return false, errRestartFromRoot
+		}
+		store.Unlock(currentID)
+		currentID = childID
+	}
+}
+
+// deleteFromLeafAndRepair performs the leaf-level mutation for crabDelete.
+// The caller must already hold leafID's latch; this function releases it
+// (and, if a leaf-level borrow/merge occurs, every other latch it
+// transitively acquires) before returning, on every path.
+func (t *Tree) deleteFromLeafAndRepair(leafID uint64, leaf LeafNode, path string) (bool, error) {
+	store := t.Store
+
+	i := sort.SearchStrings(leaf.Keys, path)
+	if i >= len(leaf.Keys) || leaf.Keys[i] != path {
+		// Genuinely absent: no mutation happened, nothing to unwind.
+		store.Unlock(leafID)
+		return false, nil
+	}
+
+	newLeaf := removeFromLeaf(leaf, i)
+	if err := writeLeaf(store, leafID, newLeaf); err != nil {
+		store.Unlock(leafID)
+		return false, err
+	}
+
+	if len(newLeaf.Keys) > 0 {
+		// Tombstone policy: leaf still holds at least one key, left alone
+		// even under-capacity. No rebalancing triggered.
+		store.Unlock(leafID)
+		return true, nil
+	}
+
+	// Leaf became empty. If it is currently the tree's root (single-node
+	// tree), the empty-tree-after-delete convention applies: leave it as-is,
+	// matching the single-threaded Delete's documented behavior.
+	t.rootMu.Lock()
+	isRoot := t.root == leafID
+	t.rootMu.Unlock()
+	if isRoot {
+		store.Unlock(leafID)
+		return true, nil
+	}
+
+	store.Unlock(leafID)
+	if err := t.repairEmptyLeaf(leafID, path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// repairEmptyLeaf rebalances (borrow-or-merge) leafID after it was emptied
+// by a delete, mirroring the single-threaded repairEmptyLeaf's policy
+// exactly, with concurrency-safe locking layered on top. path is the
+// deleted key: still valid for findParent's routing purposes, since a
+// node's location in the tree never moves once created (only new siblings
+// are created alongside it -- see findParent's doc comment in insert.go).
+func (t *Tree) repairEmptyLeaf(leafID uint64, path string) error {
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			crabRetryBackoff(attempt)
+		}
+
+		t.rootMu.Lock()
+		if t.root == leafID {
+			// Became root concurrently (e.g. a concurrent delete's root
+			// collapse promoted this very leaf): tombstone convention for
+			// an empty root leaf applies; nothing to repair.
+			t.rootMu.Unlock()
+			return nil
+		}
+		currentRoot := t.root
+		t.rootMu.Unlock()
+
+		parentID, err := t.findParent(currentRoot, path, leafID)
+		if err != nil {
+			return err
+		}
+
+		retry, err := t.repairEmptyLeafAtParent(parentID, leafID, path)
+		if err == errRestartFromRoot {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !retry {
+			return nil
+		}
+		// retry==true: a benign race (parent changed under us, or the leaf
+		// was concurrently refilled) -- findParent will relocate the
+		// current parent fresh on the next iteration.
+	}
+}
+
+// repairEmptyLeafAtParent holds parentID's latch (acquired via a single,
+// isolated blocking Lock -- nothing else is held at that point, mirroring
+// propagate's identical Lock(parentID) call) and decides/performs the
+// leaf-level borrow-or-merge, widening to a 3-latch window (parent, leaf,
+// chosen sibling) only for the brief duration of that decision. Every
+// widening beyond the first two latches uses TryLock, never blocking Lock;
+// a miss releases everything currently held and returns errRestartFromRoot,
+// exactly like every other hand-over-hand step in this package.
+//
+// retry==true (with a nil error) signals a benign, non-fatal race the
+// caller should retry via a fresh findParent call: either parentID no
+// longer has a child pointer to leafID (parentID was itself split or
+// otherwise changed concurrently), or leafID was found already non-empty
+// (refilled by a concurrent insert, or already repaired by a concurrent
+// delete) by the time its latch was acquired here.
+func (t *Tree) repairEmptyLeafAtParent(parentID, leafID uint64, path string) (retry bool, err error) {
+	store := t.Store
+
+	store.Lock(parentID)
+	isLeafP, _, parent, err := store.ReadNode(parentID)
+	if err != nil {
+		store.Unlock(parentID)
+		return false, err
+	}
+	if isLeafP {
+		store.Unlock(parentID)
+		return false, fmt.Errorf("btree: internal invariant violated: ancestor node %d decoded as a leaf", parentID)
+	}
+
+	j := indexOfChild(parent.Children, leafID)
+	if j < 0 {
+		// Race: parentID no longer points at leafID (e.g. parentID was
+		// split concurrently). Retry: findParent will relocate the
+		// current parent fresh.
+		store.Unlock(parentID)
+		return true, nil
+	}
+	if len(parent.Children) < 2 {
+		// Structurally unreachable in a well-formed tree: an internal node
+		// always has >= 2 children. Defensive guard against a panic below
+		// if this invariant is ever violated.
+		store.Unlock(parentID)
+		return false, fmt.Errorf("btree: internal invariant violated: parent node %d has only one child, cannot rebalance", parentID)
+	}
+
+	if !store.TryLock(leafID) {
+		store.Unlock(parentID)
+		return false, errRestartFromRoot
+	}
+	_, leaf, _, err := store.ReadNode(leafID)
+	if err != nil {
+		store.Unlock(leafID)
+		store.Unlock(parentID)
+		return false, err
+	}
+	if len(leaf.Keys) > 0 {
+		// Concurrently refilled or already repaired: nothing left to do.
+		store.Unlock(leafID)
+		store.Unlock(parentID)
+		return false, nil
+	}
+	emptyNextLeaf := leaf.NextLeaf
+
+	haveLeftCandidate := j > 0
+	haveRightCandidate := j < len(parent.Children)-1
+
+	if haveLeftCandidate {
+		leftID := parent.Children[j-1]
+		if !store.TryLock(leftID) {
+			store.Unlock(leafID)
+			store.Unlock(parentID)
+			return false, errRestartFromRoot
+		}
+		leftIsLeaf, left, _, err := store.ReadNode(leftID)
+		if err != nil {
+			store.Unlock(leftID)
+			store.Unlock(leafID)
+			store.Unlock(parentID)
+			return false, err
+		}
+		if leftIsLeaf {
+			if len(left.Keys) > 1 {
+				// Borrow one key from the left sibling.
+				borrowedKey := left.Keys[len(left.Keys)-1]
+				borrowedFileID := left.FileIDs[len(left.FileIDs)-1]
+
+				newLeft := LeafNode{
+					Keys:     append([]string(nil), left.Keys[:len(left.Keys)-1]...),
+					FileIDs:  append([]uint64(nil), left.FileIDs[:len(left.FileIDs)-1]...),
+					NextLeaf: leafID,
+				}
+				newCurrent := LeafNode{
+					Keys:     []string{borrowedKey},
+					FileIDs:  []uint64{borrowedFileID},
+					NextLeaf: emptyNextLeaf,
+				}
+				newParentKeys := append([]string(nil), parent.Keys...)
+				newParentKeys[j-1] = borrowedKey
+				newParent := InternalNode{Keys: newParentKeys, Children: append([]uint64(nil), parent.Children...), NextSibling: parent.NextSibling, LowKey: parent.LowKey}
+
+				if err := writeLeaf(store, leftID, newLeft); err != nil {
+					store.Unlock(leftID)
+					store.Unlock(leafID)
+					store.Unlock(parentID)
+					return false, err
+				}
+				if err := writeLeaf(store, leafID, newCurrent); err != nil {
+					store.Unlock(leftID)
+					store.Unlock(leafID)
+					store.Unlock(parentID)
+					return false, err
+				}
+				if err := writeInternal(store, parentID, newParent); err != nil {
+					store.Unlock(leftID)
+					store.Unlock(leafID)
+					store.Unlock(parentID)
+					return false, err
+				}
+				store.Unlock(leftID)
+				store.Unlock(leafID)
+				store.Unlock(parentID)
+				return false, nil
+			}
+
+			// Merge current (empty) leaf into the left sibling.
+			mergedLeft := LeafNode{Keys: left.Keys, FileIDs: left.FileIDs, NextLeaf: emptyNextLeaf}
+			if err := writeLeaf(store, leftID, mergedLeft); err != nil {
+				store.Unlock(leftID)
+				store.Unlock(leafID)
+				store.Unlock(parentID)
+				return false, err
+			}
+			store.Unlock(leftID)
+			store.Unlock(leafID)
+			// leafID abandoned; see the free Delete function's doc comment
+			// on "Abandoned node IDs". parentID is still held here and is
+			// handed off to finishParentShrinkAfterDelete, which unlocks it.
+			return false, t.finishParentShrinkAfterDelete(parentID, parent, j, path)
+		}
+		store.Unlock(leftID)
+	}
+
+	if haveRightCandidate {
+		rightID := parent.Children[j+1]
+		if !store.TryLock(rightID) {
+			store.Unlock(leafID)
+			store.Unlock(parentID)
+			return false, errRestartFromRoot
+		}
+		rightIsLeaf, right, _, err := store.ReadNode(rightID)
+		if err != nil {
+			store.Unlock(rightID)
+			store.Unlock(leafID)
+			store.Unlock(parentID)
+			return false, err
+		}
+		if rightIsLeaf {
+			if len(right.Keys) > 1 {
+				// Borrow one key from the right sibling.
+				borrowedKey := right.Keys[0]
+				borrowedFileID := right.FileIDs[0]
+
+				newRight := LeafNode{
+					Keys:     append([]string(nil), right.Keys[1:]...),
+					FileIDs:  append([]uint64(nil), right.FileIDs[1:]...),
+					NextLeaf: right.NextLeaf,
+				}
+				newCurrent := LeafNode{
+					Keys:     []string{borrowedKey},
+					FileIDs:  []uint64{borrowedFileID},
+					NextLeaf: rightID,
+				}
+				newParentKeys := append([]string(nil), parent.Keys...)
+				newParentKeys[j] = newRight.Keys[0]
+				newParent := InternalNode{Keys: newParentKeys, Children: append([]uint64(nil), parent.Children...), NextSibling: parent.NextSibling, LowKey: parent.LowKey}
+
+				if err := writeLeaf(store, rightID, newRight); err != nil {
+					store.Unlock(rightID)
+					store.Unlock(leafID)
+					store.Unlock(parentID)
+					return false, err
+				}
+				if err := writeLeaf(store, leafID, newCurrent); err != nil {
+					store.Unlock(rightID)
+					store.Unlock(leafID)
+					store.Unlock(parentID)
+					return false, err
+				}
+				if err := writeInternal(store, parentID, newParent); err != nil {
+					store.Unlock(rightID)
+					store.Unlock(leafID)
+					store.Unlock(parentID)
+					return false, err
+				}
+				store.Unlock(rightID)
+				store.Unlock(leafID)
+				store.Unlock(parentID)
+				return false, nil
+			}
+
+			// Merge the right sibling into the current (empty) leaf's slot,
+			// keeping leafID's own node ID (mirrors the single-threaded
+			// repairEmptyLeaf's right-merge branch).
+			mergedCurrent := LeafNode{Keys: right.Keys, FileIDs: right.FileIDs, NextLeaf: right.NextLeaf}
+			if err := writeLeaf(store, leafID, mergedCurrent); err != nil {
+				store.Unlock(rightID)
+				store.Unlock(leafID)
+				store.Unlock(parentID)
+				return false, err
+			}
+			store.Unlock(rightID)
+			store.Unlock(leafID)
+			// rightID abandoned; see the free Delete function's doc comment
+			// on "Abandoned node IDs". parentID is still held here and is
+			// handed off to finishParentShrinkAfterDelete, which unlocks it.
+			return false, t.finishParentShrinkAfterDelete(parentID, parent, j+1, path)
+		}
+		store.Unlock(rightID)
+	}
+
+	// Neither same-parent sibling usable (same-type, i.e. leaf) as a
+	// borrow/merge candidate -- mirrors the single-threaded repairEmptyLeaf's
+	// final fallback: accept the underflow, leaving the already-written
+	// empty leaf in place (still reachable, still correctly linked via
+	// NextLeaf).
+	store.Unlock(leafID)
+	store.Unlock(parentID)
+	return false, nil
+}
+
+// finishParentShrinkAfterDelete removes the child pointer at removedChildIdx
+// (an abandoned node ID a leaf-level merge just spliced out) and its
+// associated separator key (at removedChildIdx-1) from parentID's
+// already-locked, already-fresh-read InternalNode parent, then rewrites it
+// and releases parentID's latch on every path. Mirrors the single-threaded
+// shrinkParentAfterMerge's policy exactly (the borrow-or-merge decision is
+// not revisited here -- only concurrency-safe locking is added), while fixing
+// a latent bug present in that function: NextSibling/LowKey must be
+// preserved on every reconstructed InternalNode, since a concurrent crabbing
+// walk's move-right recovery (and this package's structural-invariant
+// checks) depend on those fields staying correct -- see this section's doc
+// comment above.
+func (t *Tree) finishParentShrinkAfterDelete(parentID uint64, parent InternalNode, removedChildIdx int, path string) error {
+	store := t.Store
+
+	newKeys := make([]string, 0, len(parent.Keys)-1)
+	newKeys = append(newKeys, parent.Keys[:removedChildIdx-1]...)
+	newKeys = append(newKeys, parent.Keys[removedChildIdx:]...)
+
+	newChildren := make([]uint64, 0, len(parent.Children)-1)
+	newChildren = append(newChildren, parent.Children[:removedChildIdx]...)
+	newChildren = append(newChildren, parent.Children[removedChildIdx+1:]...)
+
+	newParent := InternalNode{Keys: newKeys, Children: newChildren, NextSibling: parent.NextSibling, LowKey: parent.LowKey}
+
+	if err := writeInternal(store, parentID, newParent); err != nil {
+		store.Unlock(parentID)
+		return err
+	}
+
+	if len(newParent.Children) > 1 {
+		// Tombstone policy: parentID still has >= 1 key. Done.
+		store.Unlock(parentID)
+		return nil
+	}
+
+	// parentID degenerated to 0 keys/1 child: splice it out of ITS parent
+	// (the grandparent), or collapse the root if parentID IS the root.
+	survivingChild := newParent.Children[0]
+	ancestorNextSibling := newParent.NextSibling
+
+	t.rootMu.Lock()
+	if t.root == parentID {
+		t.root = survivingChild
+		t.rootMu.Unlock()
+		store.Unlock(parentID)
+		return nil
+	}
+	t.rootMu.Unlock()
+	store.Unlock(parentID)
+
+	return t.spliceOutDegenerateAncestor(parentID, ancestorNextSibling, survivingChild, path)
+}
+
+// spliceOutDegenerateAncestor splices ancestorID (already rewritten as a
+// 0-key/1-child InternalNode by the caller, already unlocked) out of its
+// current direct parent (the "grandparent"), redirecting the grandparent's
+// child pointer straight to ancestorID's single surviving child. This
+// mirrors the single-threaded shrinkParentAfterMerge's grandparent-splice
+// branch exactly (policy unchanged), adding only concurrency-safe locking:
+// a single grandparent latch at a time, located fresh via findParent exactly
+// like propagate's ancestor relocation -- this never needs more than a
+// parent+child latch budget, matching insert's window-of-2.
+//
+// Documented, deferred gap (mirrors 2a.4.2's own tracked "no retry cap"
+// follow-up -- see .cdr/memory/pending.md): if ancestorID's true left
+// neighbor in its level's NextSibling chain is also a child of the SAME
+// grandparent (grandParent.Children[gj-1]), this function patches that
+// neighbor's NextSibling to skip over ancestorID, keeping the chain
+// connected. If instead that left neighbor belongs to a DIFFERENT
+// (sibling) grandparent's subtree, this function does not locate/patch it --
+// doing so would require backward pointers or a full per-level scan, neither
+// of which this package has. That cross-grandparent NextSibling link is left
+// dangling, referencing an abandoned node ID. This is low-risk: top-down
+// lookup/insert/delete correctness never follows a stale NextSibling into an
+// already-Children-unreachable node, so this only affects a pure
+// structural-invariant chain-walk. Flagged for 2a.4.4/2a.4.5 to close if it
+// ever becomes relevant.
+func (t *Tree) spliceOutDegenerateAncestor(ancestorID, ancestorNextSibling, survivingChild uint64, path string) error {
+	store := t.Store
+
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			crabRetryBackoff(attempt)
+		}
+
+		t.rootMu.Lock()
+		currentRoot := t.root
+		t.rootMu.Unlock()
+
+		grandParentID, err := t.findParent(currentRoot, path, ancestorID)
+		if err != nil {
+			return err
+		}
+
+		store.Lock(grandParentID)
+		isLeaf, _, grandParent, err := store.ReadNode(grandParentID)
+		if err != nil {
+			store.Unlock(grandParentID)
+			return err
+		}
+		if isLeaf {
+			store.Unlock(grandParentID)
+			return fmt.Errorf("btree: internal invariant violated: ancestor node %d decoded as a leaf", grandParentID)
+		}
+
+		gj := indexOfChild(grandParent.Children, ancestorID)
+		if gj < 0 {
+			// Race: ancestorID's parentage changed concurrently. Retry:
+			// findParent will relocate the current grandparent fresh.
+			store.Unlock(grandParentID)
+			continue
+		}
+
+		newChildren := append([]uint64(nil), grandParent.Children...)
+		newChildren[gj] = survivingChild
+		newGrandParent := InternalNode{
+			Keys:        append([]string(nil), grandParent.Keys...),
+			Children:    newChildren,
+			NextSibling: grandParent.NextSibling,
+			LowKey:      grandParent.LowKey,
+		}
+		if err := writeInternal(store, grandParentID, newGrandParent); err != nil {
+			store.Unlock(grandParentID)
+			return err
+		}
+
+		// Best-effort same-grandparent chain fix-up (see doc comment above
+		// for the documented cross-grandparent gap). A TryLock miss here is
+		// deliberately NOT treated as errRestartFromRoot: the fix-up is
+		// hygiene, not required for key presence/absence correctness, so we
+		// simply skip it this round rather than paying for a full restart.
+		if gj > 0 {
+			leftID := grandParent.Children[gj-1]
+			if store.TryLock(leftID) {
+				leftIsLeaf, _, leftInternal, lerr := store.ReadNode(leftID)
+				if lerr == nil && !leftIsLeaf && leftInternal.NextSibling == ancestorID {
+					fixed := leftInternal
+					fixed.NextSibling = ancestorNextSibling
+					if werr := writeInternal(store, leftID, fixed); werr != nil {
+						store.Unlock(leftID)
+						store.Unlock(grandParentID)
+						return werr
+					}
+				}
+				store.Unlock(leftID)
+			}
+		}
+
+		store.Unlock(grandParentID)
+		return nil
+	}
+}
