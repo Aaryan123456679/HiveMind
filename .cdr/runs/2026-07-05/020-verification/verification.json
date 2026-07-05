@@ -1,0 +1,73 @@
+{
+  "subtask": "2a.4.2",
+  "issue": 9,
+  "commits_verified": ["eff41a0", "edd81f9"],
+  "verdict": "CHANGES_REQUESTED",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "FAIL",
+      "evidence": "Wrote an adversarial stress harness (goroutines=64, n=30000, forcing >=2 internal-node levels, 30000 keys vs the shipped test's 1800) driving the real Tree.Insert path under -race. Reproduced 'btree: internal invariant violated: findParent reached leaf N while searching for the current parent of M along path ...' twice in ~50 runs (roughly 1-in-20 to 1-in-25 rate). This is a genuine data-loss-class bug in the concurrent internal-split propagation path: findParent's fresh top-down walk fails to locate the current parent of a just-split internal node under real concurrent internal splits, meaning the acceptance criterion 'inserts into the same subtree remain correct' is violated once the tree is actually deep enough to exercise this code (harness + repro removed after verification per read-only mandate)."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "Window-of-2 crabbing discipline (lock child before unlocking parent, root-to-leaf only) is implemented correctly for the descent path in crabInsert. rootMu is a separate tree-level mutex from per-node latches as designed, held only briefly (empty-tree bootstrap, root-is-stale check, new-root install). propagate never holds more than one pre-existing ancestor latch plus a freshly-allocated (uncontended) sibling latch at once. Lock ordering audited: no code path holds two independently-reachable existing node latches simultaneously in an order that could form an AB-BA cycle against a concurrent top-down descender."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "Pre-existing single-threaded free Insert function is byte-for-byte untouched aside from InternalNode gaining NextSibling/LowKey fields (zero-valued for old code paths, backward compatible); full engine module `go test ./... -race -count=1` passes (btree, catalog, mvcc, wal, root all green, no test files in graph/loadtest/rpc/split). All pre-existing single-threaded btree tests (TestInsertLeafSplit, TestInsertInternalSplit, TestInsertOutOfOrder, TestDelete/*) pass unmodified."
+    },
+    "blink_tree_fix_soundness_point1_4": {
+      "status": "FAIL - COUNTEREXAMPLE FOUND",
+      "evidence": "The claimed original bug (stale-parent misroute due to comparing against a node's own populated max key) IS genuinely fixed for the leaf level and for the shallow (root+leaves-only, or root+one-internal-level) case: TestCrabbingInsert's own regime (1800 keys, fanout ~150-170 per node) never grows past 1 internal level, so LowKey/NextSibling move-right recovery at INTERNAL level is essentially never exercised by the shipped test (confirmed via instrumented run: final tree depth = 1 internal level, single node with 21 children, NextSibling=0 throughout). Pushing to the depth-2+ regime the fix specifically targets (verified 20000 keys needs depth 2 even single-threaded) surfaces a real, reproducible 'findParent reached leaf while searching for parent' invariant violation under concurrent internal splits -- i.e. the hardest, most novel part of this subtask's claimed innovation is not actually correct once genuinely exercised."
+    },
+    "lowkey_immutability_point2": {
+      "status": "PASS",
+      "evidence": "Grepped every write site: LowKey is set exactly once at creation (splitInternal: left keeps n.LowKey unchanged, right gets promoted; insertIntoInternal preserves parent.LowKey unchanged when growing a node's Keys/Children without splitting; propagate's new-root branch correctly leaves LowKey as zero-value/'' for a fresh root, which is semantically correct -- a root has no lower bound). No code path ever reassigns an existing node's LowKey post-creation. Boundary math (right.LowKey = promoted, matching sort.Search's `path < Keys[i]` strict-less routing so path==promoted correctly routes right) is correct and consistent with the single-threaded splitInternal's existing promotion semantics."
+    },
+    "lock_ordering_deadlock_point3": {
+      "status": "PASS",
+      "evidence": "All Lock calls in crabInsert, findParent, and propagate are root-to-leaf (or, for propagate, single-node-at-a-time after releasing findParent's walk) ordered; rootMu is always acquired independently of and never nested inside a held node latch in either direction that could cross with the node-latch acquisition order, so no rootMu/node-latch AB-BA path exists. No path holds two independently-reachable pre-existing node IDs at once (only current node + a leaf/sibling being peeked, released before advancing, or current node + a brand-new not-yet-visible-to-others ID), so no cross-goroutine AB-BA cycle is constructible from the code as written."
+    },
+    "error_path_lock_safety_point4": {
+      "status": "PASS",
+      "evidence": "Manually traced every return in crabInsert/insertIntoLeafAndPropagate/findParent/propagate: every Lock has a matching Unlock on every error/early-return branch (I/O errors mid-descent unlock both currentID and nextID before returning; insertIntoLeafAndPropagate unlocks leafID on every branch including allocator failure and write failure; propagate unlocks parentID before both the 'continue' retry on lost race and every error return)."
+    },
+    "rootmu_scope_point5": {
+      "status": "PASS",
+      "evidence": "t.root is only ever read/written while holding rootMu (Root(), Insert's bootstrap/read, propagate's check-and-install), so no torn read is possible. rootMu is genuinely low-contention: Insert releases it before descending, so disjoint-subtree inserts contend on rootMu only for a released Lock()/Unlock() pair per call, not for the duration of the insert."
+    },
+    "test_coverage_point6": {
+      "status": "FAIL",
+      "evidence": "assertStructuralInvariants (pre-existing, reused unmodified) validates per-node sorted-Keys/fanout and the leaf-level NextLeaf chain (order + count), but does NOT validate InternalNode.NextSibling chain consistency at internal levels, does NOT validate LowKey boundary correctness against actual subtree contents, and does NOT check for orphaned nodes. TestCrabbingInsert's OverlappingSubtree case (30 goroutines x 60 keys = 1800 keys) forces the root to split from leaf to a single internal level (verified via ReadNode instrumentation) but with ~150-170 fanout per node, NEVER forces a concurrent internal-node split -- confirmed empirically (final depth = 1 internal level, root NextSibling always 0). The propagate 'ancestor overflowed, split it too' branch and findParent's internal-level move-right/retry-on-lost-race logic -- the subtask's central, hardest, and highest-risk claimed innovation -- is dead code from this test's perspective. This exactly matches the concern flagged in the task brief and is the reason the bug in blink_tree_fix_soundness_point1_4 above went undetected by CI."
+    },
+    "maintainability": {
+      "status": "COMMENT",
+      "evidence": "Code is thoroughly commented and the doc comments correctly explain intent, but crabInsert's leaf/internal move-right loops unconditionally chase NextLeaf/NextSibling on every single descent step even absent any concurrent split (every non-rightmost node has a NextSibling/NextLeaf by construction), transiently acquiring a second latch each time -- standard Blink-tree practice, not a bug, but worth calling out since it means 'no writer holds more than a parent+child latch pair' is technically satisfied by a sibling-sibling pair rather than a strict parent-child pair at leaf level, a nuance beyond the literal acceptance-criteria wording."
+    },
+    "security": {
+      "status": "PASS",
+      "evidence": "No new external input surface; path/fileID validation unchanged from existing single-threaded Insert."
+    },
+    "performance": {
+      "status": "COMMENT",
+      "evidence": "Every insert into a non-rightmost leaf/internal node pays one extra Lock/ReadNode/Unlock round-trip on its immediate right sibling (see maintainability note), even with zero concurrent splits in flight. Acceptable overhead for correctness but not free."
+    }
+  },
+  "high_risk_findings_disproved": [],
+  "confirmed_bugs": [
+    "Concurrent internal-node split propagation (findParent + propagate's ancestor-overflow branch) can fail to relocate the current parent of a just-split internal node, surfacing as 'btree: internal invariant violated: findParent reached leaf N while searching for the current parent of M'. Reproduced with a 64-goroutine, 30000-key stress harness (well beyond the ~150^2 fanout needed to force >=2 internal levels) at roughly a 1-in-20 to 1-in-25 failure rate under -race. Root cause not fully bisected within this verification's scope, but the failure signature (routing falls all the way to a leaf without ever finding the target internal node id among any ancestor's Children) points at either: (a) a race between an internal node's own concurrent split and a grandparent's own concurrent promotion/split invalidating the 'childID always still reachable via path's ordinary top-down routing from currentRoot' invariant findParent's doc comment relies on, or (b) the internal-level move-right LowKey peek in crabInsert/findParent (`nextInternal.LowKey != \"\" && path < nextInternal.LowKey`) misrouting around a legitimately-empty-LowKey node in some multi-level-split interleaving. Needs root-cause bisection and a fix, then a regression test at the depth/fanout this bug requires (the shipped TestCrabbingInsert's key counts are far too small to ever hit it)."
+  ],
+  "test_execution": {
+    "go_build": "PASS (engine module)",
+    "go_vet": "PASS (engine module)",
+    "gofmt_l": "PASS (no files listed)",
+    "go_test_btree_race_v_count1": "PASS (all pre-existing + new tests green)",
+    "go_test_TestCrabbingInsert_race_count10": "PASS (10/10, no flakiness observed at shipped test's scale)",
+    "go_test_engine_all_race_count1": "PASS (btree, catalog, mvcc, wal all green; graph/loadtest/rpc have no test files)",
+    "adversarial_repro_TestZZForceInternalSplitStress_not_committed": "FAILED intermittently (~1-in-20 to 1-in-25 runs) with 'findParent reached leaf ... invariant violated'; harness written to /Users/aaryanmahajan/Main/Projects/HiveMind/engine/btree/zz_stress_test.go during verification and removed afterward (read-only mandate); reproducible again with: 64 goroutines interleaved-modulo inserting genKey(0..29999) into an empty Tree via Tree.Insert, then assertAllLookupable/assertStructuralInvariants + depth check"
+  },
+  "hld_lld_consistency": {
+    "status": "PASS",
+    "evidence": "docs/LLD/btree.md's Concurrency section describes latch-crabbing (lock parent, lock child, release parent) at a high level consistent with the implementation; it does not mention Blink-tree NextSibling/LowKey specifically (predates this subtask's discovery), which is an additive refinement, not a contradiction."
+  }
+}

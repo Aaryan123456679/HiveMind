@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "022-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "2a.4.2",
+  "git_head": "a07d732ac3eeb445692593f3c8d9e7bbbba79464",
+  "run_key": "reverify-2a.4.2-a07d732-f0e972c-followup-of-021-implementation-fix",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-05T10:06:00Z",
+  "ended_at": "2026-07-05T15:55:00Z"
+}

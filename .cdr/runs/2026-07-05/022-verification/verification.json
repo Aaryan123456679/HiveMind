@@ -1,0 +1,71 @@
+{
+  "subtask": "2a.4.2",
+  "issue": 9,
+  "commits_verified": ["f0e972c", "a07d732"],
+  "reverifies": ".cdr/runs/2026-07-05/020-verification/verification.json",
+  "fix_cycle": ".cdr/runs/2026-07-05/021-implementation-fix",
+  "verdict": "CHANGES_REQUESTED",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PARTIAL",
+      "evidence": "The specific reported failure ('findParent reached leaf N while searching for the current parent of M') is genuinely fixed: code-traced the NextLeaf-chain-walk recovery, confirmed the ancestorID bookkeeping is correctly set only at real Children-slice descent steps (insert.go line 827), matching what propagate's indexOfChild(parent.Children, childIDBeingReplaced) check requires afterward. 40/40 clean runs of the shipped 64-goroutine/30,080-key DeepOverlappingSubtree test at -count=40, plus the original 020-verification repro re-run 40/40 clean. However, an independent harder adversarial test (160 goroutines, 80,000 keys) found a DIFFERENT, more severe failure mode: silent data loss (a previously-inserted key becomes unfindable via Lookup after all inserts complete, with no error surfaced anywhere), reproduced 3/35 runs (~8.6%). This is a distinct bug from the one this fix cycle targeted, not caught by the shipped test's scale."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "findParent's leaf-chain-walk recovery correctly mirrors crabInsert's existing leaf-level move-right peek pattern and reuses the existing NextSibling move-right recovery structure at the internal level; no architectural deviation from the Blink-tree crabbing design in HLD/LLD."
+    },
+    "regression_risk": {
+      "status": "FAIL",
+      "evidence": "New adversarial harness (160 goroutines, 80,000 keys, same striped key-assignment pattern as the shipped test, -race) surfaced a genuine silent data-loss failure at ~1-in-12 rate that does not manifest at the shipped test's 64-goroutine/30,080-key scale even across 40 repeated runs. All Insert calls returned no error; the loss is only detected by a post-hoc Lookup, meaning a real caller at this concurrency level would silently lose writes with zero indication. Root cause not bisected (out of scope for this verification pass) but confirmed reproducible and distinct from the findParent invariant-violation bug this fix cycle closed."
+    },
+    "nextleaf_walk_soundness": {
+      "status": "PASS",
+      "evidence": "Code-traced insert.go lines 708-831. The walk terminates on either currentID==childID (success) or leaf.NextLeaf==noSibling (hard error, not silent misroute) -- it cannot spin forever absent an independent NextLeaf-cycle bug elsewhere (none found; leaf chains are singly-linked and only ever extended rightward by splits). The walk is not capped by an explicit max-hop counter, but its length is bounded in practice by the number of concurrently in-flight, not-yet-linked leaf splits sharing one ancestor, which is bounded by goroutine concurrency, not adversarial/attacker-controlled input in this internal storage-engine layer. ancestorID is set (line 827) only when descending via a real Children-slice entry (mirrors the existing internal indexOfChild check at line 817), never during the leaf NextLeaf walk itself or the internal-level NextSibling move-right walk -- so the returned ancestorID is always the correct internal node whose Children slice needs the new entry, confirmed via manual trace of the concurrent-split race scenario (leaf 36 splits to 36/37; before propagate(36) links 37 into ancestor A, a second goroutine splits 37 into 37/38 and calls propagate(37,...), whose findParent(A-bound descent, childID=37) lands on leaf 36, walks NextLeaf to 37, returns A; propagate then correctly retries via the existing 'lost race' j<0 retry path until A actually has 37 linked). No misrouting found."
+    },
+    "invariant_checker_soundness": {
+      "status": "PASS",
+      "evidence": "assertStructuralInvariants' new LowKey check computes ground truth via an independently-recursing subtreeMinKey() that descends via Children[0]/Keys[0] with NO reference to any node's stored LowKey field, then compares against internal.LowKey -- genuinely independent, not tautological. The NextSibling per-level chain check (single head with LowKey==\"\", acyclic via a visited-set, exactly covers every node collected at that depth via the same independent subtreeMinKey for strict-increasing ordering) is likewise a real structural check, not a re-derivation of already-trusted state."
+    },
+    "deep_overlapping_subtree_test": {
+      "status": "PASS",
+      "evidence": "Re-ran TestCrabbingInsert/DeepOverlappingSubtree at -count=40 (-race): 40/40 pass, and manually confirmed (via ReadNode(root) / ReadNode(root.Children[0])) that both are internal, i.e. depth>=2 reliably achieved every run, not flaky. Genuinely concurrent: 64 goroutines with disjoint interleaved key striding (idx := g; idx < n; idx += goroutines), no serializing wg.Wait() until all goroutines are dispatched, same shape as the pre-existing OverlappingSubtree subtest already accepted as genuinely concurrent."
+    },
+    "test_coverage": {
+      "status": "FAIL",
+      "evidence": "Even the strengthened DeepOverlappingSubtree test (64 goroutines/30,080 keys) is insufficient to catch the newly-discovered silent-data-loss failure mode, which only manifested at 160 goroutines/80,000 keys in this verification's own adversarial harness. No committed test exercises concurrency at this scale, and no test would detect this class of failure (a bare Lookup miss with no invariant check tripped) even at the scale that reproduces it, since assertStructuralInvariants does not currently cross-check inserted-key-count against total leaf-key-count in a way that would flag a silently-dropped key deterministically at lower cost than a full Lookup sweep."
+    },
+    "maintainability": {
+      "status": "COMMENT",
+      "evidence": "The fix and its doc comments are clear and well-reasoned. The NextLeaf-walk loop has no explicit max-iteration cap/circuit-breaker; consider adding one (even generously sized) as defense-in-depth against a future NextLeaf-cycle-introducing bug turning this into a livelock-while-holding-locks rather than a clean error."
+    },
+    "security": {
+      "status": "PASS",
+      "evidence": "No new external input surface; same trusted internal-engine call path as before."
+    },
+    "performance": {
+      "status": "PASS",
+      "evidence": "No new fixed overhead beyond the already-accepted leaf-level move-right/NextLeaf peek pattern; the chain walk only executes in the already-rare not-yet-linked-split race window."
+    }
+  },
+  "high_risk_findings_disproved": [
+    "The specific 020-verification repro ('findParent reached leaf N ... current parent of M') is fixed: not reproduced in 40/40 runs of the original 64g/30k harness nor 40/40 runs of the shipped DeepOverlappingSubtree test."
+  ],
+  "confirmed_bugs": [
+    "NEW, more severe than the one this fix cycle closed: silent concurrent-insert data loss (a previously-inserted key becomes unfindable via Lookup, with zero error surfaced by Insert or elsewhere) reproduced 3/35 runs (~8.6%) in a temporary, non-committed adversarial harness (160 goroutines, 80,000 keys, same striped-key-interleaving pattern as the shipped test, -race). Not reproduced at the shipped test's 64-goroutine/30,080-key scale across 40 repeated runs, meaning this is a genuinely new failure mode only exposed by pushing concurrency further, not a recurrence of the fixed bug. Root cause not bisected (verification is read-only w.r.t. source; the adversarial test file was deleted after use per task instructions). Candidate areas for follow-up investigation: propagate's 'ancestor overflowed, split it too' branch chained across 3+ levels under very high concurrency, or a race in leaf-level insertIntoLeafAndPropagate's own split-and-link sequence not yet exercised by 2-level-deep tests."
+  ],
+  "test_execution": {
+    "go_build": "PASS (engine module)",
+    "go_vet": "PASS (engine module)",
+    "gofmt_l": "PASS (no files listed)",
+    "go_test_btree_race_v_count1": "PASS (all pre-existing + new tests green, 28.5s)",
+    "go_test_TestCrabbingInsert_race_count20": "PASS (20/20, no flakiness at shipped scale)",
+    "go_test_TestCrabbingInsert_DeepOverlappingSubtree_race_count40": "PASS (40/40, depth>=2 confirmed reliably every run)",
+    "go_test_engine_all_race_count1": "PASS (root, btree, catalog, mvcc, wal all green; graph/loadtest/rpc have no test files)",
+    "adversarial_repro_original_64g_30k_scale_count40": "PASS 40/40 (confirms 020-verification's specific repro is fixed)",
+    "adversarial_repro_160g_80k_scale_not_committed": "FAIL 3/35 (~8.6%): silent Lookup-miss data loss, a new failure mode distinct from the fixed bug -- see confirmed_bugs"
+  },
+  "hld_lld_consistency": {
+    "status": "N/A",
+    "evidence": "No LLD changes in this fix cycle; prior HLD/LLD consistency status from 020-verification unaffected."
+  }
+}

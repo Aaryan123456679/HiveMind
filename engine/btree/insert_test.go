@@ -472,6 +472,7 @@ func TestCrabbingInsert(t *testing.T) {
 	t.Run("DisjointSubtrees", testCrabbingInsertDisjointSubtrees)
 	t.Run("OverlappingSubtree", testCrabbingInsertOverlappingSubtree)
 	t.Run("DeepOverlappingSubtree", testCrabbingInsertDeepOverlappingSubtree)
+	t.Run("VeryDeepOverlappingSubtree", testCrabbingInsertVeryDeepOverlappingSubtree)
 }
 
 // testCrabbingInsertDisjointSubtrees pre-builds a moderately large tree
@@ -671,4 +672,86 @@ func testCrabbingInsertDeepOverlappingSubtree(t *testing.T) {
 	if childIsLeaf {
 		t.Fatalf("tree only reached depth 1 (root -> leaves) after %d concurrent inserts across %d goroutines, want depth >= 2 (root -> internal -> ... -> leaves) to actually exercise findParent's internal-level recovery path", n, goroutines)
 	}
+}
+
+// testCrabbingInsertVeryDeepOverlappingSubtree is testCrabbingInsertDeepOverlappingSubtree
+// scaled up further still (160 goroutines, ~80,000 keys) to close the gap
+// identified in the 2a.4.2 fix round 2 regression (GitHub issue #9): a
+// distinct, more severe silent-data-loss bug (a previously-inserted key
+// becomes unfindable via Lookup afterward, with no error surfaced anywhere)
+// in Tree.propagate's promoted-key insertion position, caused by two
+// children of the same parent splitting and being promoted concurrently
+// using a stale positional index rather than promotedKey's actual sorted
+// position. See Tree.propagate's insertion-position comment for the full
+// race trace.
+//
+// Documented tradeoff (balance of runtime vs. reliability): this specific
+// race was empirically confirmed to reproduce at only ~8.6% per run (3/35)
+// at this 160-goroutine/80,000-key scale under -race, and was NOT
+// reproduced at all in 40/40 runs at testCrabbingInsertDeepOverlappingSubtree's
+// smaller 64-goroutine/30,080-key scale. That means:
+//   - This subtest, run once per `go test` invocation (as CI normally does),
+//     has only a modest chance of catching a future regression of this
+//     specific race in any single run -- it is not a reliable single-shot
+//     regression guard the way the other subtests in this file are.
+//   - Running it enough times to get high-confidence detection (e.g. the
+//     40+ repeated runs used to validate the fix during this fix cycle)
+//     costs minutes of wall-clock time under -race, which is not practical
+//     to pay on every CI run.
+//   - It is still included once, at this scale, because: (a) it is the
+//     smallest scale empirically observed to reproduce this exact bug at
+//     all, so it is the best available committable regression signal for
+//     it; (b) assertStructuralInvariants' sorted-Keys check (exercised here
+//     the same as every other subtest) means any recurrence that IS caught
+//     manifests as a clear, specific failure rather than a flaky timeout;
+//     and (c) combined with repeated manual/adversarial runs during future
+//     verification passes of any change touching Tree.propagate (as this
+//     fix cycle itself did), the combination of "always run once in CI" +
+//     "run adversarially many times whenever propagate changes" gives
+//     reasonable coverage without permanently taxing every CI run with a
+//     minutes-long, mostly-redundant repeated-run test.
+func testCrabbingInsertVeryDeepOverlappingSubtree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping 160-goroutine/80,000-key concurrent stress subtest in -short mode")
+	}
+
+	store, alloc := newTestStoreAndAllocator(t)
+	tree := NewTree(store, alloc, reservedNodeID)
+
+	const goroutines = 160
+	const perGoroutine = 500 // 80,000 keys total
+	const n = goroutines * perGoroutine
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := g; idx < n; idx += goroutines {
+				key := genKey(idx)
+				fileID := uint64(idx + 1)
+				if err := tree.Insert(key, fileID); err != nil {
+					errCh <- fmt.Errorf("goroutine %d: Insert(%q): %w", g, key, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	inserted := make(map[string]uint64, n)
+	for idx := 0; idx < n; idx++ {
+		inserted[genKey(idx)] = uint64(idx + 1)
+	}
+
+	finalRoot := tree.Root()
+	assertAllLookupable(t, store, finalRoot, inserted)
+	assertStructuralInvariants(t, store, finalRoot, n)
 }

@@ -1,0 +1,28 @@
+{
+  "build": "PASS (go build ./... in engine module)",
+  "vet": "PASS (go vet ./... in engine module)",
+  "gofmt": "PASS (gofmt -l reports nothing for modified files)",
+  "root_cause_confirmed_by_inspection": "PASS: read Tree.propagate in full context plus findParent's leaf-chain-walk and per-parent lock/retry loop; confirmed j (positional index of childIDBeingReplaced in a freshly-locked-and-read parent.Children) is not guaranteed to be promotedKey's correct sorted position once other concurrent same-parent promotions have already landed nearby out of key order.",
+  "root_cause_confirmed_by_counterfactual": "PASS: reverted insert.go to round-1-only code via git stash, ran TestZZReproSilentDataLoss (160g/80k) 15x: 3/15 (20%) failures, all with identical signature (unsorted internal node Keys + missing Lookup keys), consistent with 022-verification's ~8.6% (3/35) finding within sampling variance.",
+  "fix_confirmed_with_in_progress_code": "PASS: 8 initial runs + 40/40 background batch = 49/49 clean runs of TestZZReproSilentDataLoss with the in-progress (pre-polish) fix applied.",
+  "defensive_fallback_hardened": "Changed the 'pos < j' guard from a silent fallback to pos=j (which would have silently reintroduced the bug if ever triggered) to a distinct 'btree: internal invariant violated' error, returned after unlocking the parent.",
+  "fix_confirmed_with_final_polished_code": "PASS: 30/30 clean runs of TestZZReproSilentDataLoss after hardening the defensive fallback (one earlier batch of 15 runs showed 1 failure, but that batch was contaminated by a concurrent git stash push/pop I ran in parallel with the background test loop -- re-ran cleanly, sequentially, with no concurrent source-file mutation, and got 30/30 clean).",
+  "round1_regression_check": "PASS: TestCrabbingInsert/DeepOverlappingSubtree (64g/30,080k, the round-1 bug's original repro scale) run at -count=20 and again at -count=30, all clean, zero failures.",
+  "full_btree_suite": "go test ./engine/btree/... -race -v -count=1: PASS, zero regressions, includes new VeryDeepOverlappingSubtree subtest.",
+  "full_engine_module_suite": "go test ./... -race -count=1 (engine module: engine, btree, catalog, mvcc, wal): PASS, zero regressions.",
+  "new_subtest_added": "TestCrabbingInsert/VeryDeepOverlappingSubtree (160g/80k, uses assertAllLookupable + assertStructuralInvariants), tradeoff explicitly documented in its doc comment: this scale reproduces the bug at only ~8.6% per run, so a single CI run is not a fully reliable single-shot regression guard for this specific race, but it is the smallest scale empirically observed to reproduce it at all.",
+  "zzrepro_test_go_deleted": "PASS: engine/btree/zzrepro_test.go removed before commit, per its own header comment.",
+  "matrix_coverage": [
+    "root cause confirmed by inspection: done",
+    "root cause confirmed by counterfactual (revert-and-reproduce): done",
+    "fix confirmed to eliminate repro (in-progress code): done, 49/49",
+    "defensive fallback hardened to fail loudly instead of silently regressing: done",
+    "fix re-confirmed after hardening: done, 30/30 (clean, uncontaminated run)",
+    "round-1 bug regression check: done, 20/20 then 30/30",
+    "full btree suite: done, PASS",
+    "full engine module suite: done, PASS",
+    "committable test strengthened with documented tradeoff: done",
+    "temporary repro harness deleted: done"
+  ],
+  "note": "This is internal sanity only, per invariant I4 -- NOT a verification pass. /cdr:verify must independently re-verify this fix."
+}

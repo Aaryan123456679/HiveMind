@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "run_id": "023-implementation-fix",
+  "subtask": "2a.4.2",
+  "status": "completed",
+  "commit_sha": "PENDING_COMMIT_SHA",
+  "changed_files": [
+    "engine/btree/insert.go:Tree.propagate",
+    "engine/btree/insert_test.go:TestCrabbingInsert/VeryDeepOverlappingSubtree",
+    ".cdr/index/task.jsonl:task-2a.4.2",
+    ".cdr/index/regression.jsonl:023-implementation-fix entry"
+  ],
+  "deleted_files": [
+    "engine/btree/zzrepro_test.go (temporary repro harness, not meant to be committed)"
+  ],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-05/023-implementation-fix/requirement.md",
+    "root_cause": ".cdr/runs/2026-07-05/023-implementation-fix/root-cause.md",
+    "plan": ".cdr/runs/2026-07-05/023-implementation-fix/plan.md",
+    "self_consistency": ".cdr/runs/2026-07-05/023-implementation-fix/self-consistency.json",
+    "prior_verification": ".cdr/runs/2026-07-05/022-verification/verification.json"
+  },
+  "next_step": "run /cdr:verify against this fix; this agent did not verify its own work (invariant I4)",
+  "ended_at": "2026-07-05T20:15:00Z"
+}

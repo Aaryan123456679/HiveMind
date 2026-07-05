@@ -917,7 +917,44 @@ func (t *Tree) propagate(childIDBeingReplaced uint64, promotedKey string, newChi
 			continue
 		}
 
-		newParent := insertIntoInternal(parent, j, promotedKey, newChildID)
+		// Anchor the insertion position to promotedKey's own sorted order
+		// among parent's CURRENT Keys, not simply "j+1" (GitHub issue #9 fix
+		// round 2: silent data loss). childIDBeingReplaced can be split more
+		// than once, independently and concurrently, before either split's
+		// promotion reaches this same parent: e.g. leaf L1 (child of P)
+		// splits, promoting P2 into P's parent; before that promotion is
+		// applied here, leaf L2 (also a child of P, in the range that stays
+		// with P after the first split) also splits, promoting P3. Both
+		// promotions target "the slot immediately after childIDBeingReplaced
+		// (P)" if insertion is done purely positionally -- but P3's true key
+		// range sits BETWEEN P and P2, so whichever promotion is APPLIED
+		// HERE last (which is a pure scheduling race, not necessarily the
+		// one whose split happened last) must not always win the "j+1"
+		// slot: only the promotion whose key is numerically the smallest of
+		// the two may end up immediately right of P. Using promotedKey's
+		// sorted position instead of the stale positional index makes the
+		// outcome depend on key order, not scheduling order, regardless of
+		// which of two (or more) concurrent same-parent promotions is
+		// applied first.
+		//
+		// pos is always >= j: promotedKey is guaranteed greater than every
+		// key covered by childIDBeingReplaced's own left neighbor (i.e.
+		// parent.Keys[j-1], if any), since promotedKey was drawn from
+		// within childIDBeingReplaced's own subtree. The pos < j guard below
+		// is defensive only -- it should be unreachable given that
+		// invariant AND parent.Keys being correctly sorted (sort.Search's
+		// own precondition). Silently falling back to the stale positional
+		// index here would just reintroduce the exact bug this fix closes
+		// (GitHub issue #9 fix round 2) the moment the precondition is ever
+		// violated, so a violation instead fails loudly with a distinct
+		// invariant-violation error rather than a silent fallback.
+		pos := sort.Search(len(parent.Keys), func(i int) bool { return parent.Keys[i] > promotedKey })
+		if pos < j {
+			store.Unlock(parentID)
+			return fmt.Errorf("btree: internal invariant violated: propagate computed sorted insertion position %d for promoted key %q less than childIDBeingReplaced %d's own current position %d in parent %d (Keys=%v)", pos, promotedKey, childIDBeingReplaced, j, parentID, parent.Keys)
+		}
+
+		newParent := insertIntoInternal(parent, pos, promotedKey, newChildID)
 		if internalEncodedSize(newParent) <= NodeSize {
 			err := writeInternal(store, parentID, newParent)
 			store.Unlock(parentID)
