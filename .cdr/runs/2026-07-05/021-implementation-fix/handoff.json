@@ -3,7 +3,7 @@
   "run_id": "021-implementation-fix",
   "subtask": "2a.4.2",
   "status": "completed",
-  "commit_sha": "PENDING_FILL_AFTER_COMMIT",
+  "commit_sha": "f0e972c4d736404049375f8156d9630557624ab0",
   "changed_files": [
     "engine/btree/insert.go:Tree.findParent",
     "engine/btree/insert_test.go:assertStructuralInvariants",
