@@ -1,0 +1,22 @@
+{
+  "subtask": "task-2a.4.1",
+  "status": "implemented",
+  "commit": "5cc69e3",
+  "files": [
+    "engine/btree/latch.go",
+    "engine/btree/lookup.go",
+    "engine/btree/node_test.go"
+  ],
+  "protocol_summary_for_2a.4.2_2a.4.3_2a.4.4": {
+    "identity_model": "Node identity is the uint64 node ID, NOT a live in-memory node object (nodes are decoded fresh from disk on every ReadNode call). Latch/version state is therefore owned by NodeStore, keyed by node ID, in a lazily-populated map[uint64]*nodeLatch (NodeStore.latches, guarded by NodeStore.latchesMu). See engine/btree/latch.go's nodeLatch doc comment for the full rationale.",
+    "latch_type": "plain sync.Mutex (NOT RWMutex). Readers never acquire it -- required by 2a.4.4's 'reader never blocks writer or another reader' criterion. It exists solely for writer-side latch-crabbing.",
+    "public_api": "NodeStore.Lock(nodeID) / NodeStore.Unlock(nodeID) -- acquire/release a node's write latch. NodeStore.Version(nodeID) uint64 -- atomic load of the version counter, non-blocking.",
+    "versioning_scheme": "single-increment-after-mutation (NOT seqlock odd/even pre+post pair). WriteNode (engine/btree/lookup.go) bumps the target node's version by exactly 1 immediately after its WriteAt succeeds. A writer is expected to hold that node's latch for the entire read-modify-write critical section surrounding the WriteNode call. Optimistic readers (2a.4.4) must: take version before, read/copy full node contents, take version after, retry if they differ.",
+    "mutation_choke_point": "WriteNode is the sole existing choke point for structural mutations (all of insert.go/delete.go funnel through it). It bumps version but does NOT itself acquire the node's latch (a non-reentrant mutex would deadlock a crabbing caller that already holds it across the call).",
+    "REQUIRED_CONVENTION_for_2a.4.2_plus": "Any call site that mutates a node concurrently with other goroutines MUST call store.Lock(nodeID) before, and store.Unlock(nodeID) after, the WriteNode call(s) that touch that node. insert.go and delete.go do NOT yet do this (intentionally deferred, single-threaded today) -- wiring this in for crabbing insert/delete is exactly 2a.4.2/2a.4.3's job.",
+    "on_disk_version_field_is_separate": "node.go's pre-existing on-disk offVersion/LeafNode.Version/InternalNode.Version field is untouched and unrelated to this new in-memory concurrency-control version counter; do not conflate the two."
+  },
+  "test": "TestNodeLatchFields in engine/btree/node_test.go -run TestNodeLatchFields -race -count=5, and full package go test ./engine/btree/... -race -count=1, both green, zero regressions.",
+  "not_verified_by_this_agent": true,
+  "next_step": "run /cdr:verify against commit 5cc69e3 for task-2a.4.1"
+}
