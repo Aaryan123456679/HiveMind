@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "021-implementation-fix",
+  "macro": "cdr:implement-fix",
+  "macro_version": "1",
+  "agent": "implementation-fix",
+  "subtask": "2a.4.2",
+  "git_head": "edd81f9cf80d0c817db05ce34f016c198481a301",
+  "run_key": "5ca31728449279cddf510adbb6f3270e2f595dba6d565a4f9378d5dd5ddcbca3",
+  "status": "in_progress",
+  "last_completed_step": "validate",
+  "started_at": "2026-07-05T15:00:00Z",
+  "ended_at": null
+}

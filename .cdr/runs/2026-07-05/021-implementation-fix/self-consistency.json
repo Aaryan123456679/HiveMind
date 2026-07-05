@@ -1,0 +1,18 @@
+{
+  "build": "PASS (go build ./... in engine module)",
+  "vet": "PASS (go vet ./... in engine module)",
+  "gofmt": "PASS (no files listed by gofmt -l on modified files)",
+  "original_repro_reconfirmed_before_fix": "FAILED as expected: attempt 3/40 and attempt 12/60 across two separate pre-fix runs reproduced 'btree: internal invariant violated: findParent reached leaf N while searching for the current parent of M'",
+  "original_repro_after_fix": "PASS 40/40 attempts (64 goroutines, ~30,080 keys, same striping as the pre-fix repro and the verifier's harness), zero failures",
+  "full_suite_after_fix": "go test ./engine/btree/... -race -v -count=1: PASS, zero regressions (including TestDeleteThreeLevelNoSiblingTypeMismatchDataLoss and all other pre-existing tests)",
+  "new_subtest_TestCrabbingInsert_DeepOverlappingSubtree": "PASS, includes explicit depth>=2 sanity assertion",
+  "matrix_coverage": [
+    "reproduce bug before fixing: done (scratch harness, deleted before commit)",
+    "root-cause bisected: done (missing NextLeaf-chain recovery in findParent's isLeaf branch, distinct from both verifier hypotheses)",
+    "fix implemented: done (bounded NextLeaf-chain walk + ancestorID tracking + defensive bare-leaf-root guard)",
+    "test strengthened: done (TestCrabbingInsert/DeepOverlappingSubtree + assertStructuralInvariants internal-level NextSibling/LowKey checks)",
+    "original repro re-run to confirm elimination: done (40/40 clean)",
+    "full validation: done (build/vet/gofmt/race suite/count=10 in progress, see handoff.json)"
+  ],
+  "note": "This is internal sanity only, per invariant I4 -- NOT a verification pass. /cdr:verify must independently re-verify this fix."
+}

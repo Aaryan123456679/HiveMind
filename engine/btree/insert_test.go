@@ -158,13 +158,52 @@ func assertAllLookupable(t *testing.T, store *NodeStore, rootID uint64, inserted
 //   - the leaf level, followed left-to-right via NextLeaf starting from the
 //     tree's leftmost leaf, yields keys in globally sorted order and visits
 //     every key exactly once
+//   - at every internal level, NextSibling forms exactly one connected,
+//     acyclic, strictly-increasing (by subtree minimum key) chain covering
+//     every internal node at that depth, with exactly one chain head (the
+//     node with LowKey == "") and the chain terminating at noSibling
+//   - every internal node's LowKey exactly equals the minimum key reachable
+//     in its own subtree, except the chain head at each level (LowKey == "")
+//
+// The last two points close the gap flagged by 2a.4.2's fix regression
+// (GitHub issue #9): the original assertStructuralInvariants only checked
+// leaf-level NextLeaf/sorted-keys, so it could not have caught -- and would
+// not catch a future regression of -- findParent's internal-level move-right
+// and LowKey-based routing.
 func assertStructuralInvariants(t *testing.T, store *NodeStore, rootID uint64, wantKeyCount int) {
 	t.Helper()
 
+	// subtreeMinKey returns the smallest key reachable anywhere within
+	// nodeID's subtree (descending via Children[0] for internal nodes, or
+	// Keys[0] for a leaf), and whether one could be determined at all. A
+	// leftmost leaf can legitimately be transiently empty in some Delete
+	// repair shapes (out of this insert-focused invariant's scope -- see
+	// Delete's own dedicated invariant checks), so callers must treat
+	// ok == false as "cannot verify, skip this check" rather than a failure.
+	var subtreeMinKey func(nodeID uint64) (key string, ok bool)
+	subtreeMinKey = func(nodeID uint64) (string, bool) {
+		isLeaf, leaf, internal, err := store.ReadNode(nodeID)
+		if err != nil {
+			t.Fatalf("ReadNode(%d): unexpected error: %v", nodeID, err)
+		}
+		if isLeaf {
+			if len(leaf.Keys) == 0 {
+				return "", false
+			}
+			return leaf.Keys[0], true
+		}
+		return subtreeMinKey(internal.Children[0])
+	}
+
+	// byLevel collects every internal node ID seen during the recursive
+	// walk below, indexed by depth from rootID (0 == rootID's own level),
+	// so the NextSibling-chain check below can be done per level.
+	byLevel := make(map[int][]uint64)
+
 	// Recursively validate every internal node's invariants (sorted keys,
-	// correct fanout: len(Children) == len(Keys)+1).
-	var validate func(nodeID uint64)
-	validate = func(nodeID uint64) {
+	// correct fanout: len(Children) == len(Keys)+1, and LowKey correctness).
+	var validate func(nodeID uint64, depth int)
+	validate = func(nodeID uint64, depth int) {
 		isLeaf, _, internal, err := store.ReadNode(nodeID)
 		if err != nil {
 			t.Fatalf("ReadNode(%d): unexpected error: %v", nodeID, err)
@@ -172,17 +211,73 @@ func assertStructuralInvariants(t *testing.T, store *NodeStore, rootID uint64, w
 		if isLeaf {
 			return
 		}
+		byLevel[depth] = append(byLevel[depth], nodeID)
+
 		if len(internal.Children) != len(internal.Keys)+1 {
 			t.Fatalf("internal node %d: len(Children)=%d, want len(Keys)+1=%d", nodeID, len(internal.Children), len(internal.Keys)+1)
 		}
 		if !sort.StringsAreSorted(internal.Keys) {
 			t.Fatalf("internal node %d: Keys not sorted ascending: %v", nodeID, internal.Keys)
 		}
+		if internal.LowKey != "" {
+			if want, ok := subtreeMinKey(nodeID); ok && internal.LowKey != want {
+				t.Fatalf("internal node %d: LowKey = %q, want %q (its own subtree's minimum key)", nodeID, internal.LowKey, want)
+			}
+		}
 		for _, child := range internal.Children {
-			validate(child)
+			validate(child, depth+1)
 		}
 	}
-	validate(rootID)
+	validate(rootID, 0)
+
+	// Per internal level, NextSibling must form exactly one connected,
+	// acyclic chain -- starting at the single node with LowKey == "" (the
+	// level's head) and terminating at noSibling -- that visits every node
+	// collected for that level in strictly increasing subtree-min-key order.
+	for depth, nodeIDs := range byLevel {
+		var head uint64
+		heads := 0
+		for _, id := range nodeIDs {
+			_, _, internal, err := store.ReadNode(id)
+			if err != nil {
+				t.Fatalf("ReadNode(%d): unexpected error: %v", id, err)
+			}
+			if internal.LowKey == "" {
+				head = id
+				heads++
+			}
+		}
+		if heads != 1 {
+			t.Fatalf("internal level %d: found %d nodes with LowKey==\"\" (want exactly 1 chain head) among %v", depth, heads, nodeIDs)
+		}
+
+		visited := make(map[uint64]bool, len(nodeIDs))
+		var lastMin string
+		id := head
+		for {
+			if visited[id] {
+				t.Fatalf("internal level %d: NextSibling chain revisited node %d (cycle)", depth, id)
+			}
+			visited[id] = true
+			_, _, internal, err := store.ReadNode(id)
+			if err != nil {
+				t.Fatalf("ReadNode(%d): unexpected error: %v", id, err)
+			}
+			if min, ok := subtreeMinKey(id); ok {
+				if lastMin != "" && min <= lastMin {
+					t.Fatalf("internal level %d: NextSibling chain not strictly increasing at node %d (min %q <= previous %q)", depth, id, min, lastMin)
+				}
+				lastMin = min
+			}
+			if internal.NextSibling == noSibling {
+				break
+			}
+			id = internal.NextSibling
+		}
+		if len(visited) != len(nodeIDs) {
+			t.Fatalf("internal level %d: NextSibling chain visited %d nodes, want %d (chain does not cover every node collected at this level, or covers nodes from another level)", depth, len(visited), len(nodeIDs))
+		}
+	}
 
 	// Descend to the leftmost leaf by always following child 0.
 	leftmostLeaf := rootID
@@ -376,6 +471,7 @@ func TestInsertOutOfOrder(t *testing.T) {
 func TestCrabbingInsert(t *testing.T) {
 	t.Run("DisjointSubtrees", testCrabbingInsertDisjointSubtrees)
 	t.Run("OverlappingSubtree", testCrabbingInsertOverlappingSubtree)
+	t.Run("DeepOverlappingSubtree", testCrabbingInsertDeepOverlappingSubtree)
 }
 
 // testCrabbingInsertDisjointSubtrees pre-builds a moderately large tree
@@ -496,5 +592,83 @@ func testCrabbingInsertOverlappingSubtree(t *testing.T) {
 	}
 	if isLeaf {
 		t.Fatalf("root is still a leaf after %d concurrent inserts across %d goroutines, want at least one split to have occurred", n, goroutines)
+	}
+}
+
+// testCrabbingInsertDeepOverlappingSubtree is testCrabbingInsertOverlappingSubtree
+// scaled up (64 goroutines, ~30,000 total keys, same tightly-interleaved
+// striped assignment) to a scale confirmed to reliably force the tree to at
+// least 2 internal levels under real concurrency -- i.e. to actually
+// exercise propagate's "ancestor overflowed, split it too" branch and
+// findParent's internal-level move-right/leaf-chain-recovery logic, which
+// testCrabbingInsertOverlappingSubtree's much shallower (single
+// internal-level) regime never reaches.
+//
+// This closes the gap identified in the 2a.4.2 fix regression (GitHub issue
+// #9): the original TestCrabbingInsert never grew past 1 internal level
+// (fanout ~150-170 per node vs. 1800 total keys), so it could not have
+// caught -- and could not catch a future regression of -- findParent's
+// recovery path for a childID that is itself several splits ahead of its
+// ancestor's last-linked Children entry. Without the findParent fix, this
+// subtest reliably reproduces
+// "btree: internal invariant violated: findParent reached leaf ... while
+// searching for the current parent of ..." within a small number of runs.
+func testCrabbingInsertDeepOverlappingSubtree(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+	tree := NewTree(store, alloc, reservedNodeID)
+
+	const goroutines = 64
+	const perGoroutine = 470 // ~30,080 keys total
+	const n = goroutines * perGoroutine
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := g; idx < n; idx += goroutines {
+				key := genKey(idx)
+				fileID := uint64(idx + 1)
+				if err := tree.Insert(key, fileID); err != nil {
+					errCh <- fmt.Errorf("goroutine %d: Insert(%q): %w", g, key, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	inserted := make(map[string]uint64, n)
+	for idx := 0; idx < n; idx++ {
+		inserted[genKey(idx)] = uint64(idx + 1)
+	}
+
+	finalRoot := tree.Root()
+	assertAllLookupable(t, store, finalRoot, inserted)
+	assertStructuralInvariants(t, store, finalRoot, n)
+
+	// Sanity check that this scenario actually reached depth >= 2 (root ->
+	// internal -> internal -> leaf), not just the single-internal-level
+	// depth the pre-existing OverlappingSubtree subtest already covers.
+	isLeaf, _, internal, err := store.ReadNode(finalRoot)
+	if err != nil {
+		t.Fatalf("ReadNode(root): unexpected error: %v", err)
+	}
+	if isLeaf {
+		t.Fatalf("root is still a leaf after %d concurrent inserts across %d goroutines", n, goroutines)
+	}
+	childIsLeaf, _, _, err := store.ReadNode(internal.Children[0])
+	if err != nil {
+		t.Fatalf("ReadNode(root's first child): unexpected error: %v", err)
+	}
+	if childIsLeaf {
+		t.Fatalf("tree only reached depth 1 (root -> leaves) after %d concurrent inserts across %d goroutines, want depth >= 2 (root -> internal -> ... -> leaves) to actually exercise findParent's internal-level recovery path", n, goroutines)
 	}
 }

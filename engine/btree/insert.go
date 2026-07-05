@@ -708,17 +708,78 @@ func (t *Tree) insertIntoLeafAndPropagate(leafID uint64, leaf LeafNode, path str
 func (t *Tree) findParent(rootID uint64, path string, childID uint64) (uint64, error) {
 	store := t.Store
 
+	// ancestorID is the last internal node whose Children slice we
+	// descended out of to reach currentID; ancestorLeafEntry is the specific
+	// (possibly stale) leaf ID ancestorID's routing pointed at. Both are
+	// meaningful only once currentID turns out to be a leaf -- see the
+	// isLeaf branch below.
+	var ancestorID, ancestorLeafEntry uint64
+
 	store.Lock(rootID)
 	currentID := rootID
 	for {
-		isLeaf, _, internal, err := store.ReadNode(currentID)
+		isLeaf, leaf, internal, err := store.ReadNode(currentID)
 		if err != nil {
 			store.Unlock(currentID)
 			return 0, err
 		}
 		if isLeaf {
+			if ancestorID == reservedNodeID {
+				// currentID == rootID here (we never descended out of any
+				// internal ancestor): rootID itself decoded as a leaf. This
+				// is a genuine caller-bug invariant violation, not the
+				// recoverable "not-yet-linked leaf chain" case below --
+				// propagate's own root-promotion branch (checked before
+				// ever calling findParent) is the only path that should
+				// ever touch a bare-leaf root, and only when childID
+				// (childIDBeingReplaced) equals it exactly.
+				store.Unlock(currentID)
+				return 0, fmt.Errorf("btree: internal invariant violated: findParent's root %d decoded as a leaf while searching for the current parent of %d along path %q", currentID, childID, path)
+			}
+			// We descended from the last internal ancestor we visited
+			// (currentID's caller, tracked as ancestorID below) straight
+			// into a leaf, without childID ever showing up in an
+			// indexOfChild check. This is expected -- not a violation --
+			// whenever childID is itself a leaf that has been split one or
+			// more times (chained via NextLeaf) faster than each split's own
+			// propagate call could link it into ancestorID: ancestorID's
+			// Children slice still legitimately points at the OLDEST leaf ID
+			// in that chain, since none of the intervening splits have been
+			// linked in yet. Concurrent siblings sharing the same immediate
+			// ancestor commonly race to extend the same leaf chain multiple
+			// hops deep before any of them finishes propagating, so this is
+			// not rare under real concurrency (see 2a.4.2 fix regression:
+			// GitHub issue #9). Walk the NextLeaf chain -- mirroring
+			// crabInsert's own leaf-level move-right peek -- to see whether
+			// childID is reachable a few hops further along; if so,
+			// ancestorID is still the correct (and only) parent to return,
+			// since only its Children slice needs a new entry, regardless
+			// of how many not-yet-linked leaf splits sit between its
+			// registered child and childID.
+			for currentID != childID {
+				if leaf.NextLeaf == noSibling {
+					store.Unlock(currentID)
+					return 0, fmt.Errorf("btree: internal invariant violated: findParent reached the end of the leaf chain at %d (starting from leaf %d) while searching for the current parent of %d along path %q", currentID, ancestorLeafEntry, childID, path)
+				}
+				nextID := leaf.NextLeaf
+				store.Lock(nextID)
+				nextIsLeaf, nextLeaf, _, err := store.ReadNode(nextID)
+				if err != nil {
+					store.Unlock(nextID)
+					store.Unlock(currentID)
+					return 0, err
+				}
+				if !nextIsLeaf {
+					store.Unlock(nextID)
+					store.Unlock(currentID)
+					return 0, fmt.Errorf("btree: internal invariant violated: NextLeaf chain led to a non-leaf node %d", nextID)
+				}
+				store.Unlock(currentID)
+				currentID = nextID
+				leaf = nextLeaf
+			}
 			store.Unlock(currentID)
-			return 0, fmt.Errorf("btree: internal invariant violated: findParent reached leaf %d while searching for the current parent of %d along path %q", currentID, childID, path)
+			return ancestorID, nil
 		}
 
 		// Move-right recovery: see crabInsert's doc comment for why this is
@@ -763,6 +824,8 @@ func (t *Tree) findParent(rootID uint64, path string, childID uint64) (uint64, e
 
 		store.Lock(nextID)
 		store.Unlock(currentID)
+		ancestorID = currentID
+		ancestorLeafEntry = nextID
 		currentID = nextID
 	}
 }
