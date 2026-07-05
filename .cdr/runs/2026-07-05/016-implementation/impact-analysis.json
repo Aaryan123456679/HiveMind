@@ -1,0 +1,34 @@
+{
+  "subtask": "task-2a.4.1",
+  "modules_touched": [
+    "engine/btree/latch.go (new)",
+    "engine/btree/lookup.go (NodeStore struct + WriteNode)",
+    "engine/btree/node_test.go (TestNodeLatchFields + helpers)"
+  ],
+  "modules_deliberately_not_touched": [
+    "engine/btree/insert.go / delete.go call sites (Lock/Unlock wiring deferred to 2a.4.2/2a.4.3 per subtask scope)",
+    "engine/btree/node.go's on-disk Version field/Encode/Decode (kept separate from the new in-memory concurrency-control version counter; on-disk field is unrelated pre-existing plain data)"
+  ],
+  "design_decisions": [
+    {
+      "decision": "Latch and version counter live in a NodeStore-owned registry keyed by node ID (map[uint64]*nodeLatch), not as fields on LeafNode/InternalNode value structs.",
+      "reason": "Nodes are decoded fresh from disk on every ReadNode call (no persistent in-memory node object/cache exists in this codebase); a per-node latch cannot attach to something that doesn't persist across calls. NodeStore is the only long-lived object addressable by node ID that concurrent goroutines share."
+    },
+    {
+      "decision": "nodeLatch.mu is a plain sync.Mutex, not sync.RWMutex.",
+      "reason": "2a.4.4's acceptance criterion requires a reader to never block a writer or another reader -- the read fast path must not take any lock at all, so readers never contend for mu. mu exists solely for writer-side latch-crabbing (2a.4.2/2a.4.3)."
+    },
+    {
+      "decision": "Single-increment-after-mutation versioning scheme (not seqlock odd/even pre+post).",
+      "reason": "A writer holds mu for the entire read-modify-write critical section and only bumps version once, after the durable write succeeds. Because no partially-written node content is ever visible under an unchanged version number (the writer holds mu the whole time), a reader taking before/after version snapshots around a full content copy is sufficient to detect concurrent mutation without needing an in-progress/odd marker."
+    },
+    {
+      "decision": "WriteNode (lookup.go) bumps the target node's version by exactly one on every successful write, but does NOT itself acquire the node's latch.",
+      "reason": "WriteNode is the sole existing choke point for structural mutations, so it is the correct place to guarantee the version bump happens exactly once per mutation without editing insert.go/delete.go. It must not lock internally because sync.Mutex is non-reentrant and 2a.4.2/2a.4.3's crabbing callers will hold a node's latch across their own WriteNode call(s); locking inside WriteNode too would deadlock those future callers. Documented as a binding convention for 2a.4.2+."
+    }
+  ],
+  "risks": [
+    "Existing insert.go/delete.go call sites do not yet call Lock/Unlock around their WriteNode calls, so concurrent Insert/Delete calls today would still race at the node-content level (pre-existing gap now explicitly bounded by the Lock/Unlock convention doc comment; closing it is 2a.4.2/2a.4.3's job, not this subtask's).",
+      "latches map grows unboundedly (one entry per ever-touched node ID, never evicted) -- acceptable for this subtask's scope; noted as a non-blocking known limitation, mirrors task-2a.1.4's commitLocks sync.Map precedent."
+  ]
+}

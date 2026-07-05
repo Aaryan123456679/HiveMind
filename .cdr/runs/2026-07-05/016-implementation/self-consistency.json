@@ -1,0 +1,12 @@
+{
+  "subtask": "task-2a.4.1",
+  "checks": [
+    {"check": "gofmt -l engine/btree/", "result": "clean, no output"},
+    {"check": "go build ./engine/...", "result": "clean"},
+    {"check": "go vet ./engine/...", "result": "clean"},
+    {"check": "go test ./engine/btree/... -run TestNodeLatchFields -race -v -count=5", "result": "PASS, all 5 repeats, all subtests"},
+    {"check": "go test ./engine/btree/... -race -v -count=1 (full package)", "result": "PASS, zero regressions across all existing btree_test/delete_test/insert_test/lookup_test/node_test/scan_test suites"}
+  ],
+  "matrix_covered": true,
+  "note": "Self-consistency only (build/vet/test green, matrix covered) -- not verification. /cdr:verify must independently confirm correctness of the locking/versioning protocol."
+}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -210,4 +211,138 @@ func normalizeInternal(n InternalNode) InternalNode {
 		n.Children = []uint64{}
 	}
 	return n
+}
+
+// newLatchTestStore opens a fresh, isolated (t.TempDir()) index file and wraps it in
+// a NodeStore, ready for direct WriteNode/Lock/Unlock/Version calls (the level this
+// subtask's test spec is scoped to -- it deliberately does not go through
+// Insert/NodeAllocator, since 2a.4.1 is about the node-latch/version fields
+// themselves, not the higher-level tree algorithms built on top of them later).
+func newLatchTestStore(t *testing.T) *NodeStore {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "name.idx")
+	f, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile: %v", err)
+	}
+	t.Cleanup(func() { f.Close() })
+
+	return NewNodeStore(f)
+}
+
+// encodeTestLeaf is a small helper producing a validly-encoded leaf buffer for the
+// given key/fileID pair, for use as WriteNode's payload in latch tests below (the
+// actual leaf contents are incidental to these tests; only the version-counter
+// behavior matters).
+func encodeTestLeaf(t *testing.T, key string, fileID uint64) []byte {
+	t.Helper()
+	buf, err := LeafNode{Keys: []string{key}, FileIDs: []uint64{fileID}}.Encode()
+	if err != nil {
+		t.Fatalf("LeafNode.Encode: %v", err)
+	}
+	return buf
+}
+
+// TestNodeLatchFields covers subtask 2a.4.1's acceptance criterion: every node
+// carries a latch (NodeStore.Lock/Unlock, keyed by node ID -- see latch.go) and a
+// version counter (NodeStore.Version) that increments on any structural mutation to
+// that node (bumped by exactly one inside WriteNode, per its doc comment).
+func TestNodeLatchFields(t *testing.T) {
+	t.Run("version starts at zero for an unwritten node", func(t *testing.T) {
+		store := newLatchTestStore(t)
+		if got := store.Version(1); got != 0 {
+			t.Fatalf("Version(1) on a never-written node = %d, want 0", got)
+		}
+	})
+
+	t.Run("single mutation increments version exactly once", func(t *testing.T) {
+		store := newLatchTestStore(t)
+		const nodeID = 1
+
+		before := store.Version(nodeID)
+		store.Lock(nodeID)
+		if err := store.WriteNode(nodeID, encodeTestLeaf(t, "auth/login", 1)); err != nil {
+			store.Unlock(nodeID)
+			t.Fatalf("WriteNode: %v", err)
+		}
+		store.Unlock(nodeID)
+		after := store.Version(nodeID)
+
+		if after != before+1 {
+			t.Fatalf("version after one mutation = %d, want %d (before=%d)", after, before+1, before)
+		}
+	})
+
+	t.Run("multiple sequential mutations increment monotonically, once each", func(t *testing.T) {
+		store := newLatchTestStore(t)
+		const nodeID = 1
+		const mutations = 5
+
+		for i := 0; i < mutations; i++ {
+			before := store.Version(nodeID)
+			store.Lock(nodeID)
+			if err := store.WriteNode(nodeID, encodeTestLeaf(t, "auth/login", uint64(i))); err != nil {
+				store.Unlock(nodeID)
+				t.Fatalf("WriteNode (mutation %d): %v", i, err)
+			}
+			store.Unlock(nodeID)
+			after := store.Version(nodeID)
+			if after != before+1 {
+				t.Fatalf("mutation %d: version = %d, want %d (before=%d)", i, after, before+1, before)
+			}
+		}
+
+		if got := store.Version(nodeID); got != uint64(mutations) {
+			t.Fatalf("final version = %d, want %d", got, mutations)
+		}
+	})
+
+	t.Run("mutating one node does not affect another node's version", func(t *testing.T) {
+		store := newLatchTestStore(t)
+
+		store.Lock(1)
+		if err := store.WriteNode(1, encodeTestLeaf(t, "auth/login", 1)); err != nil {
+			store.Unlock(1)
+			t.Fatalf("WriteNode(1): %v", err)
+		}
+		store.Unlock(1)
+
+		if got := store.Version(1); got != 1 {
+			t.Fatalf("Version(1) = %d, want 1", got)
+		}
+		if got := store.Version(2); got != 0 {
+			t.Fatalf("Version(2) = %d, want 0 (untouched node must not be affected)", got)
+		}
+	})
+
+	t.Run("concurrent mutations under real locking increment version exactly once per mutation, -race clean", func(t *testing.T) {
+		store := newLatchTestStore(t)
+		const nodeID = 1
+		const goroutines = 50
+		const mutationsPerGoroutine = 20
+		const totalMutations = goroutines * mutationsPerGoroutine
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+		for g := 0; g < goroutines; g++ {
+			go func(g int) {
+				defer wg.Done()
+				for i := 0; i < mutationsPerGoroutine; i++ {
+					store.Lock(nodeID)
+					if err := store.WriteNode(nodeID, encodeTestLeaf(t, "auth/login", uint64(g*mutationsPerGoroutine+i))); err != nil {
+						store.Unlock(nodeID)
+						t.Errorf("WriteNode: %v", err)
+						return
+					}
+					store.Unlock(nodeID)
+				}
+			}(g)
+		}
+		wg.Wait()
+
+		if got := store.Version(nodeID); got != uint64(totalMutations) {
+			t.Fatalf("final version = %d, want %d (every one of %d concurrent mutations must increment exactly once, no lost updates, no double counts)", got, totalMutations, totalMutations)
+		}
+	})
 }

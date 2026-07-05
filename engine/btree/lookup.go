@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 )
 
 // NodeStore is the minimal file-I/O layer this subtask (1.2.2) adds on top of
@@ -24,12 +25,20 @@ import (
 // free-list/allocator turns out to be needed, that is left to whichever later
 // subtask's LLD calls for it.
 //
-// NodeStore also does not do any locking: concurrency (latch-crabbing writes,
-// optimistic lock-free reads with version-counter retry) is explicitly deferred to
-// a later, concurrency-focused subtask per docs/LLD/btree.md's "Concurrency"
-// section. This subtask is single-threaded.
+// NodeStore also owns the in-memory per-node-ID latch/version registry described in
+// latch.go: concurrency (latch-crabbing writes, optimistic lock-free reads with
+// version-counter retry) is wired up field-by-field starting with this subtask
+// (2a.4.1) and built on by 2a.4.2-2a.4.5, per docs/LLD/btree.md's "Concurrency"
+// section. Node content itself is still read/written as fresh value structs on every
+// call (no in-memory node cache); latches/versions are keyed by node ID rather than
+// attached to a cached node object.
 type NodeStore struct {
 	f *os.File
+
+	// latchesMu guards latches. latches is lazily populated: see latchFor in
+	// latch.go.
+	latchesMu sync.Mutex
+	latches   map[uint64]*nodeLatch
 }
 
 // NewNodeStore wraps an already-open index file handle (as returned by
@@ -78,6 +87,21 @@ func (s *NodeStore) ReadNode(nodeID uint64) (isLeaf bool, leaf LeafNode, interna
 // WriteNode writes an already-encoded (via LeafNode.Encode / InternalNode.Encode)
 // node buffer at nodeID. encoded must be exactly NodeSize bytes, which Encode
 // always produces.
+//
+// WriteNode is the sole choke point every structural mutation to a node's on-disk
+// content flows through (both insert.go and delete.go funnel all node writes through
+// it), so it is where nodeID's version counter is bumped: on a successful write,
+// WriteNode increments nodeID's version by exactly one (see nodeLatch's doc comment
+// in latch.go for the full protocol this implements and why).
+//
+// WriteNode deliberately does NOT itself acquire nodeID's latch (Lock/Unlock in
+// latch.go): 2a.4.2/2a.4.3's latch-crabbing algorithms hold a node's latch across a
+// read-decide-write sequence that calls WriteNode, and re-locking inside WriteNode
+// would deadlock against a non-reentrant sync.Mutex. The required convention for any
+// concurrent caller is: call Lock(nodeID) before, and Unlock(nodeID) after, the
+// WriteNode call(s) that mutate nodeID. This subtask's existing single-threaded call
+// sites (insert.go, delete.go) do not yet do this; wiring that discipline into them
+// is 2a.4.2/2a.4.3's job.
 func (s *NodeStore) WriteNode(nodeID uint64, encoded []byte) error {
 	if nodeID == reservedNodeID {
 		return fmt.Errorf("btree: node ID %d is reserved and never valid", nodeID)
@@ -90,6 +114,8 @@ func (s *NodeStore) WriteNode(nodeID uint64, encoded []byte) error {
 	if _, err := s.f.WriteAt(encoded, offset); err != nil {
 		return fmt.Errorf("btree: writing node %d at offset %d: %w", nodeID, offset, err)
 	}
+
+	s.latchFor(nodeID).version.Add(1)
 	return nil
 }
 

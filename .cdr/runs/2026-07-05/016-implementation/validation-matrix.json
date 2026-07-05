@@ -1,0 +1,13 @@
+{
+  "subtask": "task-2a.4.1",
+  "matrix": [
+    {"case": "unwritten node has version 0", "covered_by": "TestNodeLatchFields/version_starts_at_zero_for_an_unwritten_node"},
+    {"case": "single mutation increments version exactly once (not zero, not two)", "covered_by": "TestNodeLatchFields/single_mutation_increments_version_exactly_once"},
+    {"case": "N sequential mutations increment monotonically by exactly 1 each", "covered_by": "TestNodeLatchFields/multiple_sequential_mutations_increment_monotonically,_once_each"},
+    {"case": "per-node isolation: mutating node A does not bump node B's version", "covered_by": "TestNodeLatchFields/mutating_one_node_does_not_affect_another_node's_version"},
+    {"case": "concurrent mutations under real Lock/Unlock discipline produce exactly the expected total version (no lost updates, no double counts), -race clean", "covered_by": "TestNodeLatchFields/concurrent_mutations_under_real_locking_increment_version_exactly_once_per_mutation,_-race_clean"},
+    {"case": "no regression to existing single-threaded btree behavior (encode/decode, insert incl. splits, delete incl. merges, lookup, prefix scan)", "covered_by": "full engine/btree/... -race suite, unchanged, all passing"}
+  ],
+  "test_command": "go test ./engine/btree/... -run TestNodeLatchFields -race -v -count=5",
+  "full_suite_command": "go test ./engine/btree/... -race -v -count=1"
+}
