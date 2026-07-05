@@ -1,0 +1,25 @@
+{
+  "subtask": "task-2a.3.2",
+  "criteria": [
+    {
+      "id": "benchmark-exists",
+      "description": "BenchmarkStripedVsGlobalLock exists in engine/catalog/catalog_bench_test.go with Striped and GlobalLock sub-benchmarks",
+      "validation": "go test ./engine/catalog/... -bench BenchmarkStripedVsGlobalLock -benchmem -run ^$ lists both subtests"
+    },
+    {
+      "id": "no-regression",
+      "description": "New file does not break existing tests",
+      "validation": "go test ./engine/catalog/... -race -v -count=1"
+    },
+    {
+      "id": "build-clean",
+      "description": "go build/vet/gofmt clean across engine module",
+      "validation": "go build ./..., go vet ./..., gofmt -l ."
+    },
+    {
+      "id": "direction-demonstrated",
+      "description": "Striped shows meaningfully lower ns/op and/or fewer/no extra allocs vs GlobalLock under contention",
+      "validation": "manual inspection of actual benchmark output numbers"
+    }
+  ]
+}

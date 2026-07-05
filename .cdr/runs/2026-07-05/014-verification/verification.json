@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "run_id": "014-verification",
+  "subtask": "2a.3.2",
+  "issue": 8,
+  "commit_verified": "4d175d1ec083aa7be9ebe7e3e68a118d9e6422d3",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "BenchmarkStripedVsGlobalLock exists in engine/catalog/catalog_bench_test.go with Striped/GlobalLock subtests, matching acceptance criteria and test spec verbatim. `go test ./engine/catalog/... -bench BenchmarkStripedVsGlobalLock -benchmem` reports both side by side."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "docs/LLD/catalog.md:41-42 states the design uses striped mutexes (~256 stripes hashed by fileID) instead of one global lock so unrelated files never contend. Benchmark harness reuses the real production stripeFor(fileID) (catalog.go:155-156, numStripes=256 at catalog.go:13) and CatalogRecord.Encode/Decode verbatim, so it measures the actual documented locking strategy, not a reimplementation."
+    },
+    "measurement_validity": {
+      "status": "PASS_WITH_COMMENT",
+      "evidence": "Read catalog_bench_test.go in full. Both stripedRecordStore.Put/Get and globalLockRecordStore.Put/Get do IDENTICAL work per critical section: call rec.Encode() (outside the lock, symmetric in both), acquire lock, do map[fileID]=data or map[fileID] lookup, release lock, and Decode() on Get (outside lock in both). The only asymmetry is stripes[stripeFor(fileID)] (256 mutexes) vs single mu (1 mutex) -- exactly the one variable the subtask wants isolated. No hidden extra work in either arm; GlobalLock is not artificially slowed down (e.g. no fake sleep, no extra allocation) beyond genuine serialization. Comment: this is a synthetic in-memory harness, not the real disk-backed Catalog, so it demonstrates the LOCKING STRATEGY's relative throughput, not the end-to-end Catalog's absolute throughput under real I/O -- acceptable given the explicit 'benchmarking harness faithful enough' latitude in the subtask, but worth flagging as a documented scope limitation rather than a full production benchmark.",
+      "syscall_masking_claim": "Plausible and disclosed. Documented in-code (catalog_bench_test.go:36-52) and in implementation handoff.json's design_deviation_note: first attempt wrapped real disk-backed Catalog/FileManager for both variants, syscall cost (pread/pwrite ~1-2us) dominated over sub-100ns lock-contention delta, both variants measured ~2000-2800 ns/op indistinguishable. This is a reasonable, transparent engineering pivot, not concealment -- the reasoning is inline in the source comment (visible to any future reader without needing implementer context) and independently plausible: pread/pwrite syscalls are well known to cost 1-2us, which would indeed swamp a ~230ns in-memory operation."
+    },
+    "independent_benchmark_run": {
+      "status": "PASS",
+      "command": "cd engine && go test ./catalog/... -bench BenchmarkStripedVsGlobalLock -benchmem -run ^$ -benchtime 500ms -count=1 (3 runs, Apple M1 Pro, GOMAXPROCS=8)",
+      "measured": [
+        {"run": 1, "Striped_ns_op": 228.3, "GlobalLock_ns_op": 455.1, "ratio": 1.99},
+        {"run": 2, "Striped_ns_op": 232.3, "GlobalLock_ns_op": 453.1, "ratio": 1.95},
+        {"run": 3, "Striped_ns_op": 230.7, "GlobalLock_ns_op": 465.0, "ratio": 2.02}
+      ],
+      "comparison_to_claimed": "Independently reproduced implementer's claimed Striped 230.1 ns/op / GlobalLock 453.8 ns/op / ~1.97x within noise across 3 separate runs. B/op=128, allocs/op=1 for both, matches claim.",
+      "reproducibility": "Tight run-to-run variance (Striped 228-232ns, GlobalLock 453-465ns across 3 runs), not wildly variable -- benchmark is stable/deterministic enough for long-term use.",
+      "contention_realism_check": "GOMAXPROCS=8 on verification machine; benchParallelism=32 deliberately oversubscribes goroutines (4x cores) so lock contention/queuing manifests even on modest CI hardware, per in-code comment at catalog_bench_test.go:127-130. benchNumFileIDs=4096 vs numStripes=256 means ~16 fileIDs share each stripe on average, and the shared atomic counter spreads work uniformly across all fileIDs/stripes rather than pinning goroutines to fixed subsets -- genuine cross-goroutine stripe contention is plausible and the ~2x gap is consistent with real (not degenerate/near-zero) contention rather than a measurement artifact of near-uncontended access. ~2x is a reasonable and meaningful bar for 'meaningfully higher throughput' given this is measuring pure lock-acquisition overhead in-memory (where syscall/IO costs that would otherwise compress the ratio are absent by design)."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "go build ./... and go vet ./... clean (engine module). gofmt -l . reports no files. go test ./catalog/... -race -v -count=1: all tests pass (TestCatalogPutGetDeleteRoundTrip, TestCatalogConcurrentDistinctFileIDs, TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs, TestStripedConcurrencyStress, TestCatalogFileManager*, TestFileIDAllocator, TestRecordEncodeDecode, etc.) in 88.7s. Full `go test ./... -race -count=1` across engine module: all packages pass (engine, btree, catalog, mvcc, wal; graph/loadtest/rpc/split have no test files) in ~3.9-98s per package, zero regressions."
+    },
+    "test_coverage_and_scope": {
+      "status": "PASS",
+      "evidence": "git show 4d175d1 --stat confirms exactly one file changed: engine/catalog/catalog_bench_test.go (new, 200 lines), 0 production files touched. stripedRecordStore/globalLockRecordStore are benchmark-file-local types, never referenced outside _test.go per grep and code review -- confirmed test-only change as required by impacted-modules spec."
+    },
+    "security": {"status": "PASS", "evidence": "No production code touched; no new attack surface. Benchmark-only harness runs in-process, in-memory, no external I/O or untrusted input."},
+    "performance": {"status": "PASS", "evidence": "Benchmark itself is lightweight (sub-3s per invocation at -benchtime=500ms); does not run under normal `go test` (requires explicit -bench flag), so it adds no CI overhead to regular test runs."},
+    "maintainability": {
+      "status": "PASS_WITH_COMMENT",
+      "evidence": "Well-commented, harness rationale documented inline (lines 31-52), constants named descriptively (benchNumFileIDs, benchParallelism). Minor: the two harness types (stripedRecordStore/globalLockRecordStore) and their Put/Get bodies are near-duplicates apart from lock scope -- acceptable for a benchmark file where side-by-side symmetry aids reviewability, but a future maintainer changing one arm should be careful to mirror the change in the other to preserve apples-to-apples comparison. No action required now."
+    },
+    "confidence": {"status": "high", "evidence": "Independently re-ran build/vet/fmt/race-tests/benchmark (3x) and obtained numbers matching the implementer's report within noise; read full diff and harness code; cross-checked against catalog.go production stripeFor/numStripes and docs/LLD/catalog.md design description."}
+  },
+  "central_question_answer": "The in-memory stripedRecordStore/globalLockRecordStore harness IS a fair, valid stand-in for validating 'the striped-mutex implementation' for the specific claim under test (lock-granularity effect on throughput), because it reuses the real production stripeFor(fileID) and CatalogRecord.Encode/Decode, and both arms perform byte-identical work inside/outside their critical sections, differing only in mutex count/scope. It is NOT a substitute for an end-to-end disk-backed Catalog throughput benchmark (which the implementer correctly found infeasible due to syscall-cost masking) -- the acceptance criteria's phrase 'the striped-mutex implementation' is satisfied at the locking-strategy level, which is the mechanism actually being justified in the LLD (docs/LLD/catalog.md:41-42), not at the full-stack I/O level. This is a legitimate, disclosed scope reduction rather than a strawman built to flatter the striped variant.",
+  "parent_task_note": "This is the last subtask of task-2a.3. With 2a.3.1 already verified (PASS_WITH_COMMENTS, run 011-verification) and 2a.3.2 now verified PASS_WITH_COMMENTS, task-2a.3 as a whole is fully verified and GitHub issue #8 is closable (informational note only, no action taken by this agent).",
+  "recommendation": "No changes required. Consider (non-blocking, future improvement) adding a one-line code comment or README note clarifying that this benchmark measures locking-strategy overhead in isolation and is not a substitute for an end-to-end disk-backed throughput benchmark, to preempt future readers assuming the ns/op figures represent real Catalog latency."
+}

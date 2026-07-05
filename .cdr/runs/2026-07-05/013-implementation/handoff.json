@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-05-013-implementation",
+  "subtask": "task-2a.3.2",
+  "status": "completed",
+  "commit": "4d175d1ec083aa7be9ebe7e3e68a118d9e6422d3",
+  "files_changed": [
+    "engine/catalog/catalog_bench_test.go"
+  ],
+  "key_pointers": {
+    "benchmark_func": "engine/catalog/catalog_bench_test.go: BenchmarkStripedVsGlobalLock (top-level, with b.Run(\"Striped\", ...) and b.Run(\"GlobalLock\", ...) sub-benchmarks)",
+    "harness_types": "engine/catalog/catalog_bench_test.go: stripedRecordStore (256-shard, per-stripe sync.Mutex, reuses production stripeFor(fileID)) and globalLockRecordStore (single sync.Mutex over one shared map) -- both benchmark-only, never referenced by production code",
+    "prior_subtask": "task-2a.3.1 stress test: engine/catalog/catalog_test.go TestStripedConcurrencyStress (commit 15f5dd5, verified)",
+    "production_reference": "engine/catalog/catalog.go: Catalog struct, stripeFor(fileID), stripes[numStripes]sync.Mutex, indexMu, activeMu -- the real design this benchmark is modeled after"
+  },
+  "measured_numbers": {
+    "command": "go test ./engine/catalog/... -bench BenchmarkStripedVsGlobalLock -benchmem",
+    "Striped": {"ns_per_op": 230.1, "B_per_op": 128, "allocs_per_op": 1, "iterations": 4888212},
+    "GlobalLock": {"ns_per_op": 453.8, "B_per_op": 128, "allocs_per_op": 1, "iterations": 2684331},
+    "ratio": "Striped ~1.97x faster (lower ns/op) than GlobalLock, reproduced across -benchtime=200ms/300ms/500ms/default(1s) runs"
+  },
+  "design_deviation_note": "First implementation attempt wrapped the real disk-backed Catalog + FileManager for BOTH variants (global-lock baseline as a stripe-free variant of the same disk-backed CRUD path). This measured no reliable direction (both ~2000-2800 ns/op, noise-dominated) because pread/pwrite syscall cost (~1-2us) swamped the sub-100ns lock-contention signal. Per the subtask's own explicit latitude ('does not need to be a full production-quality alternate implementation, just a benchmarking harness faithful enough'), pivoted to a minimal in-memory harness (stripedRecordStore/globalLockRecordStore) that reuses Catalog's real stripeFor(fileID) hash and CatalogRecord.Encode/Decode but stores bytes in-memory, isolating lock granularity as the only variable. This is documented in-line in catalog_bench_test.go's harness doc comment.",
+  "validation_matrix_status": "all 4 criteria satisfied (see validation-matrix.json): benchmark-exists, no-regression (go test ./engine/catalog/... -race -v -count=1 PASS), build-clean (gofmt/go build/go vet clean), direction-demonstrated (~2x, verified via manual runs)",
+  "closes": {
+    "parent_task": "task-2a.3 (both 2a.3.1 and 2a.3.2 now implemented; 2a.3.1 already verified, 2a.3.2 pending /cdr:verify)",
+    "github_issue": "#8 -- becomes closable once this subtask is verified"
+  },
+  "next_up": "task-2a.4: Latch-crabbing B+Tree concurrency (GitHub issue #9) -- the LAST task of Epic Phase 2a",
+  "not_verified_by_self": true
+}

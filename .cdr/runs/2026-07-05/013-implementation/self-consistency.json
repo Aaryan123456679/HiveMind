@@ -1,0 +1,17 @@
+{
+  "subtask": "task-2a.3.2",
+  "build": "go build ./... clean (engine module)",
+  "vet": "go vet ./... clean",
+  "gofmt": "gofmt -l . empty (no files need formatting)",
+  "unit_tests": "go test ./engine/catalog/... -race -v -count=1 : PASS, all existing tests unaffected, ~90s",
+  "benchmark_run": {
+    "command": "go test ./engine/catalog/... -bench BenchmarkStripedVsGlobalLock -benchmem",
+    "result": {
+      "Striped": {"ns_per_op": 230.1, "B_per_op": 128, "allocs_per_op": 1, "iterations": 4888212},
+      "GlobalLock": {"ns_per_op": 453.8, "B_per_op": 128, "allocs_per_op": 1, "iterations": 2684331}
+    },
+    "direction_confirmed": "Striped ~1.97x faster than GlobalLock (lower ns/op), consistent across repeated runs at multiple -benchtime values (200ms, 300ms, 500ms, default 1s)"
+  },
+  "design_note": "First iteration wrapped the real disk-backed Catalog/FileManager for both variants; per-op cost was dominated by pread/pwrite syscalls (~1-2us) which masked the sub-100ns lock-contention signal (both variants measured statistically indistinguishable). Redesigned per the subtask's own sanctioned latitude ('does not need to be a full production-quality alternate implementation') to a minimal in-memory benchmarking harness (stripedRecordStore / globalLockRecordStore) that reuses Catalog's real stripeFor(fileID) hash and CatalogRecord.Encode/Decode, differing only in lock granularity (256 stripes vs. 1 global mutex) -- isolating exactly the property under test.",
+  "matrix_coverage": "all validation-matrix.json criteria satisfied: benchmark-exists (Striped+GlobalLock subtests present), no-regression (race -v -count=1 pass), build-clean (gofmt/build/vet clean), direction-demonstrated (Striped ~2x lower ns/op, verified across multiple runs)"
+}

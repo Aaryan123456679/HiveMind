@@ -1,0 +1,15 @@
+{
+  "subtask": "task-2a.3.2",
+  "new_files": ["engine/catalog/catalog_bench_test.go"],
+  "modified_files": [],
+  "modified_production_code": false,
+  "risk": "low; test-only file, adds a benchmark and a test-local unexported baseline type (globalLockCatalog) with no production callers",
+  "dependencies": [
+    "engine/catalog/catalog.go (Catalog, stripeFor, NewCatalog)",
+    "engine/catalog/file.go (Open, FileManager.AllocatePage/ReadPage/WritePage)",
+    "engine/catalog/record.go (CatalogRecord, Encode/Decode)",
+    "engine/catalog/page.go (NewPage, InsertSlot, ReadSlot, DeleteSlot)"
+  ],
+  "affects_other_subtasks": false,
+  "closes_parent": "task-2a.3 (issue #8) becomes closable once verified -- this is the last subtask under it"
+}
