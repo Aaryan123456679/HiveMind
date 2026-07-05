@@ -519,14 +519,26 @@ func TestNewSnapshotClosesEpochAcquireVersionReadRace(t *testing.T) {
 // found" read error, nor by silently returning torn/wrong content that doesn't match
 // what was true at the moment the snapshot was acquired.
 //
-// This is deliberately the same class of race 2a.2.2's independent verification
-// caught in TestNewSnapshotClosesEpochAcquireVersionReadRace (a TOCTOU between
-// acquiring a snapshot's epoch and reading its pinned version, exploited by a
-// concurrently-running compactor), but exercised here as a broad, long-running
-// concurrency stress test rather than a single deterministically-paused
-// interleaving: real writers continuously advancing versions, real readers holding
-// snapshots open across many concurrent commits and compaction passes, and a real
-// compactor looping RunCompaction back-to-back throughout, all racing under -race.
+// This is NOT a substitute for, nor equivalent to, 2a.2.2's independent-verification
+// regression test TestNewSnapshotClosesEpochAcquireVersionReadRace. That test
+// deterministically pauses NewSnapshot inside a hook at the exact instruction gap
+// between acquiring the epoch and reading CurrentVersion, forcing the narrow TOCTOU
+// interleaving that the specific bug it guards against depends on. This test relies
+// on ordinary, unforced goroutine scheduling: the real race window between
+// AcquireCurrentEpoch and cat.Get is only a handful of instructions wide, far too
+// narrow for -race and the Go scheduler to reliably land a compactor pass inside of
+// without deterministic pausing. Empirically, reverting read.go's fix and re-running
+// this test (-race, 30 total runs across -count=10 and -count=20) produced zero
+// detections, while the deterministic hook-based test fails immediately and
+// reliably on the same reverted code. This test is instead a broad, general-purpose
+// concurrency stress test: real writers continuously advancing versions, real
+// readers holding snapshots open across many concurrent commits and compaction
+// passes, and a real compactor looping RunCompaction back-to-back throughout, all
+// racing under -race, intended to catch gross premature-reclaim bugs (e.g. an epoch
+// never being acquired at all, refcounting corruption under load, off-by-one epoch
+// comparisons) under realistic concurrent load. It COMPLEMENTS the deterministic
+// regression test above but does not replace it as the guard against that specific,
+// narrow TOCTOU bug class reappearing.
 func TestGCUnderConcurrency(t *testing.T) {
 	dir := t.TempDir()
 	vw, err := NewVersionWriter(dir)
@@ -556,12 +568,18 @@ func TestGCUnderConcurrency(t *testing.T) {
 	const (
 		numWriters   = 4
 		numReaders   = 8
-		readerRounds = 15
 		testDuration = 1500 * time.Millisecond
 	)
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
+
+	// readerActive tracks, per reader, the wall-clock span from that reader's first
+	// round to its last, so self-consistency checks can confirm readers genuinely
+	// overlap writers/compactor for close to the full testDuration rather than
+	// finishing early (see subtask 2a.2.3 fix commit for the coverage gap this
+	// closes).
+	readerActive := make([]time.Duration, numReaders)
 
 	// Shared, mutex-guarded failure collection: readers append here (rather than
 	// calling t.Fatalf directly from inside a goroutine, which would only abort that
@@ -618,21 +636,29 @@ func TestGCUnderConcurrency(t *testing.T) {
 		}
 	}()
 
-	// Long-running readers: each round, take a Snapshot, read it once immediately
+	// Long-running readers: loop taking a Snapshot, reading it once immediately
 	// (this is safe/race-free precisely because version files are immutable once
 	// written and NewSnapshot's acquire-epoch-before-read ordering guarantees the
 	// pinned version cannot be reclaimed while this Snapshot is open -- see
-	// read.go's NewSnapshot doc comment), hold the Snapshot open for a deliberately
-	// extended window while writers and the compactor keep running, then read again
-	// and assert it is BOTH error-free AND byte-for-byte identical to the first
-	// read.
+	// read.go's NewSnapshot doc comment), holding the Snapshot open for a
+	// deliberately extended window while writers and the compactor keep running,
+	// then reading again and asserting it is BOTH error-free AND byte-for-byte
+	// identical to the first read. Readers loop on the same shared `stop` signal
+	// that bounds the writers and compactor (rather than a fixed round count), so
+	// they keep opening/holding/closing snapshots for the full testDuration and
+	// genuinely overlap the writers and compactor throughout, not just for an
+	// early fraction of the run.
 	for i := 0; i < numReaders; i++ {
 		wg.Add(1)
 		go func(readerID int) {
 			defer wg.Done()
-			for round := 0; round < readerRounds; round++ {
+			round := 0
+			readerStart := time.Now()
+			lastRoundEnd := readerStart
+			for {
 				select {
 				case <-stop:
+					readerActive[readerID] = lastRoundEnd.Sub(readerStart)
 					return
 				default:
 				}
@@ -676,6 +702,9 @@ func TestGCUnderConcurrency(t *testing.T) {
 				if err := snap.Close(); err != nil {
 					recordFailure("reader %d round %d: snap.Close() on version %d failed: %v", readerID, round, snap.Version(), err)
 				}
+
+				round++
+				lastRoundEnd = time.Now()
 			}
 		}(i)
 	}
@@ -685,6 +714,19 @@ func TestGCUnderConcurrency(t *testing.T) {
 	time.Sleep(testDuration)
 	close(stop)
 	wg.Wait()
+
+	// Self-consistency check: every reader must have genuinely overlapped the
+	// writers/compactor for close to the full testDuration, not finished its rounds
+	// early and then sat idle. Fail loudly (rather than silently passing) if a
+	// reader's active span falls short, since that would silently reintroduce the
+	// coverage gap this fix closes.
+	const minAcceptableOverlapFraction = 0.5
+	minAcceptableOverlap := time.Duration(float64(testDuration) * minAcceptableOverlapFraction)
+	for readerID, active := range readerActive {
+		if active < minAcceptableOverlap {
+			t.Fatalf("reader %d was only active for %v, want at least %v (%.0f%% of testDuration=%v): readers must overlap writers/compactor for close to the whole test window, not finish early", readerID, active, minAcceptableOverlap, minAcceptableOverlapFraction*100, testDuration)
+		}
+	}
 
 	if len(failures) > 0 {
 		t.Fatalf("TestGCUnderConcurrency: %d GC correctness violation(s) detected:\n%s", len(failures), fmt.Sprintf("%v", failures))
