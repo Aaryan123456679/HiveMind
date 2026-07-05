@@ -1,0 +1,18 @@
+{
+  "subtask": "task-2a.3.1",
+  "run_id": "2026-07-05-010-implementation",
+  "commit": "15f5dd5c647f7b43f39637e18a2c0c39de5bad43",
+  "files_changed": [
+    "engine/catalog/catalog_test.go"
+  ],
+  "new_test": "TestStripedConcurrencyStress",
+  "run_command": "go test ./engine/catalog/... -race -run TestStripedConcurrencyStress -v",
+  "pointers": {
+    "test_location": "engine/catalog/catalog_test.go (new test + helpers appended before TestCatalogStripeForSanity)",
+    "plan": ".cdr/runs/2026-07-05/010-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-05/010-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-05/010-implementation/self-consistency.json"
+  },
+  "next_step": "/cdr:verify task-2a.3.1",
+  "notes": "Test-only change, no production code touched. Full package -race suite green, no regressions. New test stable across -count=3 repeats (~24s/run, dominated by per-Put/Delete fsync in FileManager.WritePage, expected given 2000 fileIDs x up to 3 ops each). Not verified by implementer per I4."
+}

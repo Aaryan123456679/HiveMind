@@ -1,0 +1,55 @@
+{
+  "subtask": "task-2a.3.1",
+  "commit": "15f5dd5c647f7b43f39637e18a2c0c39de5bad43",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "TestStripedConcurrencyStress in engine/catalog/catalog_test.go implements a high-goroutine-count (2000 goroutines) CRUD workload across a wide fileID range (1..2000), asserting final state against a hand-derivable serial-execution oracle (stressPatterns table). Matches acceptance criteria and test spec verbatim."
+    },
+    "oracle_correctness": {
+      "status": "pass",
+      "evidence": "Manually traced all 5 patterns: p0 Put(v1)->present v1 (correct); p1 Put(v1),Delete->absent (correct); p2 Put(v1),Put(v2)->present v2 (correct, Put overwrites in place per catalog.go doc); p3 Put(v1),Delete,Put(v2)->present v2 (correct); p4 Put(v1),Put(v2),Delete->absent (correct). recordForVersion varies CurrentVersion, LastModified per version so DeepEqual final-state check is field-sensitive, not just presence/absence."
+    },
+    "genuine_concurrency": {
+      "status": "pass",
+      "evidence": "Real sync.WaitGroup + one dedicated `go func()` per fileID (2000 goroutines), no shared mutex/channel in the test harness that would serialize goroutines against each other. Each goroutine only calls pattern.ops(c, fid) then wg.Done(); within-fileID ordering guaranteed by single-goroutine program order, cross-fileID ordering is genuinely racy. -race build confirms no harness-introduced data race either."
+    },
+    "stripe_collision_coverage": {
+      "status": "pass",
+      "evidence": "numFileIDsStress=2000 vs numStripes=256 (catalog.go) gives ~7.8 fileIDs/stripe by pigeonhole. stripeFor is fileID % numStripes (plain modulo, documented deliberate choice in catalog.go). For sequential IDs 1..2000 this cycles uniformly through all 256 stripes (2000/256 ≈ 7.8, remainder evenly spread over low-numbered stripes) -- no degenerate clustering for this access pattern."
+    },
+    "bug_detection_sensitivity": {
+      "status": "pass_with_comment",
+      "evidence": "A stripe-locking bug that let two different, same-stripe-colliding fileIDs corrupt each other's index/location entries would very likely be caught: final-state check is full struct DeepEqual (version, size, timestamp all vary), not just presence. Additionally a separate, deterministic test (TestCatalogStripesDoNotSerializeAcrossDifferentFileIDs, Scenario 3) directly holds a stripe lock and proves both non-serialization across stripes and real blocking within a stripe -- this complements the stress test's probabilistic nature. Caveat: as a timing-dependent stress test, a rare/narrow race could in principle still not manifest on a given run; -count=10 was run for this subtask and showed zero flakiness (10/10 pass, ~30s each), which is reasonable but not a formal guarantee of absence of races beyond what -race's own detector covers."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches docs/LLD/catalog.md 'Concurrency: Striped mutexes (~256 stripes, hashed by fileID)'. catalog.go's numStripes=256 and stripeFor(fileID)=fileID%numStripes match. Test-only change, impacted module scope (engine/catalog/catalog_test.go) matches requirement's stated impacted modules exactly -- no production code touched."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go build ./... and go vet ./... clean (engine module). gofmt -l . reports no files. Full package `go test ./catalog/... -race -v -count=1` all green (87.7s). `go test ./catalog/... -race -run TestStripedConcurrencyStress -count=10` all green, no flakiness (299s total, ~30s/iter). Full repo `go test ./... -race -count=1` green across engine, btree, catalog, mvcc, wal (no regressions)."
+    },
+    "test_coverage_gap": {
+      "status": "minor_gap",
+      "evidence": "All 5 stressPatterns begin with a Put and only exercise successful CRUD sequences under concurrency; none of the concurrent patterns exercise Delete-of-nonexistent-key or Get-of-never-created-key as part of the racy workload itself. That not-found path IS covered, but only in a separate, non-concurrent test (TestCatalogGetDeleteNotFound, Scenario 4) and in TestCatalogConcurrentDistinctFileIDs's post-hoc delete-all pass -- not woven into the high-collision stress workload. This is a legitimate minor coverage gap relative to the acceptance criteria's intent to stress 'Put/Get/Delete', but does not block the stated acceptance criteria (final-state correctness for Put/Get/Delete sequences), so treated as improvement suggestion rather than a blocking defect."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Test is well-commented, oracle table (stressPatterns) is self-documenting and easy to extend. No -short/build-tag gating for this ~22-30s stress test, but this matches existing repo convention (no other test in the package uses testing.Short either), so not a regression in style."
+    },
+    "performance": {
+      "status": "pass_with_comment",
+      "evidence": "TestStripedConcurrencyStress alone takes ~22-30s under -race with 2000 goroutines; full catalog package -race suite takes 87-171s depending on machine load. This is on the high end for a unit test but acceptable for an explicitly-labeled stress/concurrency test, consistent with test spec's explicit `-run TestStripedConcurrencyStress` invocation pattern (implying it's expected to be run standalone/selectively in CI stress lanes)."
+    }
+  },
+  "false_negative_false_positive_check": {
+    "false_positive_risk": "low - oracle hand-verified correct for all 5 patterns; a buggy oracle would not silently pass here",
+    "false_negative_risk": "low-medium - probabilistic nature of stress tests means an extremely narrow race window could theoretically evade detection on any single run, mitigated by -race detector + repeated runs + complementary deterministic Scenario 3 test"
+  },
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "stressPatterns do not include a not-found (Delete/Get of a fileID never Put) branch inside the concurrent stress workload itself -- consider adding a 6th pattern (e.g. 'Delete without prior Put -> ErrNotFound tolerated/ignored' or a Get on an id outside the range) to widen coverage of error paths under real contention, not just in isolated non-concurrent tests."
+  ]
+}

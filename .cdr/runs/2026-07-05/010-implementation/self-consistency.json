@@ -1,0 +1,13 @@
+{
+  "subtask": "task-2a.3.1",
+  "checks": [
+    {"check": "gofmt -l engine/catalog/catalog_test.go", "result": "clean (no output)"},
+    {"check": "go vet ./engine/catalog/...", "result": "clean"},
+    {"check": "go build ./...", "result": "clean"},
+    {"check": "go test ./engine/catalog/... -race -run TestStripedConcurrencyStress -v -count=1", "result": "PASS (22.9s)"},
+    {"check": "go test ./engine/catalog/... -race -v -count=1 (full package, regression check)", "result": "PASS, all existing tests green, no regressions (86.7s total)"},
+    {"check": "go test ./engine/catalog/... -race -run TestStripedConcurrencyStress -count=3 -v (flakiness check)", "result": "PASS x3, stable (~24s each run)"}
+  ],
+  "note": "This is internal sanity only, not verification (I4 invariant: implementer must not verify own work). /cdr:verify is the next required step.",
+  "matrix_coverage": "all validation-matrix.json criteria exercised by the checks above"
+}

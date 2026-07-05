@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-05-012-commit",
+  "macro": "cdr:commit",
+  "macro_version": "1",
+  "agent": "commit",
+  "subtask": "task-2a.3.1",
+  "git_head": "15f5dd5c647f7b43f39637e18a2c0c39de5bad43",
+  "run_key": "task-2a.3.1|v1|15f5dd5c647f7b43f39637e18a2c0c39de5bad43|commit-PASS_WITH_COMMENTS",
+  "status": "completed",
+  "last_completed_step": "index_updated",
+  "started_at": "2026-07-05T00:00:00Z",
+  "ended_at": "2026-07-05T00:10:00Z"
+}

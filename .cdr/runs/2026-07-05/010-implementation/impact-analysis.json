@@ -1,0 +1,13 @@
+{
+  "subtask": "task-2a.3.1",
+  "files_changed": [
+    {
+      "path": "engine/catalog/catalog_test.go",
+      "change": "add TestStripedConcurrencyStress (new test function only, no existing test modified)"
+    }
+  ],
+  "production_code_changed": false,
+  "risk": "low — additive test-only change; no behavior change to engine/catalog/catalog.go",
+  "regression_surface": "existing catalog_test.go tests must remain green; new test must be race-clean and non-flaky under repeat runs",
+  "dependencies": ["task-2a.1 (verified)", "task-2a.2 (verified)"]
+}

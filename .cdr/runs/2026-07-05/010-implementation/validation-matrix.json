@@ -1,0 +1,29 @@
+{
+  "subtask": "task-2a.3.1",
+  "acceptance_criteria": [
+    {
+      "criterion": "Many goroutines Put/Get/Delete across many distinct fileIDs complete with correct final state",
+      "covered_by": "TestStripedConcurrencyStress: 2000 fileIDs, one goroutine per fileID, final-state assertion against static oracle for every fileID"
+    },
+    {
+      "criterion": "No lock contention across unrelated stripes causing incorrect results",
+      "covered_by": "2000 fileIDs >> 256 stripes guarantees many fileIDs share each stripe (avg ~7.8/stripe); running under -race with real concurrent goroutines (not serialized) surfaces any cross-stripe data race or incorrect interleaving"
+    },
+    {
+      "criterion": "Test spec: go test ./engine/catalog/... -race -run TestStripedConcurrencyStress",
+      "covered_by": "New exported test function TestStripedConcurrencyStress matches this -run regex exactly"
+    },
+    {
+      "criterion": "Serial-execution oracle comparison",
+      "covered_by": "Each fileID's expected final state is derived from a fixed, deterministic per-fileID op sequence (pattern table), equivalent to a single-goroutine serial run of that sequence; asserted via reflect.DeepEqual / errors.Is(ErrNotFound) after all concurrent goroutines finish"
+    },
+    {
+      "criterion": "No regression to existing catalog tests",
+      "covered_by": "self-consistency: full package go test -race -v -count=1"
+    },
+    {
+      "criterion": "Non-flaky",
+      "covered_by": "self-consistency: go test -race -run TestStripedConcurrencyStress -count=5"
+    }
+  ]
+}
