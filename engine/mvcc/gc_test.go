@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 )
@@ -508,5 +509,191 @@ func TestNewSnapshotClosesEpochAcquireVersionReadRace(t *testing.T) {
 	}
 	if versionExists(t, vw, fileID, 1) {
 		t.Fatal("version 1 file still exists on disk after closing the pinning snapshot and re-running RunCompaction")
+	}
+}
+
+// TestGCUnderConcurrency is subtask 2a.2.3's acceptance test: it runs writers,
+// long-running readers holding open snapshots, and the compactor all concurrently
+// against a single shared fileID, and asserts that no active snapshot's pinned
+// version is EVER reclaimed out from under it -- neither by returning a hard "not
+// found" read error, nor by silently returning torn/wrong content that doesn't match
+// what was true at the moment the snapshot was acquired.
+//
+// This is deliberately the same class of race 2a.2.2's independent verification
+// caught in TestNewSnapshotClosesEpochAcquireVersionReadRace (a TOCTOU between
+// acquiring a snapshot's epoch and reading its pinned version, exploited by a
+// concurrently-running compactor), but exercised here as a broad, long-running
+// concurrency stress test rather than a single deterministically-paused
+// interleaving: real writers continuously advancing versions, real readers holding
+// snapshots open across many concurrent commits and compaction passes, and a real
+// compactor looping RunCompaction back-to-back throughout, all racing under -race.
+func TestGCUnderConcurrency(t *testing.T) {
+	dir := t.TempDir()
+	vw, err := NewVersionWriter(dir)
+	if err != nil {
+		t.Fatalf("NewVersionWriter: %v", err)
+	}
+	cat := newTestCatalog(t)
+	w, _ := newTestWAL(t, dir)
+	em := NewEpochManager()
+
+	const fileID = uint64(42)
+	if err := cat.Put(catalog.CatalogRecord{
+		FileID:         fileID,
+		CurrentVersion: 0,
+		Status:         catalog.StatusActive,
+	}); err != nil {
+		t.Fatalf("seeding initial catalog record: %v", err)
+	}
+
+	// Seed one committed version up front so readers always have something to
+	// snapshot from the very start of the concurrent phase, rather than racing
+	// against the very first writer commit too.
+	if _, err := vw.CommitVersion(cat, w, em, fileID, []byte("seed-v0")); err != nil {
+		t.Fatalf("seeding initial CommitVersion: %v", err)
+	}
+
+	const (
+		numWriters   = 4
+		numReaders   = 8
+		readerRounds = 15
+		testDuration = 1500 * time.Millisecond
+	)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Shared, mutex-guarded failure collection: readers append here (rather than
+	// calling t.Fatalf directly from inside a goroutine, which would only abort that
+	// one goroutine) so every violation across every reader is captured and reported
+	// together at the end, per this subtask's spec.
+	var (
+		failuresMu sync.Mutex
+		failures   []string
+	)
+	recordFailure := func(format string, args ...any) {
+		failuresMu.Lock()
+		defer failuresMu.Unlock()
+		failures = append(failures, fmt.Sprintf(format, args...))
+	}
+
+	// Writers: continuously commit new versions for the shared fileID until stop is
+	// closed.
+	for i := 0; i < numWriters; i++ {
+		wg.Add(1)
+		go func(writerID int) {
+			defer wg.Done()
+			counter := 0
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				payload := []byte(fmt.Sprintf("writer-%d-commit-%d", writerID, counter))
+				if _, err := vw.CommitVersion(cat, w, em, fileID, payload); err != nil {
+					recordFailure("writer %d commit %d: CommitVersion failed: %v", writerID, counter, err)
+					return
+				}
+				counter++
+			}
+		}(i)
+	}
+
+	// Compactor: loop RunCompaction back-to-back for the whole test duration,
+	// racing directly against the writers and the long-running readers below.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := RunCompaction(cat, vw, em, fileID); err != nil {
+				recordFailure("RunCompaction failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	// Long-running readers: each round, take a Snapshot, read it once immediately
+	// (this is safe/race-free precisely because version files are immutable once
+	// written and NewSnapshot's acquire-epoch-before-read ordering guarantees the
+	// pinned version cannot be reclaimed while this Snapshot is open -- see
+	// read.go's NewSnapshot doc comment), hold the Snapshot open for a deliberately
+	// extended window while writers and the compactor keep running, then read again
+	// and assert it is BOTH error-free AND byte-for-byte identical to the first
+	// read.
+	for i := 0; i < numReaders; i++ {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			for round := 0; round < readerRounds; round++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+
+				snap, err := NewSnapshot(cat, vw, em, fileID)
+				if err != nil {
+					recordFailure("reader %d round %d: NewSnapshot failed: %v", readerID, round, err)
+					continue
+				}
+
+				firstRead, err := snap.Read()
+				if err != nil {
+					recordFailure("reader %d round %d: initial Read() on version %d failed: %v", readerID, round, snap.Version(), err)
+					_ = snap.Close()
+					continue
+				}
+				expected := append([]byte(nil), firstRead...)
+
+				// Hold the snapshot open across several more read rounds and a
+				// short sleep, deliberately overlapping many concurrent writer
+				// commits and compactor passes.
+				for j := 0; j < 3; j++ {
+					time.Sleep(time.Millisecond)
+					mid, err := snap.Read()
+					if err != nil {
+						recordFailure("reader %d round %d: mid-hold Read() #%d on version %d failed (version reclaimed while still referenced): %v", readerID, round, j, snap.Version(), err)
+						continue
+					}
+					if string(mid) != string(expected) {
+						recordFailure("reader %d round %d: mid-hold Read() #%d on version %d = %q, want %q (torn/wrong content while snapshot still open)", readerID, round, j, snap.Version(), mid, expected)
+					}
+				}
+
+				finalRead, err := snap.Read()
+				if err != nil {
+					recordFailure("reader %d round %d: final Read() on version %d failed (version reclaimed while still referenced -- GC correctness violated): %v", readerID, round, snap.Version(), err)
+				} else if string(finalRead) != string(expected) {
+					recordFailure("reader %d round %d: final Read() on version %d = %q, want %q (content mismatch against acquisition-time read)", readerID, round, snap.Version(), finalRead, expected)
+				}
+
+				if err := snap.Close(); err != nil {
+					recordFailure("reader %d round %d: snap.Close() on version %d failed: %v", readerID, round, snap.Version(), err)
+				}
+			}
+		}(i)
+	}
+
+	// Let the concurrent phase run for a bounded duration, then signal every
+	// goroutine to stop and wait for them all to finish.
+	time.Sleep(testDuration)
+	close(stop)
+	wg.Wait()
+
+	if len(failures) > 0 {
+		t.Fatalf("TestGCUnderConcurrency: %d GC correctness violation(s) detected:\n%s", len(failures), fmt.Sprintf("%v", failures))
+	}
+
+	// Final sanity check: the store must still be in a fully readable state after
+	// the whole concurrent phase, via one last one-shot SnapshotRead of whatever is
+	// current now.
+	if _, err := SnapshotRead(cat, vw, em, fileID); err != nil {
+		t.Fatalf("final SnapshotRead after concurrent phase failed: %v", err)
 	}
 }
