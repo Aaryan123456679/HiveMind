@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-05-019-implementation",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "task-2a.4.2",
+  "git_head": "f99694ef19c859efd3caaa5bfb46407c67c59193",
+  "run_key": "sha256(cdr-implement,1,task-2a.4.2,f99694ef19c859efd3caaa5bfb46407c67c59193,engine/btree/insert.go+insert_test.go)",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-05T08:49:38Z",
+  "ended_at": "2026-07-05T09:40:00Z"
+}

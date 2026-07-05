@@ -1,0 +1,30 @@
+{
+  "subtask": "task-2a.4.2",
+  "criteria": [
+    {
+      "criterion": "Concurrent inserts into disjoint subtrees proceed without blocking each other",
+      "test": "TestCrabbingInsert/DisjointSubtrees",
+      "method": "many goroutines, each confined to a far-apart key range, run concurrently under -race; no deadlock/hang; all keys correct afterward"
+    },
+    {
+      "criterion": "Concurrent inserts into the same subtree remain correct",
+      "test": "TestCrabbingInsert/OverlappingSubtree",
+      "method": "many goroutines with interleaved keys forcing shared-node contention and concurrent splits (including likely root splits); final tree has every key exactly once, structurally valid"
+    },
+    {
+      "criterion": "No writer ever holds more than a parent+child latch pair at once",
+      "test": "code construction + -race",
+      "method": "window-of-2 discipline in descent/propagation/findParent (see plan.md); -race also flags any unsynchronized access, which would surface a violation indirectly"
+    },
+    {
+      "criterion": "No regressions in existing single-threaded Insert path",
+      "test": "go test ./engine/btree/... -race -v -count=1",
+      "method": "free-function Insert left byte-for-byte unchanged; all pre-existing tests (TestInsertEmptyTree, TestInsertUpsert, TestInsertSplit, TestInsertOutOfOrder, delete/lookup/scan suites) must stay green"
+    },
+    {
+      "criterion": "No flakiness in new concurrent test",
+      "test": "go test ./engine/btree/... -race -run TestCrabbingInsert -count=5",
+      "method": "repeat run, must be stable"
+    }
+  ]
+}

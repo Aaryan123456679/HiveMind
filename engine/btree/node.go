@@ -81,6 +81,40 @@ type InternalNode struct {
 	// bump-on-write / unchanged-check-on-read logic belongs to a later, concurrency-
 	// focused subtask.
 	Version uint64
+	// NextSibling is the node index of this internal node's right sibling at the
+	// same tree level, or noSibling (0) if this is the rightmost node at its level.
+	// Mirrors LeafNode.NextLeaf's role, and exists for the same reason a Blink-tree
+	// keeps right-links at every level, not just leaves: subtask 2a.4.2's
+	// latch-crabbing insert releases each ancestor's latch before a split it may be
+	// about to cause has been propagated up to it, so a concurrent writer following
+	// a momentarily-stale parent pointer can land on a node whose upper key range
+	// has already been split off into a new right sibling. NextSibling lets that
+	// writer detect the overshoot (its target key is greater than every key
+	// currently in this node) and "move right" to find the correct, already-split
+	// node instead of silently inserting into the wrong place -- see insert.go's
+	// crabInsert/findParent for the move-right recovery logic that reads this field.
+	// Set alongside NextLeaf-style chaining whenever an internal node splits
+	// (propagateSplit/Tree.propagate); zero-valued (noSibling) for a brand-new root
+	// or any node that has never had a right sibling.
+	NextSibling uint64
+	// LowKey is the smallest key reachable anywhere within this node's subtree,
+	// or "" if this node is the leftmost node at its level (no lower bound).
+	// This is deliberately NOT the same value as Keys[0]: Keys[0] is a separator
+	// one level further down the tree (the boundary between this node's own
+	// first two children), whereas LowKey is the boundary between THIS node and
+	// its own left sibling, which is fixed forever once the node is created by a
+	// split (promoted keys are never revised) and is otherwise unrelated to
+	// Keys[0]. crabInsert/findParent's move-right recovery (see NextSibling)
+	// peeks at a candidate right sibling's LowKey -- not its Keys[0] and not its
+	// currently-populated max key -- to decide whether a target key genuinely
+	// belongs there; using anything else under-corrects or over-corrects
+	// whenever the sibling's occupied key range has gaps (e.g. concurrent,
+	// out-of-order inserts), which caused exactly this kind of silent
+	// misrouting during 2a.4.2's development. Set once at creation: the left
+	// half of a split keeps its original LowKey unchanged; the right half's
+	// LowKey becomes the promoted key. Empty ("") for a brand-new root and for
+	// every node descended purely through Children[0] chains from it.
+	LowKey string
 }
 
 // leafEncodedSize returns the number of bytes Encode would need to write n's contents,
@@ -103,6 +137,8 @@ func internalEncodedSize(n InternalNode) int {
 		size += 2 + len(k)
 	}
 	size += 8 * len(n.Children)
+	size += 8                 // trailing NextSibling pointer
+	size += 2 + len(n.LowKey) // trailing length-prefixed LowKey
 	return size
 }
 
@@ -165,6 +201,9 @@ func (n InternalNode) Encode() ([]byte, error) {
 		binary.LittleEndian.PutUint64(buf[off:], child)
 		off += 8
 	}
+	binary.LittleEndian.PutUint64(buf[off:], n.NextSibling)
+	off += 8
+	off = encodeKeys(buf, off, []string{n.LowKey})
 
 	return buf, nil
 }
@@ -284,7 +323,19 @@ func DecodeInternalNode(data []byte) (InternalNode, error) {
 		off += 8
 	}
 
-	return InternalNode{Keys: keys, Children: children, Version: version}, nil
+	if off+8 > len(data) {
+		return InternalNode{}, fmt.Errorf("btree: node buffer too short to read NextSibling pointer")
+	}
+	nextSibling := binary.LittleEndian.Uint64(data[off:])
+	off += 8
+
+	lowKeys, off, err := decodeKeys(data, off, 1)
+	if err != nil {
+		return InternalNode{}, fmt.Errorf("btree: node buffer too short to read LowKey: %w", err)
+	}
+	_ = off
+
+	return InternalNode{Keys: keys, Children: children, Version: version, NextSibling: nextSibling, LowKey: lowKeys[0]}, nil
 }
 
 // OpenIndexFile opens the B+Tree index file at path, creating it (and any necessary

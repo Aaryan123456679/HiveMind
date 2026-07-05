@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-05-019-implementation",
+  "subtask": "task-2a.4.2",
+  "status": "completed",
+  "commit": "<filled in after commit, see git log>",
+  "crabbing_discipline": {
+    "summary": "Literal window-of-2 latch crabbing (root-to-leaf, at most parent+child held at once) plus Lehman & Yao Blink-tree move-right recovery to make that budget safe.",
+    "descent": "engine/btree/insert.go: Tree.crabInsert (lock root; loop: read node, peek-and-move-right if a right sibling's true lower bound is <= target key, else compute child index, lock child, unlock parent, descend)",
+    "split_propagation": "engine/btree/insert.go: Tree.propagate + Tree.findParent (independent window-of-2 root-to-childID walk re-derived fresh at each level, never a precomputed ancestor chain)",
+    "move_right_fields": "engine/btree/node.go: InternalNode.NextSibling (mirrors LeafNode.NextLeaf) and InternalNode.LowKey (fixed-forever true subtree lower bound, distinct from Keys[0]) -- see their doc comments for the full reasoning and the concrete bug they fix"
+  },
+  "root_split_protection": {
+    "mechanism": "Tree.rootMu sync.Mutex + Tree.root uint64 (tree-level state, separate from per-node latches)",
+    "location": "engine/btree/insert.go: Tree struct, Tree.Insert (empty-tree bootstrap under rootMu), Tree.propagate (root-replacement check-and-commit under rootMu)"
+  },
+  "bug_found_and_fixed_during_implementation": {
+    "description": "Initial implementation (window-of-2 descent using each node's own currently-populated max key to decide move-right) reproducibly lost keys under concurrent shared-parent stress: a writer could land on a stale ancestor's child whose upper range had already been split off, and (because a sparsely-filled node's own max key can be far below its true range boundary under out-of-order concurrent inserts) never realize it needed to move further right, silently stranding the key in a node not reachable via top-down routing.",
+    "fix": "Peek the candidate right sibling's true lower bound (leaf: its first key; internal: new InternalNode.LowKey field) instead of comparing against the current node's own max key, in both Tree.crabInsert and Tree.findParent.",
+    "verification_of_fix": "Ad-hoc repro tests (not part of the committed diff) confirmed the bug pre-fix and its absence post-fix across dozens of runs; TestCrabbingInsert -count=10 and full package -race -count=3 all green (self-consistency only, not formal verification)."
+  },
+  "files_changed": [
+    "engine/btree/insert.go",
+    "engine/btree/insert_test.go",
+    "engine/btree/node.go"
+  ],
+  "new_public_api": [
+    "type Tree struct{ Store, Alloc, unexported rootMu/root }",
+    "func NewTree(store *NodeStore, alloc *NodeAllocator, rootNodeID uint64) *Tree",
+    "func (t *Tree) Root() uint64",
+    "func (t *Tree) Insert(path string, fileID uint64) error"
+  ],
+  "backward_compat": "Free function Insert(store, alloc, rootNodeID, path, fileID) is unchanged and still used by all pre-existing single-threaded tests; Tree is purely additive.",
+  "notes_for_2a.4.3_delete": [
+    "Delete will need the SAME root-pointer protection approach (Tree.rootMu) if it is added as a Tree method rather than a free function, to stay consistent with insert's root-split handling.",
+    "Delete under concurrent crabbing will likely need the identical NextSibling/LowKey move-right recovery at every level it descends through, for the same reason insert did (stale-ancestor misrouting is not insert-specific).",
+    "Consider having delete reuse Tree.findParent rather than duplicating an equivalent helper -- it is already generic over childID/path and does not assume anything insert-specific.",
+    "engine/btree/insert.go's Tree.propagate's retry-on-indexOfChild-miss loop (concurrent shared-parent-split race) is a pattern delete's merge/rebalance propagation will likely need to mirror."
+  ],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-05/019-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-05/019-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-05/019-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-05/019-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-05/019-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-05/019-implementation/self-consistency.json"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-2a.4.2",
+  "checks": [
+    {
+      "name": "go build ./...",
+      "result": "pass"
+    },
+    {
+      "name": "go vet ./btree/...",
+      "result": "pass"
+    },
+    {
+      "name": "gofmt -l ./btree/",
+      "result": "pass",
+      "note": "no files listed (all formatted)"
+    },
+    {
+      "name": "go test ./engine/btree/... -race -v -count=1",
+      "result": "pass",
+      "note": "full pre-existing suite plus new TestCrabbingInsert, no regressions"
+    },
+    {
+      "name": "go test ./engine/btree/... -race -run TestCrabbingInsert -count=10",
+      "result": "pass",
+      "note": "10 consecutive runs, both DisjointSubtrees and OverlappingSubtree subtests, no flakes"
+    },
+    {
+      "name": "go test ./engine/btree/... -race -count=3 (whole package)",
+      "result": "pass"
+    }
+  ],
+  "validation_matrix_coverage": "all rows in validation-matrix.json exercised; see handoff.json for pointers",
+  "known_gap_found_and_fixed_during_implementation": "Initial window-of-2 implementation (no move-right recovery) reproducibly lost keys under concurrent shared-parent stress (silent misroute into a stale, already-split ancestor's child). Root-caused, fixed via Lehman & Yao Blink-tree move-right recovery (InternalNode.NextSibling + InternalNode.LowKey, described in plan.md's amendment section and node.go doc comments), then re-verified clean per the checks above.",
+  "not_a_verification_step": "This file records internal build/test sanity only, performed by the implementation agent. Formal verification is delegated to /cdr:verify and was NOT performed here."
+}

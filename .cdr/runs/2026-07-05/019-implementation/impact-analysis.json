@@ -1,0 +1,31 @@
+{
+  "subtask": "task-2a.4.2",
+  "files_modified": [
+    "engine/btree/insert.go",
+    "engine/btree/insert_test.go"
+  ],
+  "files_read_only": [
+    "engine/btree/latch.go",
+    "engine/btree/node.go",
+    "engine/btree/lookup.go",
+    "engine/btree/persist.go"
+  ],
+  "new_public_api": [
+    "type Tree struct { Store *NodeStore; Alloc *NodeAllocator; ... }",
+    "func NewTree(store *NodeStore, alloc *NodeAllocator, rootNodeID uint64) *Tree",
+    "func (t *Tree) Root() uint64",
+    "func (t *Tree) Insert(path string, fileID uint64) error"
+  ],
+  "unchanged_public_api": [
+    "func Insert(store *NodeStore, alloc *NodeAllocator, rootNodeID uint64, path string, fileID uint64) (uint64, error) -- kept byte-for-byte, all existing single-threaded tests depend on it",
+    "NodeStore.Lock/Unlock/Version (latch.go) -- consumed, not modified",
+    "SaveRoot/LoadRoot (persist.go) -- untouched, orthogonal durability concern"
+  ],
+  "risk_areas": [
+    "Deadlock: must maintain strict root-to-leaf lock ordering everywhere, including the rare re-locate-parent path, to avoid any leaf-to-root ordering that could cycle with a concurrent op going root-to-leaf.",
+    "Concurrent root promotion race: two inserts both propagating a split to what they each believe is 'the root' -- handled by re-checking Tree.root under rootMu immediately before allocating a new root, and falling back to a fresh key-routed parent search (findParent) if the check fails.",
+    "Concurrent shared-parent split race: two inserts both needing to update the SAME ancestor concurrently, where one may have already split it out from under the other -- handled by retrying (fresh findParent) if indexOfChild fails after acquiring the parent's latch.",
+    "No writer ever holds > 2 node latches at once: enforced by construction (window-of-2 during descent, single-latch-at-a-time during propagation, plus the temporarily-locked new sibling during a split write, which is a brand-new never-yet-contended node ID)."
+  ],
+  "regression_surface": "All existing engine/btree/... tests (Insert, Lookup, Delete, Scan, Node encode/decode) must remain green -- Tree is additive only, no existing signatures changed."
+}

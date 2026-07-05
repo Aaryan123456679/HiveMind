@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"sync"
 	"testing"
 )
 
@@ -362,4 +363,138 @@ func TestInsertOutOfOrder(t *testing.T) {
 
 	assertAllLookupable(t, store, rootID, inserted)
 	assertStructuralInvariants(t, store, rootID, n)
+}
+
+// TestCrabbingInsert is the acceptance-test entry point named in this
+// subtask's (2a.4.2) literal test spec (`go test ./engine/btree/... -race
+// -run TestCrabbingInsert`). It exercises the concurrency-safe Tree.Insert
+// path (not the single-threaded free Insert function) via two subtests:
+// disjoint far-apart key ranges (should proceed without any writer ever
+// blocking on another writer's unrelated subtree) and a heavily overlapping
+// key range (forcing real lock contention and, with enough concurrent
+// writers, concurrent leaf/internal/root splits).
+func TestCrabbingInsert(t *testing.T) {
+	t.Run("DisjointSubtrees", testCrabbingInsertDisjointSubtrees)
+	t.Run("OverlappingSubtree", testCrabbingInsertOverlappingSubtree)
+}
+
+// testCrabbingInsertDisjointSubtrees pre-builds a moderately large tree
+// (multiple leaves, at least one internal split) single-threaded via the
+// existing free Insert, wraps it in a Tree, then runs many goroutines
+// concurrently, each confined to its own far-apart, non-overlapping key
+// range (so each goroutine's descent should touch entirely different
+// leaves/ancestors from every other goroutine's, once below the shared
+// root). Asserts every inserted key -- both the pre-built ones and the
+// concurrently-inserted ones -- is look-up-able afterward with the correct
+// fileID, and that the final tree is structurally valid.
+func testCrabbingInsertDisjointSubtrees(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	const prebuilt = 2000
+	rootID, inserted := insertN(t, store, alloc, prebuilt)
+
+	tree := NewTree(store, alloc, rootID)
+
+	const goroutines = 40
+	const perGoroutine = 50
+	// Each goroutine g owns the disjoint key range
+	// [prebuilt + g*rangeWidth, prebuilt + g*rangeWidth + perGoroutine),
+	// with a wide gap between ranges so different goroutines' keys land in
+	// far-apart, non-overlapping leaves.
+	const rangeWidth = 1000
+
+	var mu sync.Mutex // guards `inserted` only; Tree.Insert itself needs no external synchronization
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			base := prebuilt + g*rangeWidth
+			for i := 0; i < perGoroutine; i++ {
+				idx := base + i
+				key := genKey(idx)
+				fileID := uint64(idx + 1)
+				if err := tree.Insert(key, fileID); err != nil {
+					errCh <- fmt.Errorf("goroutine %d: Insert(%q): %w", g, key, err)
+					return
+				}
+				mu.Lock()
+				inserted[key] = fileID
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	finalRoot := tree.Root()
+	assertAllLookupable(t, store, finalRoot, inserted)
+	assertStructuralInvariants(t, store, finalRoot, len(inserted))
+}
+
+// testCrabbingInsertOverlappingSubtree starts from an EMPTY tree and runs
+// many goroutines whose keys are tightly interleaved (goroutine g inserts
+// every key congruent to g modulo the goroutine count), so essentially
+// every goroutine routes through the same shared root and, for a long
+// stretch of the tree's growth, the same shared internal nodes and leaves --
+// forcing real lock contention and very likely multiple concurrent leaf,
+// internal, and root splits. Asserts every key lands correctly exactly
+// once and the final tree is structurally valid.
+func testCrabbingInsertOverlappingSubtree(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+	tree := NewTree(store, alloc, reservedNodeID)
+
+	const goroutines = 30
+	const perGoroutine = 60
+	const n = goroutines * perGoroutine
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := g; idx < n; idx += goroutines {
+				key := genKey(idx)
+				fileID := uint64(idx + 1)
+				if err := tree.Insert(key, fileID); err != nil {
+					errCh <- fmt.Errorf("goroutine %d: Insert(%q): %w", g, key, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	inserted := make(map[string]uint64, n)
+	for idx := 0; idx < n; idx++ {
+		inserted[genKey(idx)] = uint64(idx + 1)
+	}
+
+	finalRoot := tree.Root()
+	assertAllLookupable(t, store, finalRoot, inserted)
+	assertStructuralInvariants(t, store, finalRoot, n)
+
+	// Sanity check that this scenario actually exercised concurrent splits,
+	// not just a trivially small single-leaf tree: the root must have been
+	// promoted to internal at least once.
+	isLeaf, _, _, err := store.ReadNode(finalRoot)
+	if err != nil {
+		t.Fatalf("ReadNode(root): unexpected error: %v", err)
+	}
+	if isLeaf {
+		t.Fatalf("root is still a leaf after %d concurrent inserts across %d goroutines, want at least one split to have occurred", n, goroutines)
+	}
 }

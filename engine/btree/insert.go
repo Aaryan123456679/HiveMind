@@ -242,6 +242,7 @@ func propagateSplit(store *NodeStore, alloc *NodeAllocator, parentChain []uint64
 		if err != nil {
 			return 0, err
 		}
+		left.NextSibling = rightInternalID
 		if err := writeInternal(store, parentID, left); err != nil {
 			return 0, err
 		}
@@ -365,7 +366,7 @@ func insertIntoInternal(parent InternalNode, childIndex int, promotedKey string,
 	children = append(children, newChildID)
 	children = append(children, parent.Children[childIndex+1:]...)
 
-	return InternalNode{Keys: keys, Children: children, Version: parent.Version}
+	return InternalNode{Keys: keys, Children: children, Version: parent.Version, NextSibling: parent.NextSibling, LowKey: parent.LowKey}
 }
 
 // chooseInternalSplit picks the index of the median key to promote when
@@ -388,16 +389,27 @@ func chooseInternalSplit(n InternalNode) int {
 // split semantics: the median key is removed from both children and
 // promoted alone to the next level up (NOT duplicated into either half --
 // this is what distinguishes an internal split from a leaf split).
+//
+// right.NextSibling is set to n's own (pre-split) NextSibling, preserving
+// the existing right-link chain (mirrors splitLeaf's right.NextLeaf =
+// n.NextLeaf); left.NextSibling is left zero-valued -- callers are
+// responsible for wiring left.NextSibling -> right's newly allocated node
+// ID once it is known, exactly as they already do for leaf splits'
+// left.NextLeaf. See InternalNode.NextSibling's doc comment (node.go) for
+// why this field exists (2a.4.2's move-right latch-crabbing recovery).
 func splitInternal(n InternalNode) (left InternalNode, promoted string, right InternalNode) {
 	mid := chooseInternalSplit(n)
 	left = InternalNode{
 		Keys:     append([]string(nil), n.Keys[:mid]...),
 		Children: append([]uint64(nil), n.Children[:mid+1]...),
+		LowKey:   n.LowKey,
 	}
 	promoted = n.Keys[mid]
 	right = InternalNode{
-		Keys:     append([]string(nil), n.Keys[mid+1:]...),
-		Children: append([]uint64(nil), n.Children[mid+1:]...),
+		Keys:        append([]string(nil), n.Keys[mid+1:]...),
+		Children:    append([]uint64(nil), n.Children[mid+1:]...),
+		NextSibling: n.NextSibling,
+		LowKey:      promoted,
 	}
 	return left, promoted, right
 }
@@ -418,4 +430,460 @@ func writeInternal(store *NodeStore, nodeID uint64, internal InternalNode) error
 		return err
 	}
 	return store.WriteNode(nodeID, encoded)
+}
+
+// Tree is the concurrency-safe entry point for latch-crabbing insert
+// (2a.4.2) and, later, delete (2a.4.3). It wraps a *NodeStore and
+// *NodeAllocator (both already safe for concurrent use per 2a.4.1) together
+// with one piece of NEW tree-level state: which node ID is currently the
+// tree's root.
+//
+// Why root needs its own mutex, separate from any per-node nodeLatch
+// (latch.go): "which node ID is the root right now" has no on-disk node
+// identity of its own -- it is purely in-memory application state -- so it
+// cannot be protected by locking any individual node's latch. It also
+// changes far less often than any individual node's content (only on a
+// root split or the very first insert into an empty tree), so a single
+// dedicated sync.Mutex (rootMu), held only very briefly around those rare
+// events, is deliberately kept separate from the high-traffic per-node
+// latch registry: this keeps concurrent inserts into disjoint subtrees from
+// ever contending on rootMu at all, except during the rare instant a root
+// split is actually happening.
+//
+// The pre-existing free function Insert (above) is left completely
+// unmodified: it remains the single-threaded entry point relied on by all
+// of 1.2.x/2a.x's existing tests. Tree is purely additive.
+type Tree struct {
+	Store *NodeStore
+	Alloc *NodeAllocator
+
+	// rootMu guards root. See the Tree doc comment above for why this is a
+	// dedicated mutex rather than reusing Store's per-node latch registry.
+	rootMu sync.Mutex
+	root   uint64
+}
+
+// NewTree wraps store/alloc plus rootNodeID (which may be reservedNodeID
+// for a brand-new, still-empty tree) into a Tree ready for concurrent
+// Insert calls.
+func NewTree(store *NodeStore, alloc *NodeAllocator, rootNodeID uint64) *Tree {
+	return &Tree{Store: store, Alloc: alloc, root: rootNodeID}
+}
+
+// Root returns the tree's current root node ID, safe for concurrent use
+// with in-flight Insert calls.
+func (t *Tree) Root() uint64 {
+	t.rootMu.Lock()
+	defer t.rootMu.Unlock()
+	return t.root
+}
+
+// Insert inserts path -> fileID into t using latch-crabbing (2a.4.2): at
+// all times this call holds at most a parent-and-child pair of per-node
+// latches (see crabInsert/propagate's doc comments for the exact
+// discipline), so concurrent Insert calls into disjoint subtrees never
+// block each other, while concurrent Insert calls that do touch the same
+// node(s) are correctly serialized node-by-node.
+//
+// If path is already present, its fileID is updated in place (upsert
+// semantics, matching the free Insert function's convention).
+func (t *Tree) Insert(path string, fileID uint64) error {
+	t.rootMu.Lock()
+	if t.root == reservedNodeID {
+		// Empty-tree bootstrap, held under rootMu for its entire (rare,
+		// one-shot) duration: a second concurrent bootstrapper simply
+		// blocks on rootMu and, once unblocked, observes the now-installed
+		// root and falls through to the normal path below instead of
+		// racing to create a second root.
+		leafID, err := t.Alloc.Next()
+		if err != nil {
+			t.rootMu.Unlock()
+			return err
+		}
+		leaf := LeafNode{Keys: []string{path}, FileIDs: []uint64{fileID}, NextLeaf: noSibling}
+		t.Store.Lock(leafID)
+		err = writeLeaf(t.Store, leafID, leaf)
+		t.Store.Unlock(leafID)
+		if err != nil {
+			t.rootMu.Unlock()
+			return err
+		}
+		t.root = leafID
+		t.rootMu.Unlock()
+		return nil
+	}
+	root := t.root
+	t.rootMu.Unlock()
+
+	return t.crabInsert(root, path, fileID)
+}
+
+// crabInsert descends from rootID toward path using the window-of-2
+// latch-crabbing discipline mandated by this subtask's acceptance criteria:
+// lock the child, THEN release the parent, before locking the grandchild --
+// never hold more than {parent, child} at once. rootID's own latch is held
+// alone (window of 1) at the very start, growing to 2 only for the brief
+// instant a child is locked just before its parent is released.
+//
+// At every node visited (internal or leaf), crabInsert first applies the
+// "move right on overshoot" recovery described on InternalNode.NextSibling
+// (node.go): releasing a parent's latch before a split it may be about to
+// cause has been propagated back up to it means a concurrent writer can be
+// routed, via that momentarily-stale parent, to a node whose upper key
+// range has already been split off into a new right sibling. Detecting
+// that (path is greater than every key currently in the node, and the node
+// has a right sibling) and moving right before making any further routing
+// decision is what makes the window-of-2 discipline safe -- without it, an
+// insert could land in a node that a lookup would never reach once the
+// split is eventually propagated, silently losing data. See findParent for
+// the identical recovery applied during split propagation.
+//
+// Note that rootID need not still be the tree's actual root by the time
+// this call reaches the leaf level and (possibly) needs to propagate a
+// split upward past rootID -- see propagate's doc comment for how that rare
+// race is handled; crabInsert itself does not need to know or care, since
+// it only ever descends downward from rootID, and nothing about rootID's
+// own subtree changes based on what (if anything) sits above it.
+func (t *Tree) crabInsert(rootID uint64, path string, fileID uint64) error {
+	store := t.Store
+
+	store.Lock(rootID)
+	currentID := rootID
+	for {
+		isLeaf, leaf, internal, err := store.ReadNode(currentID)
+		if err != nil {
+			store.Unlock(currentID)
+			return err
+		}
+
+		if isLeaf {
+			for leaf.NextLeaf != noSibling {
+				nextID := leaf.NextLeaf
+				store.Lock(nextID)
+				nextIsLeaf, nextLeaf, _, err := store.ReadNode(nextID)
+				if err != nil {
+					store.Unlock(nextID)
+					store.Unlock(currentID)
+					return err
+				}
+				if !nextIsLeaf {
+					store.Unlock(nextID)
+					store.Unlock(currentID)
+					return fmt.Errorf("btree: internal invariant violated: NextLeaf chain led to non-leaf node %d", nextID)
+				}
+				// Peek the sibling's own true lower bound (its first key --
+				// leaves store real keys directly, so this is exact) rather
+				// than comparing path against currentID's own currently
+				// populated max key: a sparsely-filled node's max key can be
+				// far below the true boundary between it and its sibling
+				// whenever keys are inserted out of order, which would make
+				// an own-max-key comparison move right too eagerly and
+				// misroute a key that still belongs in currentID. See
+				// InternalNode.LowKey's doc comment for the identical
+				// reasoning at internal-node levels.
+				if len(nextLeaf.Keys) > 0 && path < nextLeaf.Keys[0] {
+					store.Unlock(nextID)
+					break
+				}
+				store.Unlock(currentID)
+				currentID = nextID
+				leaf = nextLeaf
+			}
+			return t.insertIntoLeafAndPropagate(currentID, leaf, path, fileID)
+		}
+
+		for internal.NextSibling != noSibling {
+			nextID := internal.NextSibling
+			store.Lock(nextID)
+			nextIsLeaf, _, nextInternal, err := store.ReadNode(nextID)
+			if err != nil {
+				store.Unlock(nextID)
+				store.Unlock(currentID)
+				return err
+			}
+			if nextIsLeaf {
+				store.Unlock(nextID)
+				store.Unlock(currentID)
+				return fmt.Errorf("btree: internal invariant violated: NextSibling chain led to a leaf node %d", nextID)
+			}
+			// Peek the sibling's LowKey (its true subtree lower bound, fixed
+			// forever since creation) rather than currentID's own currently
+			// populated max separator -- see InternalNode.LowKey's doc
+			// comment for why the latter is unsafe.
+			if nextInternal.LowKey != "" && path < nextInternal.LowKey {
+				store.Unlock(nextID)
+				break
+			}
+			store.Unlock(currentID)
+			currentID = nextID
+			internal = nextInternal
+		}
+
+		i := sort.Search(len(internal.Keys), func(i int) bool { return path < internal.Keys[i] })
+		childID := internal.Children[i]
+
+		store.Lock(childID)
+		store.Unlock(currentID)
+		currentID = childID
+	}
+}
+
+// insertIntoLeafAndPropagate performs the leaf-level mutation for
+// crabInsert. The caller must already hold leafID's latch; this function
+// releases it (and, if a split occurs, the freshly-allocated right
+// sibling's latch too) before returning, on every path.
+func (t *Tree) insertIntoLeafAndPropagate(leafID uint64, leaf LeafNode, path string, fileID uint64) error {
+	store := t.Store
+
+	i := sort.SearchStrings(leaf.Keys, path)
+	if i < len(leaf.Keys) && leaf.Keys[i] == path {
+		// Upsert: key already present, no structural change possible.
+		leaf.FileIDs[i] = fileID
+		err := writeLeaf(store, leafID, leaf)
+		store.Unlock(leafID)
+		return err
+	}
+
+	newLeaf := insertIntoLeaf(leaf, i, path, fileID)
+	if leafEncodedSize(newLeaf) <= NodeSize {
+		err := writeLeaf(store, leafID, newLeaf)
+		store.Unlock(leafID)
+		return err
+	}
+
+	// Leaf overflowed: split it, exactly as the single-threaded Insert
+	// does. leafID (still held) keeps the left half; a freshly allocated
+	// ID gets the right half.
+	left, right := splitLeaf(newLeaf)
+	rightID, err := t.Alloc.Next()
+	if err != nil {
+		store.Unlock(leafID)
+		return err
+	}
+	left.NextLeaf = rightID
+
+	werr := writeLeaf(store, leafID, left)
+	if werr == nil {
+		// rightID was just allocated by this call: no other goroutine can
+		// possibly know about it yet, so locking it is uncontended, but is
+		// done anyway for hygiene/consistency with the "Lock before
+		// WriteNode" convention. This is the only point where 2 latches
+		// (leafID + rightID) are held simultaneously, both already
+		// accounted for within the parent-and-child budget.
+		store.Lock(rightID)
+		werr = writeLeaf(store, rightID, right)
+		store.Unlock(rightID)
+	}
+	store.Unlock(leafID)
+	if werr != nil {
+		return werr
+	}
+
+	return t.propagate(leafID, right.Keys[0], rightID, path)
+}
+
+// findParent locates the CURRENT direct parent of childID by descending
+// from rootID toward path using the same key-routing rule as
+// descendToLeaf/crabInsert, applying the same window-of-2 crabbing
+// discipline, and stopping at the first internal node whose Children slice
+// actually contains childID.
+//
+// This works correctly even when childID's ancestry has been concurrently
+// restructured (additional splits, or even a brand-new root promoted above
+// it) since this call's caller last knew about it: node IDs are never
+// reparented in this package -- a split only ever creates a brand-new
+// *sibling* ID, never moves an existing ID to a different parent lineage --
+// so childID is always still reachable via path's ordinary top-down
+// key-routing from whatever the CURRENT root now is, no matter how many
+// additional promotions or sibling splits have happened concurrently.
+// findParent is what lets propagate uniformly handle both "the ordinary
+// ancestor still exists, just relocate it" and "a concurrent root split
+// happened, relocate the new ancestor chain above the old root" without two
+// separate code paths.
+//
+// findParent returns an error only for a genuine I/O/decode failure or an
+// invariant violation (reaching a leaf without ever finding childID as a
+// listed child, which would mean childID is not actually reachable via
+// path from rootID -- a caller bug, not a concurrency race).
+func (t *Tree) findParent(rootID uint64, path string, childID uint64) (uint64, error) {
+	store := t.Store
+
+	store.Lock(rootID)
+	currentID := rootID
+	for {
+		isLeaf, _, internal, err := store.ReadNode(currentID)
+		if err != nil {
+			store.Unlock(currentID)
+			return 0, err
+		}
+		if isLeaf {
+			store.Unlock(currentID)
+			return 0, fmt.Errorf("btree: internal invariant violated: findParent reached leaf %d while searching for the current parent of %d along path %q", currentID, childID, path)
+		}
+
+		// Move-right recovery: see crabInsert's doc comment for why this is
+		// required for window-of-2 crabbing to be safe. Applied here before
+		// testing indexOfChild so this call always settles on the CURRENT
+		// node that would legitimately contain childID, not a stale one
+		// whose upper range (possibly including childID's own position in
+		// the level below) has already been split off to the right.
+		for internal.NextSibling != noSibling {
+			nextID := internal.NextSibling
+			store.Lock(nextID)
+			nextIsLeaf, _, nextInternal, err := store.ReadNode(nextID)
+			if err != nil {
+				store.Unlock(nextID)
+				store.Unlock(currentID)
+				return 0, err
+			}
+			if nextIsLeaf {
+				store.Unlock(nextID)
+				store.Unlock(currentID)
+				return 0, fmt.Errorf("btree: internal invariant violated: NextSibling chain led to a leaf node %d", nextID)
+			}
+			// See crabInsert's identical peek-the-sibling's-LowKey logic for
+			// why this must not be based on internal's own currently
+			// populated max separator.
+			if nextInternal.LowKey != "" && path < nextInternal.LowKey {
+				store.Unlock(nextID)
+				break
+			}
+			store.Unlock(currentID)
+			currentID = nextID
+			internal = nextInternal
+		}
+
+		if indexOfChild(internal.Children, childID) >= 0 {
+			store.Unlock(currentID)
+			return currentID, nil
+		}
+
+		i := sort.Search(len(internal.Keys), func(i int) bool { return path < internal.Keys[i] })
+		nextID := internal.Children[i]
+
+		store.Lock(nextID)
+		store.Unlock(currentID)
+		currentID = nextID
+	}
+}
+
+// propagate inserts (promotedKey, newChildID) -- replacing the child
+// pointer that used to reference childIDBeingReplaced -- into
+// childIDBeingReplaced's current direct parent, splitting that parent (and
+// propagating further up) as needed, all the way up to and including a
+// brand-new root if childIDBeingReplaced turns out to still be the tree's
+// root. path is the ORIGINAL key being inserted by this call and is used
+// only to ROUTE findParent's descent -- see findParent's doc comment for
+// why this remains correct even after concurrent restructuring above
+// childIDBeingReplaced.
+//
+// At most one ancestor's latch is held at a time across this walk (plus a
+// transient second latch on a freshly-allocated, still-uncontended sibling
+// when an ancestor itself overflows), well within the "parent+child" latch
+// budget. Two concurrency races are handled here, both by retrying with a
+// fresh lookup rather than trusting stale state:
+//
+//   - Concurrent root split: this call takes rootMu and checks whether
+//     childIDBeingReplaced is STILL the tree's current root. If yes, it
+//     allocates and installs a brand-new root, still under rootMu, so no
+//     concurrent reader/writer of Tree.root can observe a half-updated
+//     value. If another insert has, in the tiny window since this call
+//     last checked, already promoted a different node above
+//     childIDBeingReplaced, this check correctly fails and this call falls
+//     back to findParent to relocate the (now taller) ancestor chain above
+//     it instead of installing a conflicting second root.
+//   - Concurrent shared-parent split: after findParent locates a parent and
+//     this call locks it, indexOfChild might still fail (-1) if another
+//     concurrent insert split that very parent, moving childIDBeingReplaced
+//     into a new sibling, in the gap between findParent's read and this
+//     call's Lock. This call detects that (rather than erroring out) and
+//     simply retries: loops back to a fresh findParent call, which is
+//     guaranteed to locate the correct current parent.
+func (t *Tree) propagate(childIDBeingReplaced uint64, promotedKey string, newChildID uint64, path string) error {
+	store := t.Store
+
+	for {
+		t.rootMu.Lock()
+		if t.root == childIDBeingReplaced {
+			newRootID, err := t.Alloc.Next()
+			if err != nil {
+				t.rootMu.Unlock()
+				return err
+			}
+			newRoot := InternalNode{Keys: []string{promotedKey}, Children: []uint64{childIDBeingReplaced, newChildID}}
+
+			store.Lock(newRootID)
+			err = writeInternal(store, newRootID, newRoot)
+			store.Unlock(newRootID)
+			if err != nil {
+				t.rootMu.Unlock()
+				return err
+			}
+
+			t.root = newRootID
+			t.rootMu.Unlock()
+			return nil
+		}
+		currentRoot := t.root
+		t.rootMu.Unlock()
+
+		parentID, err := t.findParent(currentRoot, path, childIDBeingReplaced)
+		if err != nil {
+			return err
+		}
+
+		store.Lock(parentID)
+		isLeaf, _, parent, err := store.ReadNode(parentID)
+		if err != nil {
+			store.Unlock(parentID)
+			return err
+		}
+		if isLeaf {
+			store.Unlock(parentID)
+			return fmt.Errorf("btree: internal invariant violated: ancestor node %d decoded as a leaf", parentID)
+		}
+
+		j := indexOfChild(parent.Children, childIDBeingReplaced)
+		if j < 0 {
+			// Lost a race: parentID was itself split by a concurrent insert
+			// between findParent's read and this Lock+ReadNode, moving
+			// childIDBeingReplaced into a new sibling. Retry from the top
+			// of the loop; findParent will relocate the correct current
+			// parent (possibly the new sibling, possibly further up).
+			store.Unlock(parentID)
+			continue
+		}
+
+		newParent := insertIntoInternal(parent, j, promotedKey, newChildID)
+		if internalEncodedSize(newParent) <= NodeSize {
+			err := writeInternal(store, parentID, newParent)
+			store.Unlock(parentID)
+			return err
+		}
+
+		// Ancestor overflowed: split it too, same semantics as the
+		// single-threaded propagateSplit (median key promoted alone).
+		left, promoted, right := splitInternal(newParent)
+		rightID, err := t.Alloc.Next()
+		if err != nil {
+			store.Unlock(parentID)
+			return err
+		}
+		left.NextSibling = rightID
+
+		werr := writeInternal(store, parentID, left)
+		if werr == nil {
+			store.Lock(rightID)
+			werr = writeInternal(store, rightID, right)
+			store.Unlock(rightID)
+		}
+		store.Unlock(parentID)
+		if werr != nil {
+			return werr
+		}
+
+		childIDBeingReplaced = parentID
+		promotedKey = promoted
+		newChildID = rightID
+	}
 }
