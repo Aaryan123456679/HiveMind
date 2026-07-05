@@ -1,0 +1,23 @@
+{
+  "modules_touched": [
+    "engine/mvcc/gc.go",
+    "engine/mvcc/read.go",
+    "engine/mvcc/write.go",
+    "engine/mvcc/gc_test.go",
+    "engine/mvcc/read_test.go",
+    "engine/mvcc/write_test.go",
+    "engine/mvcc/mvcc_test.go"
+  ],
+  "breaking_api_changes": [
+    "NewSnapshot(cat, vw, fileID) -> NewSnapshot(cat, vw, em, fileID)",
+    "SnapshotRead(cat, vw, fileID) -> SnapshotRead(cat, vw, em, fileID)",
+    "VersionWriter.CommitVersion(cat, w, fileID, data) -> CommitVersion(cat, w, em, fileID, data)",
+    "Snapshot gains a Close() method; every existing call site that creates a Snapshot (directly or via SnapshotRead) must now release its epoch reference"
+  ],
+  "no_external_callers": "grep across the whole repo (outside engine/mvcc) found zero call sites for NewVersionWriter/NewSnapshot/SnapshotRead/CommitVersion, so this breaking change is confined to engine/mvcc's own test files",
+  "new_public_api": [
+    "func RunCompaction(cat *catalog.Catalog, vw *VersionWriter, em *EpochManager, fileID uint64) ([]uint64, error)",
+    "Snapshot.Close() error"
+  ],
+  "risk": "medium — touches the hot commit/read path wiring from a previously-standalone primitive; mitigated by the existing 2a.1.* test suite (TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestConcurrentReadersWriters) all still exercising the same behavior post-wiring, plus TestEpochRefcount*/TestCompactor for the epoch bookkeeping itself"
+}

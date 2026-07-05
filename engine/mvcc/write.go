@@ -70,6 +70,60 @@ type VersionWriter struct {
 	// docs/LLD/mvcc.md's "every version-pointer CAS ... goes through the WAL
 	// first".
 	commitLocks sync.Map
+
+	// versionEpochs records, per fileID, which epoch each successfully-committed
+	// version number became current at — the version<->epoch mapping the background
+	// compactor (gc.go's RunCompaction) needs to decide whether a superseded version
+	// is safe to reclaim. Keyed by fileID (uint64), values are *sync.Map keyed by
+	// version (uint64) with epoch (uint64) values; see recordVersionEpoch and
+	// nextRecordedVersionEpoch below for the full design rationale, including the
+	// known limitation that this bookkeeping is in-memory only and does not survive
+	// a process restart.
+	versionEpochs sync.Map
+}
+
+// recordVersionEpoch records that fileID's version became current as of epoch (the
+// value CommitVersion's em.AdvanceEpoch() call returned for that commit). Called once
+// per successful CommitVersion, immediately before it returns.
+func (vw *VersionWriter) recordVersionEpoch(fileID, version, epoch uint64) {
+	mapAny, _ := vw.versionEpochs.LoadOrStore(fileID, &sync.Map{})
+	m := mapAny.(*sync.Map)
+	m.Store(version, epoch)
+}
+
+// nextRecordedVersionEpoch returns the epoch recorded for the smallest successfully
+// committed version number strictly greater than afterVersion — i.e. the epoch as of
+// which afterVersion was superseded — or ok=false if no such later committed version
+// is known to this VersionWriter.
+//
+// This is deliberately NOT simply "afterVersion+1"'s epoch: CommitVersion's documented
+// retry-on-lost-CAS behavior (see its doc comment) can leave "orphaned" version
+// numbers on disk that were written by WriteVersion but whose CommitVersion attempt
+// lost its CAS race and therefore never became current and never got recorded here.
+// Scanning forward to the next RECORDED version correctly bridges any such gaps: an
+// orphaned version's superseding recorded version is whatever successfully-committed
+// version comes after it, whether that is immediately next or several numbers later.
+func (vw *VersionWriter) nextRecordedVersionEpoch(fileID, afterVersion uint64) (epoch uint64, ok bool) {
+	mapAny, exists := vw.versionEpochs.Load(fileID)
+	if !exists {
+		return 0, false
+	}
+	m := mapAny.(*sync.Map)
+
+	var bestVersion uint64
+	m.Range(func(key, value any) bool {
+		version := key.(uint64)
+		if version <= afterVersion {
+			return true
+		}
+		if !ok || version < bestVersion {
+			bestVersion = version
+			epoch = value.(uint64)
+			ok = true
+		}
+		return true
+	})
+	return epoch, ok
 }
 
 // NewVersionWriter creates (if necessary) the "content" directory under root and
@@ -184,8 +238,16 @@ func (vw *VersionWriter) WriteVersion(fileID uint64, data []byte) (uint64, error
 //     durably as some retained version file (whether or not that particular file ends
 //     up referenced by CurrentVersion), and CurrentVersion always reflects the
 //     temporally last one to actually complete its full write+CAS sequence.
-func (vw *VersionWriter) CommitVersion(cat *catalog.Catalog, w *wal.Writer, fileID uint64, data []byte) (uint64, error) {
-	return vw.commitVersionWithHook(cat, w, fileID, data, nil)
+//
+// Epoch wiring (2a.2.2): once this call's CAS has succeeded, CommitVersion calls
+// em.AdvanceEpoch() exactly once and records the resulting epoch against this fileID's
+// newly-current version (see VersionWriter.recordVersionEpoch), so the background
+// compactor (gc.go's RunCompaction) can later determine which epoch's live-reference
+// count governs reclaiming the version this commit just superseded. Epoch numbering is
+// global (shared across every fileID this em is used for), NOT per-fileID: see gc.go's
+// RunCompaction doc comment for why a single shared counter is sufficient.
+func (vw *VersionWriter) CommitVersion(cat *catalog.Catalog, w *wal.Writer, em *EpochManager, fileID uint64, data []byte) (uint64, error) {
+	return vw.commitVersionWithHook(cat, w, em, fileID, data, nil)
 }
 
 // commitVersionWithHook is CommitVersion's real implementation, with an internal
@@ -196,7 +258,7 @@ func (vw *VersionWriter) CommitVersion(cat *catalog.Catalog, w *wal.Writer, file
 // precedes catalog visibility, the same before/after observation technique
 // engine/catalog/content_test.go's TestContentCreate and engine/mvcc/read_test.go's
 // TestSnapshotRead already use.
-func (vw *VersionWriter) commitVersionWithHook(cat *catalog.Catalog, w *wal.Writer, fileID uint64, data []byte, afterWALBeforeApply func()) (uint64, error) {
+func (vw *VersionWriter) commitVersionWithHook(cat *catalog.Catalog, w *wal.Writer, em *EpochManager, fileID uint64, data []byte, afterWALBeforeApply func()) (uint64, error) {
 	for {
 		rec, err := cat.Get(fileID)
 		if err != nil {
@@ -214,6 +276,8 @@ func (vw *VersionWriter) commitVersionWithHook(cat *catalog.Catalog, w *wal.Writ
 			return 0, fmt.Errorf("mvcc: commit version: WAL-logged CAS for fileID %d: %w", fileID, err)
 		}
 		if committed {
+			epoch := em.AdvanceEpoch()
+			vw.recordVersionEpoch(fileID, version, epoch)
 			return version, nil
 		}
 		// Lost the race: some other CommitVersion call's CAS already advanced

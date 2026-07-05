@@ -36,6 +36,9 @@ type Snapshot struct {
 	vw      *VersionWriter
 	fileID  uint64
 	version uint64
+
+	em    *EpochManager
+	epoch uint64
 }
 
 // NewSnapshot captures fileID's CurrentVersion from cat at this exact instant — the
@@ -45,12 +48,40 @@ type Snapshot struct {
 //
 // cat must already hold a CatalogRecord for fileID (e.g. from Catalog.Put), matching
 // VersionWriter.CommitVersion's own precondition on the write side.
-func NewSnapshot(cat *catalog.Catalog, vw *VersionWriter, fileID uint64) (*Snapshot, error) {
+//
+// Epoch wiring (2a.2.2): NewSnapshot acquires em's current epoch, via
+// em.AcquireCurrentEpoch(), AFTER reading rec.CurrentVersion — the "increment on
+// start" half of docs/LLD/mvcc.md's "Garbage collection" contract. This Snapshot MUST
+// eventually have Close called on it (typically via defer) to release that reference;
+// otherwise its acquired epoch's refcount never returns to zero and the background
+// compactor (gc.go's RunCompaction) can never reclaim anything superseded at or after
+// it. Callers that don't need to hold onto the Snapshot itself should use
+// SnapshotRead, which closes internally.
+//
+// Race note: reading rec.CurrentVersion and acquiring the epoch are two separate
+// steps, not one atomic operation. A concurrent commit could advance the global epoch
+// in between. Because epochs only ever increase (AdvanceEpoch never rewinds), this can
+// only make the epoch this Snapshot ends up acquiring NEWER than "the epoch that was
+// current when this Snapshot's version was actually read" — meaning this Snapshot
+// always advertises a reference at least as protective as necessary for the version it
+// pinned, never less. The consequence is possible delayed reclamation of a
+// version, never premature (unsafe) reclamation of one still in use.
+func NewSnapshot(cat *catalog.Catalog, vw *VersionWriter, em *EpochManager, fileID uint64) (*Snapshot, error) {
 	rec, err := cat.Get(fileID)
 	if err != nil {
 		return nil, fmt.Errorf("mvcc: new snapshot: reading catalog record for fileID %d: %w", fileID, err)
 	}
-	return &Snapshot{vw: vw, fileID: fileID, version: rec.CurrentVersion}, nil
+	epoch := em.AcquireCurrentEpoch()
+	return &Snapshot{vw: vw, fileID: fileID, version: rec.CurrentVersion, em: em, epoch: epoch}, nil
+}
+
+// Close releases this Snapshot's acquired epoch reference — the "decrement on
+// completion" half of the garbage-collection contract described in NewSnapshot's doc
+// comment. Close must be called exactly once per Snapshot (typically via defer,
+// immediately after a successful NewSnapshot call); calling it more than once returns
+// the same double-release error EpochManager.Release would.
+func (s *Snapshot) Close() error {
+	return s.em.Release(s.epoch)
 }
 
 // Version returns the version number this Snapshot is pinned to. It never changes
@@ -96,11 +127,15 @@ func (s *Snapshot) readWithHook(afterSnapshotBeforeRead func()) ([]byte, error) 
 // SnapshotRead is a one-shot convenience combining NewSnapshot and Read: it captures
 // fileID's current version from cat and immediately reads that version's content to
 // completion. Equivalent to calling NewSnapshot followed by Read, for callers that
-// don't need to hold onto the Snapshot (e.g. to inspect Version()) separately.
-func SnapshotRead(cat *catalog.Catalog, vw *VersionWriter, fileID uint64) ([]byte, error) {
-	snap, err := NewSnapshot(cat, vw, fileID)
+// don't need to hold onto the Snapshot (e.g. to inspect Version()) separately. Unlike a
+// caller-managed Snapshot, SnapshotRead always closes its epoch reference (via a
+// deferred Close) before returning, since no Snapshot escapes to the caller for them to
+// close themselves.
+func SnapshotRead(cat *catalog.Catalog, vw *VersionWriter, em *EpochManager, fileID uint64) ([]byte, error) {
+	snap, err := NewSnapshot(cat, vw, em, fileID)
 	if err != nil {
 		return nil, err
 	}
+	defer snap.Close()
 	return snap.Read()
 }

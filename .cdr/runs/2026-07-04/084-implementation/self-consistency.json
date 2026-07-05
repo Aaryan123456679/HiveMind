@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-084-implementation",
+  "subtask": "2a.2.2",
+  "checks": [
+    {
+      "name": "gofmt",
+      "command": "gofmt -l . (from engine/)",
+      "result": "clean, no files listed"
+    },
+    {
+      "name": "go vet",
+      "command": "go vet ./... (from engine/)",
+      "result": "pass, no output"
+    },
+    {
+      "name": "go build",
+      "command": "go build ./... (from engine/)",
+      "result": "pass"
+    },
+    {
+      "name": "go test mvcc package full -v -race",
+      "command": "go test ./mvcc/... -race -v -count=1 (from engine/)",
+      "result": "PASS: TestEpochRefcount, TestEpochRefcountConcurrent, TestCompactor (both subtests), TestConcurrentReadersWriters, TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter (all subtests), TestCurrentVersionCAS, TestVersionCASWAL (all subtests) -- zero regressions, ok in 13.072s"
+    },
+    {
+      "name": "TestCompactor flakiness check",
+      "command": "go test ./mvcc/... -run TestCompactor -race -count=3 -v (from engine/)",
+      "result": "PASS x3, no flakes, ok in 4.809s"
+    },
+    {
+      "name": "full module regression",
+      "command": "go test ./... -race -count=1 (from engine/)",
+      "result": "ok: engine, engine/btree, engine/catalog, engine/mvcc, engine/wal (graph/loadtest/rpc/split have no test files)"
+    }
+  ],
+  "validation_matrix_coverage": {
+    "AC1": "covered - TestCompactor/open_snapshot_pins_its_version_until_closed explicit v4-retained-after-close assertion",
+    "AC2": "covered - v1/v2 deleted while v3 held open; v3 retained until snapshot closed",
+    "AC3": "covered - full package -race pass including updated NewSnapshot/Close call sites",
+    "AC4": "covered - version->epoch trace correctness relied upon by TestCompactor, full package pass",
+    "AC5": "covered - full package -race -count=1 zero regressions",
+    "AC6": "covered - -count=3 flakiness check clean"
+  },
+  "note": "Self-consistency only: build green + validation matrix covered. This is NOT verification; a separate /cdr:verify agent must independently verify this work."
+}

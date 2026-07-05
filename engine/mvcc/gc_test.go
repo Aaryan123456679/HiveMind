@@ -1,8 +1,12 @@
 package mvcc
 
 import (
+	"fmt"
+	"os"
 	"sync"
 	"testing"
+
+	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 )
 
 // TestEpochRefcount exercises EpochManager's refcounting bookkeeping (task-2a.2.1):
@@ -167,4 +171,195 @@ func TestEpochRefcountConcurrent(t *testing.T) {
 	if min, ok := em.MinReferencedEpoch(); ok {
 		t.Fatalf("MinReferencedEpoch() after all goroutines finished = (%d, %v), want ok=false", min, ok)
 	}
+}
+
+// versionExists reports whether fileID's version v still has a version file on disk.
+func versionExists(t *testing.T, vw *VersionWriter, fileID, v uint64) bool {
+	t.Helper()
+	_, err := os.Stat(vw.VersionPath(fileID, v))
+	if err == nil {
+		return true
+	}
+	if os.IsNotExist(err) {
+		return false
+	}
+	t.Fatalf("stat version %d for fileID %d: %v", v, fileID, err)
+	return false
+}
+
+// containsVersion reports whether deleted (RunCompaction's return value) contains v.
+func containsVersion(deleted []uint64, v uint64) bool {
+	for _, d := range deleted {
+		if d == v {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCompactor exercises subtask 2a.2.2's acceptance criteria end-to-end: a version
+// file is deleted only once its epoch's refcount is zero AND it is not the current
+// version; the current version is never reclaimed regardless of refcount.
+func TestCompactor(t *testing.T) {
+	t.Run("no open snapshots reclaims everything reclaimable", func(t *testing.T) {
+		dir := t.TempDir()
+		vw, err := NewVersionWriter(dir)
+		if err != nil {
+			t.Fatalf("NewVersionWriter: %v", err)
+		}
+		cat := newTestCatalog(t)
+		w, _ := newTestWAL(t, dir)
+		em := NewEpochManager()
+
+		const fileID = uint64(1)
+		if err := cat.Put(catalog.CatalogRecord{
+			FileID:         fileID,
+			CurrentVersion: 0,
+			Status:         catalog.StatusActive,
+		}); err != nil {
+			t.Fatalf("seeding initial catalog record: %v", err)
+		}
+
+		var lastVersion uint64
+		for i := 1; i <= 4; i++ {
+			v, err := vw.CommitVersion(cat, w, em, fileID, []byte(fmt.Sprintf("v%d", i)))
+			if err != nil {
+				t.Fatalf("CommitVersion #%d: %v", i, err)
+			}
+			lastVersion = v
+		}
+
+		deleted, err := RunCompaction(cat, vw, em, fileID)
+		if err != nil {
+			t.Fatalf("RunCompaction: %v", err)
+		}
+
+		// With no open snapshots, everything except the current version must be
+		// reclaimed.
+		for v := uint64(1); v < lastVersion; v++ {
+			if !containsVersion(deleted, v) {
+				t.Fatalf("RunCompaction with no open snapshots: version %d not reclaimed, deleted=%v", v, deleted)
+			}
+			if versionExists(t, vw, fileID, v) {
+				t.Fatalf("version %d file still exists on disk after reclamation", v)
+			}
+		}
+		if containsVersion(deleted, lastVersion) {
+			t.Fatalf("RunCompaction reclaimed the CURRENT version %d, want it retained", lastVersion)
+		}
+		if !versionExists(t, vw, fileID, lastVersion) {
+			t.Fatalf("current version %d file missing from disk after RunCompaction", lastVersion)
+		}
+	})
+
+	t.Run("open snapshot pins its version until closed", func(t *testing.T) {
+		dir := t.TempDir()
+		vw, err := NewVersionWriter(dir)
+		if err != nil {
+			t.Fatalf("NewVersionWriter: %v", err)
+		}
+		cat := newTestCatalog(t)
+		w, _ := newTestWAL(t, dir)
+		em := NewEpochManager()
+
+		const fileID = uint64(2)
+		if err := cat.Put(catalog.CatalogRecord{
+			FileID:         fileID,
+			CurrentVersion: 0,
+			Status:         catalog.StatusActive,
+		}); err != nil {
+			t.Fatalf("seeding initial catalog record: %v", err)
+		}
+
+		// Commit v1, v2, v3.
+		for i := 1; i <= 3; i++ {
+			if _, err := vw.CommitVersion(cat, w, em, fileID, []byte(fmt.Sprintf("v%d", i))); err != nil {
+				t.Fatalf("CommitVersion #%d: %v", i, err)
+			}
+		}
+
+		// Open (and deliberately do not close yet) a Snapshot pinned to v3, the
+		// version that is current right now, BEFORE committing v4.
+		snap, err := NewSnapshot(cat, vw, em, fileID)
+		if err != nil {
+			t.Fatalf("NewSnapshot: %v", err)
+		}
+		if snap.Version() != 3 {
+			t.Fatalf("held snapshot pinned to version %d, want 3", snap.Version())
+		}
+
+		// Commit v4, making it current and superseding v3 (and, transitively, v1/v2
+		// which were already superseded before the snapshot was even taken).
+		v4, err := vw.CommitVersion(cat, w, em, fileID, []byte("v4"))
+		if err != nil {
+			t.Fatalf("CommitVersion v4: %v", err)
+		}
+		if v4 != 4 {
+			t.Fatalf("expected v4 == 4, got %d", v4)
+		}
+
+		deleted, err := RunCompaction(cat, vw, em, fileID)
+		if err != nil {
+			t.Fatalf("RunCompaction (snapshot open): %v", err)
+		}
+
+		// (a) v3's file must NOT be deleted: a live snapshot still references it.
+		if containsVersion(deleted, 3) {
+			t.Fatalf("RunCompaction reclaimed version 3 while a snapshot pinned to it is still open, deleted=%v", deleted)
+		}
+		if !versionExists(t, vw, fileID, 3) {
+			t.Fatal("version 3 file was removed from disk while a snapshot pinned to it is still open")
+		}
+
+		// (b) v1 and v2, superseded strictly before the held snapshot's epoch and
+		// referenced by nobody, must be deleted.
+		for _, v := range []uint64{1, 2} {
+			if !containsVersion(deleted, v) {
+				t.Fatalf("RunCompaction did not reclaim version %d, want it reclaimed (unreferenced), deleted=%v", v, deleted)
+			}
+			if versionExists(t, vw, fileID, v) {
+				t.Fatalf("version %d file still exists on disk after reclamation", v)
+			}
+		}
+
+		// (c) the CURRENT version (v4) must never be reclaimed, regardless of
+		// refcount. Assert this explicitly, locking in the acceptance criterion.
+		if containsVersion(deleted, 4) {
+			t.Fatalf("RunCompaction reclaimed the CURRENT version 4, want it retained regardless of refcount")
+		}
+		if !versionExists(t, vw, fileID, 4) {
+			t.Fatal("current version 4 file missing from disk after RunCompaction")
+		}
+
+		// Now close the held-open snapshot (its epoch's refcount drops to 0) and run
+		// RunCompaction again.
+		if err := snap.Close(); err != nil {
+			t.Fatalf("snap.Close(): %v", err)
+		}
+
+		deleted2, err := RunCompaction(cat, vw, em, fileID)
+		if err != nil {
+			t.Fatalf("RunCompaction (after close): %v", err)
+		}
+
+		// (d) v3 is now eligible and must be reclaimed on this second pass.
+		if !containsVersion(deleted2, 3) {
+			t.Fatalf("RunCompaction after closing the held snapshot did not reclaim version 3, deleted=%v", deleted2)
+		}
+		if versionExists(t, vw, fileID, 3) {
+			t.Fatal("version 3 file still exists on disk after closing the pinning snapshot and re-running RunCompaction")
+		}
+
+		// Explicit sub-case: even now that every prior version's refcount has
+		// dropped to zero, the CURRENT version (v4) is STILL retained on this
+		// second RunCompaction call — proving "current is never reclaimed" holds
+		// independent of refcount, not just incidentally because a snapshot
+		// happened to be open in this test.
+		if containsVersion(deleted2, 4) {
+			t.Fatalf("RunCompaction reclaimed the CURRENT version 4 on second pass, want it retained regardless of refcount")
+		}
+		if !versionExists(t, vw, fileID, 4) {
+			t.Fatal("current version 4 file missing from disk after second RunCompaction")
+		}
+	})
 }

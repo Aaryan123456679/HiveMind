@@ -2,7 +2,12 @@ package mvcc
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
+
+	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 )
 
 // EpochManager tracks a single, store-wide (not per-fileID) monotonically increasing
@@ -142,4 +147,131 @@ func (em *EpochManager) MinReferencedEpoch() (uint64, bool) {
 		}
 	}
 	return min, found
+}
+
+// listVersionFiles returns every version number currently present on disk for fileID
+// (skipping any in-progress "*.md.tmp" siblings from writeVersionFile's
+// create-temp-then-rename sequence), in no particular order. Mirrors the same
+// filename-parsing pattern write.go's scanLatestVersion and write_test.go's
+// countVersionFiles already use.
+func (vw *VersionWriter) listVersionFiles(fileID uint64) ([]uint64, error) {
+	prefix := fmt.Sprintf("%d.v", fileID)
+
+	entries, err := os.ReadDir(vw.dir)
+	if err != nil {
+		return nil, fmt.Errorf("mvcc: list version files: reading content dir %s: %w", vw.dir, err)
+	}
+
+	var versions []uint64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, versionFileSuffix) {
+			continue
+		}
+		middle := strings.TrimSuffix(strings.TrimPrefix(name, prefix), versionFileSuffix)
+		n, err := strconv.ParseUint(middle, 10, 64)
+		if err != nil {
+			// Not a clean "<fileID>.v<N>.md" name (e.g. a stray leftover *.md.tmp
+			// whose suffix happens to still end in ".md" mid-random-suffix); skip
+			// rather than fail the whole listing.
+			continue
+		}
+		versions = append(versions, n)
+	}
+	return versions, nil
+}
+
+// RunCompaction reclaims fileID's superseded, no-longer-referenced version files. It
+// enumerates every version file on disk for fileID, determines the current version via
+// cat.Get (that file is NEVER a deletion candidate, regardless of its own epoch's
+// refcount — this is the acceptance criteria's explicit "current version is never
+// reclaimed" requirement), and deletes every OTHER version file whose superseding
+// commit's epoch is no longer live-referenced by any snapshot.
+//
+// Epoch<->version mapping (see write.go's VersionWriter.recordVersionEpoch /
+// nextRecordedVersionEpoch for the full design rationale): epoch numbering is global
+// (shared store-wide across every fileID), not per-fileID, so "epoch == version
+// number" is not a valid identification on its own. Instead, CommitVersion records,
+// per fileID, which epoch each of its successfully-committed versions became current
+// at; RunCompaction looks up the smallest such recorded version number strictly
+// greater than a candidate v to find the epoch v was superseded at.
+//
+// Reclaim decision: for a non-current version v, superseded at epoch E (i.e. E is the
+// epoch recorded against the next successfully-committed version after v), v is safe
+// to delete iff either no epoch is currently referenced at all (anyReferenced==false),
+// or MinReferencedEpoch() >= E. The latter holds because every live snapshot's
+// acquired epoch is always >= the epoch that was current when whatever version IT
+// pinned became current (see NewSnapshot's doc comment); if the smallest live-
+// referenced epoch is already >= E, every live snapshot necessarily acquired its epoch
+// at-or-after v's supersession, meaning every live snapshot was looking at v's
+// successor or later — never v itself. If no recorded successor is known at all
+// (nextRecordedVersionEpoch's ok==false), RunCompaction skips v conservatively rather
+// than guess (this also covers a known limitation: the version<->epoch map is
+// in-memory only, so it has no history from before this process's VersionWriter was
+// constructed).
+//
+// Any version file whose number is greater than the current version is also skipped:
+// it is either an in-flight commit's version file not yet (or never, if it lost its
+// CAS race — see CommitVersion's doc comment on orphaned losing retries) published as
+// current, and is not safe to reason about from an epoch standpoint.
+//
+// Concurrency: RunCompaction takes no fileID-wide lock of its own; it is safe to call
+// concurrently with ongoing readers/writers for the same fileID (full concurrent
+// stress-testing of this is 2a.2.3's scope, not this subtask's) because:
+//   - It only ever deletes a version once no live (or future — new snapshots only ever
+//     acquire epochs >= the current one) snapshot could possibly still need it, per
+//     the reasoning above.
+//   - A concurrent CommitVersion for the same fileID only ever writes new,
+//     never-reused version numbers and only ever advances (never rewinds)
+//     CurrentVersion, so cat.Get's snapshot of "current version" here is always a
+//     value that was, or still is, genuinely current.
+//   - os.Remove on a path some other, concurrent RunCompaction call already removed
+//     returns a "not exist" error, which is treated as a benign no-op, not a failure —
+//     so overlapping compaction passes are idempotent.
+func RunCompaction(cat *catalog.Catalog, vw *VersionWriter, em *EpochManager, fileID uint64) ([]uint64, error) {
+	rec, err := cat.Get(fileID)
+	if err != nil {
+		return nil, fmt.Errorf("mvcc: run compaction: reading catalog record for fileID %d: %w", fileID, err)
+	}
+	currentVersion := rec.CurrentVersion
+
+	versions, err := vw.listVersionFiles(fileID)
+	if err != nil {
+		return nil, fmt.Errorf("mvcc: run compaction: listing version files for fileID %d: %w", fileID, err)
+	}
+
+	minRef, anyReferenced := em.MinReferencedEpoch()
+
+	var deleted []uint64
+	for _, v := range versions {
+		if v == currentVersion {
+			continue
+		}
+		if v > currentVersion {
+			continue
+		}
+
+		supersededAtEpoch, ok := vw.nextRecordedVersionEpoch(fileID, v)
+		if !ok {
+			continue
+		}
+
+		if anyReferenced && minRef < supersededAtEpoch {
+			// Some live snapshot acquired its epoch strictly before v was
+			// superseded, so it could conceivably still need v (or something
+			// even older); not yet safe to reclaim.
+			continue
+		}
+
+		path := vw.VersionPath(fileID, v)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return deleted, fmt.Errorf("mvcc: run compaction: removing version %d for fileID %d: %w", v, fileID, err)
+		}
+		deleted = append(deleted, v)
+	}
+
+	return deleted, nil
 }

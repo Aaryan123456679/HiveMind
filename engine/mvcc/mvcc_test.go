@@ -36,6 +36,7 @@ func TestConcurrentReadersWriters(t *testing.T) {
 	}
 	cat := newTestCatalog(t)
 	w, _ := newTestWAL(t, dir)
+	em := NewEpochManager()
 
 	const fileID = uint64(777)
 	if err := cat.Put(catalog.CatalogRecord{
@@ -79,7 +80,7 @@ func TestConcurrentReadersWriters(t *testing.T) {
 		go func(wID int) {
 			defer writerWG.Done()
 			for seq := 0; seq < versionsPerWriter; seq++ {
-				if _, err := vw.CommitVersion(cat, w, fileID, payloads[wID][seq]); err != nil {
+				if _, err := vw.CommitVersion(cat, w, em, fileID, payloads[wID][seq]); err != nil {
 					t.Errorf("writer %d: CommitVersion seq %d: %v", wID, seq, err)
 					return
 				}
@@ -100,7 +101,7 @@ func TestConcurrentReadersWriters(t *testing.T) {
 				// completion rather than stopping early, while still exiting cleanly.
 				finishing := atomic.LoadInt32(&writerDone) == 1
 
-				snap, err := NewSnapshot(cat, vw, fileID)
+				snap, err := NewSnapshot(cat, vw, em, fileID)
 				if err != nil {
 					t.Errorf("reader %d: NewSnapshot: %v", rID, err)
 					return
@@ -109,13 +110,24 @@ func TestConcurrentReadersWriters(t *testing.T) {
 				if snap.Version() > 0 {
 					data, err := snap.Read()
 					if err != nil {
+						snap.Close()
 						t.Errorf("reader %d: Read version %d: %v", rID, snap.Version(), err)
 						return
 					}
 					if !validSet[string(data)] {
+						snap.Close()
 						t.Errorf("reader %d: read version %d content %q does not exactly match any committed payload (torn/partial read)", rID, snap.Version(), data)
 						return
 					}
+				}
+				// Every iteration's Snapshot is only needed for that one Read; close it
+				// right away rather than deferring across the whole (potentially
+				// long-running) loop, so this reader's epoch reference doesn't
+				// artificially pin the compactor's MinReferencedEpoch for its entire
+				// lifetime.
+				if err := snap.Close(); err != nil {
+					t.Errorf("reader %d: Snapshot.Close: %v", rID, err)
+					return
 				}
 
 				if finishing {
@@ -156,7 +168,7 @@ func TestConcurrentReadersWriters(t *testing.T) {
 	if finalRec.CurrentVersion != maxVersion {
 		t.Fatalf("final CurrentVersion = %d, want %d (highest on-disk version)", finalRec.CurrentVersion, maxVersion)
 	}
-	finalData, err := SnapshotRead(cat, vw, fileID)
+	finalData, err := SnapshotRead(cat, vw, em, fileID)
 	if err != nil {
 		t.Fatalf("final SnapshotRead: %v", err)
 	}

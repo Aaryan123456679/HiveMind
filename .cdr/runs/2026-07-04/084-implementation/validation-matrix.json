@@ -1,0 +1,34 @@
+{
+  "criteria": [
+    {
+      "id": "AC1",
+      "requirement": "current version never reclaimed regardless of refcount",
+      "test": "TestCompactor (explicit sub-case: RunCompaction after closing the held snapshot, when v4's own epoch refcount is 0, still retains v4)"
+    },
+    {
+      "id": "AC2",
+      "requirement": "version deleted only once its epoch's refcount is zero and not current",
+      "test": "TestCompactor (v1, v2 deleted while v3 held open by a live Snapshot; v3 retained until its supersession epoch's refcount drops)"
+    },
+    {
+      "id": "AC3",
+      "requirement": "EpochManager wired into Snapshot (Acquire on create, Release on Close)",
+      "test": "TestSnapshotRead / TestSnapshotReadNoVersionCommitted / TestConcurrentReadersWriters updated call sites all pass with -race; new Snapshot.Close() exercised directly in TestCompactor"
+    },
+    {
+      "id": "AC4",
+      "requirement": "EpochManager wired into CommitVersion (AdvanceEpoch after successful CAS)",
+      "test": "TestCompactor's version->epoch trace depends on AdvanceEpoch being called exactly once per successful commit; full package -race run confirms no regression in existing commit tests"
+    },
+    {
+      "id": "AC5",
+      "requirement": "no regressions in existing 2a.1.*/2a.2.1 tests",
+      "test": "go test ./engine/mvcc/... -race -v -count=1 (full package)"
+    },
+    {
+      "id": "AC6",
+      "requirement": "TestCompactor not flaky",
+      "test": "go test ./engine/mvcc/... -run TestCompactor -race -count=3"
+    }
+  ]
+}

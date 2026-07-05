@@ -18,6 +18,7 @@ func TestSnapshotRead(t *testing.T) {
 	}
 	cat := newTestCatalog(t)
 	w, _ := newTestWAL(t, dir)
+	em := NewEpochManager()
 
 	const fileID = uint64(55)
 	if err := cat.Put(catalog.CatalogRecord{
@@ -29,7 +30,7 @@ func TestSnapshotRead(t *testing.T) {
 	}
 
 	v1Content := []byte("version-one-content")
-	v1, err := vw.CommitVersion(cat, w, fileID, v1Content)
+	v1, err := vw.CommitVersion(cat, w, em, fileID, v1Content)
 	if err != nil {
 		t.Fatalf("CommitVersion (v1): %v", err)
 	}
@@ -37,10 +38,11 @@ func TestSnapshotRead(t *testing.T) {
 		t.Fatalf("CommitVersion (v1) = %d, want 1", v1)
 	}
 
-	snap, err := NewSnapshot(cat, vw, fileID)
+	snap, err := NewSnapshot(cat, vw, em, fileID)
 	if err != nil {
 		t.Fatalf("NewSnapshot: %v", err)
 	}
+	defer snap.Close()
 	if snap.Version() != 1 {
 		t.Fatalf("Snapshot.Version() = %d, want 1 (pinned before any v2 commit)", snap.Version())
 	}
@@ -72,7 +74,7 @@ func TestSnapshotRead(t *testing.T) {
 	<-pausedAtRead
 
 	v2Content := []byte("version-two-content-committed-mid-read")
-	v2, err := vw.CommitVersion(cat, w, fileID, v2Content)
+	v2, err := vw.CommitVersion(cat, w, em, fileID, v2Content)
 	if err != nil {
 		t.Fatalf("CommitVersion (v2, concurrent with paused read): %v", err)
 	}
@@ -107,7 +109,7 @@ func TestSnapshotRead(t *testing.T) {
 
 	// Sanity check: snapshotting is not a permanent global freeze — a FRESH snapshot
 	// taken now must observe the new version.
-	gotFresh, err := SnapshotRead(cat, vw, fileID)
+	gotFresh, err := SnapshotRead(cat, vw, em, fileID)
 	if err != nil {
 		t.Fatalf("SnapshotRead (fresh, after v2 commit): %v", err)
 	}
@@ -128,6 +130,7 @@ func TestSnapshotReadNoVersionCommitted(t *testing.T) {
 		t.Fatalf("NewVersionWriter: %v", err)
 	}
 	cat := newTestCatalog(t)
+	em := NewEpochManager()
 
 	const fileID = uint64(56)
 	if err := cat.Put(catalog.CatalogRecord{
@@ -138,7 +141,7 @@ func TestSnapshotReadNoVersionCommitted(t *testing.T) {
 		t.Fatalf("seeding initial catalog record: %v", err)
 	}
 
-	if _, err := SnapshotRead(cat, vw, fileID); err == nil {
+	if _, err := SnapshotRead(cat, vw, em, fileID); err == nil {
 		t.Fatalf("SnapshotRead with no committed version: got nil error, want an error")
 	}
 }

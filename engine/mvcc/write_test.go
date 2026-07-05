@@ -296,6 +296,7 @@ func TestCurrentVersionCAS(t *testing.T) {
 	}
 	cat := newTestCatalog(t)
 	w, _ := newTestWAL(t, dir)
+	em := NewEpochManager()
 
 	const fileID = uint64(123)
 	if err := cat.Put(catalog.CatalogRecord{
@@ -317,7 +318,7 @@ func TestCurrentVersionCAS(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			data := []byte(fmt.Sprintf("writer-%d", idx))
-			v, err := vw.CommitVersion(cat, w, fileID, data)
+			v, err := vw.CommitVersion(cat, w, em, fileID, data)
 			versions[idx] = v
 			errs[idx] = err
 		}(i)
@@ -402,6 +403,7 @@ func TestVersionCASWAL(t *testing.T) {
 		}
 		cat := newTestCatalog(t)
 		w, walDir := newTestWAL(t, dir)
+		em := NewEpochManager()
 
 		const fileID = uint64(77)
 		if err := cat.Put(catalog.CatalogRecord{
@@ -463,7 +465,7 @@ func TestVersionCASWAL(t *testing.T) {
 		}
 
 		data := []byte("wal-before-apply content")
-		version, err := vw.commitVersionWithHook(cat, w, fileID, data, afterWALBeforeApply)
+		version, err := vw.commitVersionWithHook(cat, w, em, fileID, data, afterWALBeforeApply)
 		if err != nil {
 			t.Fatalf("commitVersionWithHook: %v", err)
 		}
@@ -513,6 +515,7 @@ func TestVersionCASWAL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewVersionWriter: %v", err)
 		}
+		em := NewEpochManager()
 
 		const fileID = uint64(88)
 		if err := cat1.Put(catalog.CatalogRecord{
@@ -523,7 +526,7 @@ func TestVersionCASWAL(t *testing.T) {
 			t.Fatalf("seeding initial catalog record: %v", err)
 		}
 
-		v1, err := vw.CommitVersion(cat1, w1, fileID, []byte("v1 content"))
+		v1, err := vw.CommitVersion(cat1, w1, em, fileID, []byte("v1 content"))
 		if err != nil {
 			t.Fatalf("CommitVersion (v1): %v", err)
 		}
@@ -607,6 +610,7 @@ func TestVersionCASWAL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewVersionWriter: %v", err)
 		}
+		em := NewEpochManager()
 
 		const fileID = uint64(99)
 		if err := cat1.Put(catalog.CatalogRecord{
@@ -617,10 +621,10 @@ func TestVersionCASWAL(t *testing.T) {
 			t.Fatalf("seeding initial catalog record: %v", err)
 		}
 
-		if _, err := vw.CommitVersion(cat1, w1, fileID, []byte("v1 content")); err != nil {
+		if _, err := vw.CommitVersion(cat1, w1, em, fileID, []byte("v1 content")); err != nil {
 			t.Fatalf("CommitVersion (v1): %v", err)
 		}
-		v2, err := vw.CommitVersion(cat1, w1, fileID, []byte("v2 content"))
+		v2, err := vw.CommitVersion(cat1, w1, em, fileID, []byte("v2 content"))
 		if err != nil {
 			t.Fatalf("CommitVersion (v2): %v", err)
 		}
