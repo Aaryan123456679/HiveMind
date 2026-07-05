@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "run_id": "024-verification",
+  "subtask": "2a.4.2",
+  "status": "completed",
+  "verdict": "CHANGES_REQUESTED",
+  "commits_verified": ["d145f08", "5a09c40"],
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-05/024-verification/verification.json",
+    "prior_verification": ".cdr/runs/2026-07-05/022-verification/verification.json",
+    "prior_fix": ".cdr/runs/2026-07-05/023-implementation-fix/root-cause.md",
+    "target_function": "engine/btree/insert.go:Tree.propagate (see doc comment ~lines 865-905)",
+    "related_function": "engine/btree/insert.go:Tree.findParent (lines 708-831)",
+    "regression_test": "engine/btree/insert_test.go:TestCrabbingInsert/VeryDeepOverlappingSubtree (lines 677-757)",
+    "regression_index_entry": ".cdr/index/regression.jsonl (last line, date 2026-07-05, run 024-verification)",
+    "task_index_entry": ".cdr/index/task.jsonl:task-2a.4.2"
+  },
+  "next_step": "Do NOT close issue #9. A follow-on implementation-fix cycle should either (a) instrument a real failing run (branch-only) to capture j/pos/parent.Keys state at the moment of corruption to find the true mechanism, or (b) extend the exhaustive-permutation white-box testing methodology (deterministic, no probabilistic reliance) to propagate's recursive ancestor-overflow-split branch and to findParent's 3+-way not-yet-linked-leaf-chain handling, neither of which has been tested yet. Also: correct/soften propagate's doc comment's causal claim, symmetrically guard the unguarded 'pos > j' case alongside the existing 'pos < j' guard, and raise VeryDeepOverlappingSubtree to -count>=10 in CI.",
+  "ended_at": "2026-07-05T20:56:00Z"
+}

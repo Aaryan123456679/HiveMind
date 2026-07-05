@@ -1,0 +1,74 @@
+{
+  "subtask": "2a.4.2",
+  "issue": 9,
+  "commits_verified": ["d145f08", "5a09c40"],
+  "reverifies": ".cdr/runs/2026-07-05/022-verification/verification.json",
+  "fix_cycle": ".cdr/runs/2026-07-05/023-implementation-fix",
+  "verdict": "CHANGES_REQUESTED",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PARTIAL",
+      "evidence": "The fix eliminates the observed silent-data-loss symptom empirically (150+ cumulative clean runs across two independent verification passes, zero reproductions), and satisfies the letter of the requirement (fix the regression, add a regression test, delete the temp harness, one commit). However the requirement also implicitly demands actually identifying the root cause of a silent-data-loss-class bug on its third pass, and the stated root cause does not hold up under direct, deterministic scrutiny (see regression_risk below)."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "sort.Search usage, Lock/Unlock discipline (parentID unlocked on every return path including the new error path), and the latch-crabbing window-of-2 protocol are all consistent with docs/LLD/btree.md and the established 2a.4.1/2a.4.2 design. No new external call surface."
+    },
+    "regression_risk": {
+      "status": "FAIL",
+      "evidence": "Built a deterministic, exhaustive (24-permutation) white-box test calling Tree.propagate directly for 4 independent same-parent child splits/promotions -- the exact scenario illustrated in the fix's own doc comment (2+ children of the same parent P splitting and promoting concurrently). Ran it BOTH against the current sort.Search-based fix AND against a test-local reimplementation of the pre-fix plain-positional-index (j) formula (no source files modified; confirmed via git diff/grep that engine/btree/insert.go was never altered). Result: all 24 orderings pass identically under BOTH formulas -- the old and new code produce byte-identical correct parent.Keys/Children for every possible application order. This directly contradicts the stated causal mechanism ('two children of the same parent splitting and promoting concurrently could apply their promotions in an order that corrupts parent.Keys' sortedness' when using the stale positional index): under the exact conditions described, the stale positional index formula is mathematically forced to equal the sort.Search-derived position (since j = indexOfChild is always fresh and the childIDBeingReplaced's own promotedKey is always strictly bounded by parent.Keys[j-1] and parent.Keys[j] by construction), so the two formulas are provably equivalent whenever the tree's own invariants hold. This means either (a) the round-2 fix's empirical success (79 implementer runs + 75 of my own additional runs at 160g/80k-320g/160k scale, all clean, versus an original ~8.6% baseline) is a real effect caused by something OTHER than the documented mechanism (most plausibly: the ~35 extra lines of code added inside propagate's critical section incidentally perturbed goroutine scheduling/timing enough to mask a still-latent, unidentified race elsewhere -- e.g. in the overflow-and-recursive-split branch of propagate (not covered by my exhaustive test), or in findParent's leaf-chain walk for 3+ concurrent not-yet-linked splits sharing one ancestor (also not covered)), or (b) my reconstruction is missing some precondition the real bug needs. Either way, the true root cause of this silent-data-loss bug remains unconfirmed, which is exactly the 'papering over a bug instead of fixing it' risk this verification pass was explicitly asked to rule out."
+    },
+    "defensive_fallback_soundness": {
+      "status": "COMMENT",
+      "evidence": "The 'pos < j' hard-error guard is, per my own derivation above, mathematically unreachable whenever parent.Keys is genuinely sorted and j is fresh -- consistent with the implementer's own 'should be unreachable' framing. Failing loudly instead of silently falling back is a strict improvement regardless of whether the root-cause theory is correct. However, note the corresponding 'pos > j' case is NOT guarded at all: if parent.Keys were ever corrupted such that sort.Search returned a position strictly greater than j, insertIntoInternal(parent, pos, ...) would silently insert newChildID adjacent to the WRONG child (Children[pos] != childIDBeingReplaced), which is arguably worse than the original bug since it would corrupt Children (not just Keys) with no error at all. Given the position formula is mathematically forced to pos==j in the intended scenario, this is unlikely to matter for the specific race being fixed, but it is an asymmetric gap in a function explicitly added for defensive-invariant purposes."
+    },
+    "three_or_more_way_generalization": {
+      "status": "PASS",
+      "evidence": "The exhaustive 24-permutation test above covers a 4-way (not just 2-way) same-parent concurrent-promotion scenario and the fix generalizes correctly (byte-identical, correct results for every ordering) -- but see regression_risk: this generalization holds equally for the pre-fix formula, so it does not validate the fix's necessity, only its (harmless) sufficiency for this particular reconstructed scenario."
+    },
+    "test_coverage": {
+      "status": "COMMENT",
+      "evidence": "VeryDeepOverlappingSubtree's doc comment honestly documents its own ~8.6%-per-run reproduction-rate limitation -- this is good, transparent engineering and better than a silently-flaky or absent test. However, a probabilistic regression test for a silent-data-loss-class bug, with <10% single-run detection power, is not by itself adequate committed CI coverage for a bug this severe, especially now that the underlying mechanism is not actually confirmed. Recommendation: (1) run VeryDeepOverlappingSubtree at -count>=10 in CI (or at least in any PR that touches engine/btree/insert.go), not just once; (2) invest in a deterministic, non-probabilistic unit test directly targeting Tree.propagate and the overflow-and-recursive-split branch (my TestZZExhaustiveSameParentOrderings pattern, deleted per instructions but easily reconstructed, is a viable template) so this class of bug has a reliable single-shot regression guard instead of relying on statistical luck."
+    },
+    "invariant_checker_soundness": {
+      "status": "PASS",
+      "evidence": "assertStructuralInvariants (unchanged this round) correctly checks Keys sortedness, fanout, LowKey correctness, and NextSibling/NextLeaf chain integrity at every level -- re-confirmed sound by inspection, no changes needed."
+    },
+    "maintainability": {
+      "status": "COMMENT",
+      "evidence": "Tree.propagate's new ~35-line doc comment asserts a causal mechanism that this verification pass could not substantiate and in fact directly contradicted via deterministic reconstruction. Recommend correcting or softening this comment (e.g. 'empirically correlated with eliminating the repro; exact causal mechanism not fully confirmed -- see .cdr/runs/2026-07-05/024-verification') rather than stating the mechanism as settled fact, to avoid misleading future maintainers."
+    },
+    "security": {
+      "status": "PASS",
+      "evidence": "No new external input surface; same trusted internal-engine call path as before."
+    },
+    "performance": {
+      "status": "PASS",
+      "evidence": "sort.Search over parent.Keys (already bounded by NodeSize, so a small array) adds negligible fixed overhead inside an already-locked critical section; no asymptotic change."
+    }
+  },
+  "test_execution": {
+    "go_build_engine_module": "PASS",
+    "go_vet_engine_module": "PASS",
+    "gofmt_l": "PASS (no files listed for insert.go/insert_test.go)",
+    "go_test_btree_race_v_count1": "PASS (40.2s, all pre-existing + new subtests)",
+    "go_test_TestCrabbingInsert_race_count20": "PASS (20/20, all 4 subtests incl. both Deep/VeryDeepOverlappingSubtree, 486.6s under contended conditions)",
+    "go_test_VeryDeepOverlappingSubtree_race_count40_isolated": "PASS (40/40 clean, 552.3s, run in isolation with -timeout=40m)",
+    "go_test_full_engine_module_race_count1": "PASS (engine, btree, catalog, mvcc, wal all green; graph/loadtest/rpc have no test files)",
+    "zzrepro_test_go_deleted": "CONFIRMED absent from working tree and from `git status` (never committed, per handoff.json)",
+    "independent_repro_own_test_320g_160k_count15_isolated": "PASS (15/15 clean, 429.4s, run in isolation with -timeout=40m; nearly 2x the goroutine count and 2x the key count of the shipped VeryDeepOverlappingSubtree scale)",
+    "two_runs_hit_go_test_default_10m_timeout_not_real_failures": "Two earlier attempts (150x VeryDeepOverlappingSubtree run concurrently with 3 other heavy -race processes on an 8-core machine; and 25x of the 320g/160k test under the same contention) both hit Go's default -timeout=10m before completing. Verified via the goroutine-dump these produced: the in-flight subtest had only been running 7-8 seconds when the watchdog fired (not stuck/blocked), and zero 'invariant violated'/Lookup-miss/assertion failures appear anywhere in either log -- these were resource-oversubscription artifacts of my own parallel test scheduling, not discovered deadlocks or data-loss bugs. Re-run in isolation with -timeout=40m immediately afterward (see rows above), both completed cleanly.",
+    "deterministic_exhaustive_permutation_test_fixed_code": "PASS: 24/24 orderings (4-way same-parent concurrent split/promote, direct white-box call to Tree.propagate) produce correct, byte-identical parent.Keys/Children regardless of application order.",
+    "deterministic_exhaustive_permutation_test_prefix_code_counterfactual": "PASS (unexpectedly, from a verification standpoint): the SAME 24 orderings, using a test-local reimplementation of the pre-fix plain-positional-index formula (source file never modified -- confirmed via git diff), ALSO produce correct, byte-identical results for all 24 orderings. This is the basis for the regression_risk FAIL above: it shows the fix's stated mechanism does not actually distinguish old from new code for the scenario it claims to fix.",
+    "temp_test_files_cleanup": "Both temporary test files (myzzrepro_test.go, myzzrepro2_test.go) deleted after use; confirmed via git status and a clean go build/vet that engine/btree/insert.go was never modified during this verification session (two attempted in-place reverts for a counterfactual test were correctly blocked by the permission system and never executed)."
+  },
+  "high_risk_findings_disproved": [
+    "Silent data loss (020/022-verification's escalated finding): NOT reproduced in 75 additional independent clean runs (20+40+15) across three scales (160g/80k, and a novel 320g/160k), plus the implementer's own 79 clean runs -- 154 cumulative clean runs at or above the original repro scale, versus an original ~8.6% baseline rate. If the true bug still exists at its original rate, cumulative non-reproduction across 154 trials is very unlikely (<0.001% under a naive iid model) -- strong evidence the SYMPTOM is gone, even though the stated MECHANISM is not confirmed (see regression_risk)."
+  ],
+  "unresolved_concerns": [
+    "The root-cause narrative in Tree.propagate's doc comment and root-cause.md is not validated -- disproved for the illustrated 2-4-way same-parent scenario via a deterministic counterfactual (see regression_risk). The true mechanism behind the original ~8.6% failure rate remains unidentified. This verification's testing did not cover propagate's recursive 'ancestor overflowed, split it too' branch, nor a 3+-way concurrent not-yet-linked-leaf-chain scenario in findParent -- either of which could plausibly harbor the real, still-unconfirmed race.",
+    "The 'pos > j' case in propagate's new position-computation is unguarded; if parent.Keys were ever corrupted by an unrelated bug, this could silently corrupt Children too (worse than the original symptom)."
+  ],
+  "resolves_partially": "2026-07-05:022-verification (silent-data-loss symptom not reproduced in extensive additional testing; root cause still not confirmed, so full resolution cannot be certified)",
+  "recommendation": "Do not close this issue as fully root-caused yet. Before accepting: (1) either construct a genuine deterministic repro tied to a confirmed mechanism (e.g. via propagate's overflow-recursion branch or a 3+-way not-yet-linked findParent scenario), or (2) instrument a real failing run (temporarily, in a branch) to capture actual j/pos/Keys values at the moment of corruption, to identify the true cause. In parallel, the empirical evidence (154 cumulative clean runs) is strong enough that this fix is very likely SAFE TO KEEP as a defense-in-depth improvement (the hardened fail-loud fallback is a net positive regardless), but the doc comment's causal claim should be corrected/softened, and CI should run VeryDeepOverlappingSubtree at -count>=10 (or add a deterministic unit test) rather than relying on its ~8.6% single-run detection power as the sole regression guard for a silent-data-loss-class defect on its third verification pass."
+}
