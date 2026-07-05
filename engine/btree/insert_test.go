@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // newTestStoreAndAllocator opens a fresh, isolated (t.TempDir()) index file
@@ -754,4 +756,106 @@ func testCrabbingInsertVeryDeepOverlappingSubtree(t *testing.T) {
 	finalRoot := tree.Root()
 	assertAllLookupable(t, store, finalRoot, inserted)
 	assertStructuralInvariants(t, store, finalRoot, n)
+}
+
+// TestCrabbingConcurrentPropagateNoDeadlock is a permanent, fast (well under
+// a second), deterministic regression test for GitHub issue #9's confirmed
+// deadlock finding (2a.4.2 fix round 3): a large-scale concurrent stress run
+// (160 goroutines / 80,000 keys) was directly observed genuinely deadlocked
+// for 40+ minutes, with multiple goroutines permanently blocked on
+// sync.Mutex.Lock inside NodeStore.Lock, called from crabInsert/findParent,
+// each waiting on a node latch held by another blocked goroutine -- a
+// lock-ordering cycle, not just a data race.
+//
+// The fix makes every hand-over-hand ("lock next, release current") step in
+// crabInsert/findParent use TryLock instead of a blocking Lock, unlocking
+// everything held and restarting the whole walk from the root the instant a
+// TryLock would otherwise have blocked (see errRestartFromRoot in
+// insert.go). This test uses a synchronization hook (crabRetryHook), in the
+// same spirit as engine/mvcc's hook-based pause pattern (see
+// newSnapshotWithHook/commitVersionWithHook), to FORCE that exact
+// interleaving deterministically -- one goroutine holding a node's latch
+// while another's crabInsert tries to acquire the very same latch as its
+// next hand-over-hand step -- instead of relying on massive random
+// concurrency to hit it by chance, so this test can iterate in well under a
+// second instead of tens of minutes.
+func TestCrabbingConcurrentPropagateNoDeadlock(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	const prebuilt = 250 // forces at least one leaf split into an internal root (see testInsertLeafSplit)
+	rootID, inserted := insertN(t, store, alloc, prebuilt)
+	tree := NewTree(store, alloc, rootID)
+
+	isLeaf, _, rootInternal, err := store.ReadNode(rootID)
+	if err != nil {
+		t.Fatalf("ReadNode(root): unexpected error: %v", err)
+	}
+	if isLeaf || len(rootInternal.Children) < 2 {
+		t.Fatalf("prebuilt tree root is not an internal node with >= 2 children (isLeaf=%v children=%v); test setup assumption broken", isLeaf, rootInternal.Children)
+	}
+
+	// Mirror crabInsert's own routing logic exactly so contendedChildID is
+	// guaranteed to be the node the Insert below will actually try to
+	// TryLock as its very next hand-over-hand step after the (uncontended)
+	// root lock.
+	newKey := genKey(prebuilt)
+	childIdx := sort.Search(len(rootInternal.Keys), func(i int) bool { return newKey < rootInternal.Keys[i] })
+	contendedChildID := rootInternal.Children[childIdx]
+
+	// Simulate another goroutine that is already holding contendedChildID's
+	// latch (e.g. mid-crabInsert itself, holding it as its own "current"
+	// node) by locking it directly here, before starting the Insert we
+	// actually want to observe.
+	store.Lock(contendedChildID)
+
+	var restarts int32
+	prevHook := crabRetryHook
+	crabRetryHook = func(nodeID uint64) {
+		if nodeID == contendedChildID {
+			atomic.AddInt32(&restarts, 1)
+		}
+	}
+	t.Cleanup(func() { crabRetryHook = prevHook })
+
+	release := make(chan struct{})
+	go func() {
+		<-release
+		store.Unlock(contendedChildID)
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- tree.Insert(newKey, uint64(prebuilt+1)) }()
+
+	// Wait for the Insert goroutine to actually hit the contended latch and
+	// register at least one restart-from-root before releasing it. Bounded
+	// so this test can never hang even if the fix regresses to a blocking
+	// Lock here -- that would instead surface as a clear t.Fatal on this 2s
+	// timeout, never as a silent multi-hour hang.
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&restarts) == 0 {
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatalf("Insert never hit the contended latch on node %d within 2s; test setup did not exercise the intended interleaving", contendedChildID)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Insert: unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Insert did not complete within 5s after the contended latch was released: deadlock regression (GitHub issue #9)")
+	}
+
+	if atomic.LoadInt32(&restarts) == 0 {
+		t.Fatal("crabRetryHook was never invoked for the contended node; test did not actually exercise the restart-from-root path")
+	}
+
+	inserted[newKey] = uint64(prebuilt + 1)
+	finalRoot := tree.Root()
+	assertAllLookupable(t, store, finalRoot, inserted)
+	assertStructuralInvariants(t, store, finalRoot, len(inserted))
 }

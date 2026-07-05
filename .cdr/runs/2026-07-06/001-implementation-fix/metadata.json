@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-06-001-implementation-fix",
+  "macro": "cdr:implement-fix",
+  "macro_version": "1",
+  "agent": "implementation-fix",
+  "subtask": "2a.4.2",
+  "git_head": "5a09c4055454f2fb46b5c2f5adf5d5889c4ace35",
+  "run_key": "2a.4.2-fix-round3-deadlock-trylock-restart-from-root",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-06T00:00:00Z",
+  "ended_at": "2026-07-06T00:30:00Z",
+  "supersedes": ".cdr/runs/2026-07-05/025-implementation-fix",
+  "notes": "Fourth agent dispatch on GitHub issue #9. Confirmed root cause: crabInsert/findParent's hand-over-hand ('lock next, release current') descent used a blocking Lock for every step, which -- combined with the tree design where a node can be reached both via its parent's already-linked Children entry AND via a not-yet-linked sibling's NextLeaf/NextSibling pointer at the same time -- allowed two concurrent crabbing walks to form a genuine lock-ordering cycle under real concurrent-split contention (directly observed: 160g/80k-key stress run deadlocked 40+ min, goroutine dump at scratchpad/goroutine_dump_deadlock.log showed multiple goroutines permanently blocked on sync.Mutex.Lock inside NodeStore.Lock called from findParent/propagate, each waiting on a latch held by another blocked goroutine). Fix: replaced the blocking Lock in every hand-over-hand step of crabInsert/findParent with NodeStore.TryLock; on a miss, release everything currently held and restart the entire walk from the root (errRestartFromRoot in insert.go), with a small jittered backoff. This makes a lock-ordering cycle structurally impossible: no goroutine can ever be simultaneously blocked waiting on a latch while holding a different latch someone else needs. Added a fast (<0.1s), deterministic regression test (TestCrabbingConcurrentPropagateNoDeadlock in insert_test.go) using a synchronization hook (crabRetryHook), mirroring engine/mvcc's hook-based pause pattern, to force the exact TryLock-collision interleaving without relying on large-scale random contention. Cleaned up all round-3 temporary diagnostics (debugWriteHook, zzrepro_instrumented_test.go); kept the O(1) promoted-key bounds check in propagate as a permanent invariant guard, dropped the O(n) global-sortedness check. Confirmed round 2's sort.Search fix was a no-op (mathematically identical to 'pos := j'); reverted to the simpler form with an explanatory comment."
+}

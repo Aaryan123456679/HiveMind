@@ -93,6 +93,19 @@ func (s *NodeStore) Unlock(nodeID uint64) {
 	s.latchFor(nodeID).mu.Unlock()
 }
 
+// TryLock attempts to acquire nodeID's write latch without blocking, reporting
+// whether it succeeded. This exists specifically for the hand-over-hand
+// ("lock next, then release current") steps of crabInsert/findParent
+// (insert.go): those steps must never block while still holding a *different*
+// node's latch, because doing so is exactly what makes a lock-ordering cycle
+// between concurrent crabbing walks possible in the first place (GitHub issue
+// #9's deadlock finding). Callers that get false back must release every
+// latch they currently hold and restart their walk from the root rather than
+// waiting -- see errRestartFromRoot in insert.go.
+func (s *NodeStore) TryLock(nodeID uint64) bool {
+	return s.latchFor(nodeID).mu.TryLock()
+}
+
 // Version returns nodeID's current version counter. Callers on the optimistic read
 // path (2a.4.4) call this once before reading a node's contents and once after,
 // retrying the read if the two values differ -- see the protocol documented on

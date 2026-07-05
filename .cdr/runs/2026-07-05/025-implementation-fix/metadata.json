@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-05-025-implementation-fix",
+  "macro": "cdr:implement-fix",
+  "macro_version": "1",
+  "agent": "implementation-fix",
+  "subtask": "2a.4.2",
+  "git_head": "5a09c4055454f2fb46b5c2f5adf5d5889c4ace35",
+  "run_key": "2a.4.2-fix-round3-5a09c40-instrumented-repro",
+  "status": "superseded",
+  "last_completed_step": "requirement",
+  "started_at": "2026-07-05T00:00:00Z",
+  "ended_at": "2026-07-06T00:00:00Z",
+  "superseded_by": ".cdr/runs/2026-07-06/001-implementation-fix",
+  "notes": "Abandoned mid-experiment: cut off by a session/API limit while running an instrumented 160-goroutine/80,000-key repro (TestZZReproInstrumented) that the orchestrator personally observed genuinely DEADLOCKED for 40+ minutes (goroutine dump captured at scratchpad/goroutine_dump_deadlock.log). Never reached implementation. Superseded rather than completed in place because the true scope changed from 'diagnose silent data loss' to 'fix a confirmed lock-ordering deadlock in crabInsert/findParent/propagate'; see .cdr/runs/2026-07-06/001-implementation-fix for the actual fix."
+}

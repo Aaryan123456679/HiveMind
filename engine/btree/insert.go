@@ -2,10 +2,13 @@ package btree
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"sort"
 	"sync"
+	"time"
 )
 
 // nodeAllocSuffix names the small sidecar file, kept alongside the main index
@@ -432,6 +435,54 @@ func writeInternal(store *NodeStore, nodeID uint64, internal InternalNode) error
 	return store.WriteNode(nodeID, encoded)
 }
 
+// errRestartFromRoot is returned internally by crabInsertOnce/findParentOnce
+// (never by their public-facing wrappers, crabInsert/findParent) the instant
+// a hand-over-hand "lock next, then release current" step would have had to
+// block on a latch while still holding a different node's latch. Their
+// callers must unlock everything they still hold and restart the entire
+// walk from the root.
+//
+// This is the structural fix for GitHub issue #9's confirmed deadlock
+// finding (see 2a.4.2 fix round 3): a goroutine genuinely deadlocks only if
+// it can simultaneously (a) block waiting to acquire some latch L2 and (b)
+// hold a different latch L1 that some other blocked goroutine needs, with
+// that pattern forming a cycle. Making (a) impossible -- by using a
+// non-blocking TryLock for every step that would otherwise satisfy (a) while
+// (b) already holds true, and unconditionally releasing everything and
+// restarting instead of blocking -- makes the cycle structurally impossible
+// regardless of how many concurrent walks are in flight or which order they
+// happen to visit nodes in, without requiring a global, provable
+// lock-acquisition ordering (which this tree's design, where a node can be
+// reached both via its parent's already-linked Children entry and via an
+// as-yet-unlinked sibling's NextLeaf/NextSibling pointer at the same time,
+// cannot easily guarantee).
+var errRestartFromRoot = errors.New("btree: restart crabbing walk from root")
+
+// crabRetryHook, if non-nil, is invoked synchronously every time
+// crabInsert/findParent restart their walk from the root after a hand-over-
+// hand TryLock miss, with the ID of the node whose latch could not be
+// acquired without blocking. Used only by tests (see
+// TestCrabbingConcurrentPropagateNoDeadlock in insert_test.go) to
+// deterministically observe that the restart-from-root path was actually
+// exercised; nil (no-op) otherwise, so it costs nothing in normal use.
+var crabRetryHook func(nodeID uint64)
+
+// crabRetryBackoff sleeps a short, increasing, jittered delay before a
+// crabInsert/findParent retry attempt. Without this, goroutines that
+// collided once on the same node would tend to immediately collide again in
+// lockstep under heavy, uniform contention (thundering herd); the backoff is
+// capped low so sustained retries under contention still make steady
+// forward progress rather than stalling.
+func crabRetryBackoff(attempt int) {
+	const maxBackoff = 2 * time.Millisecond
+	d := time.Duration(attempt) * 20 * time.Microsecond
+	if d > maxBackoff {
+		d = maxBackoff
+	}
+	d += time.Duration(rand.Int64N(int64(20 * time.Microsecond)))
+	time.Sleep(d)
+}
+
 // Tree is the concurrency-safe entry point for latch-crabbing insert
 // (2a.4.2) and, later, delete (2a.4.3). It wraps a *NodeStore and
 // *NodeAllocator (both already safe for concurrent use per 2a.4.1) together
@@ -545,6 +596,33 @@ func (t *Tree) Insert(path string, fileID uint64) error {
 // it only ever descends downward from rootID, and nothing about rootID's
 // own subtree changes based on what (if anything) sits above it.
 func (t *Tree) crabInsert(rootID uint64, path string, fileID uint64) error {
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			crabRetryBackoff(attempt)
+		}
+		err := t.crabInsertOnce(rootID, path, fileID)
+		if err == errRestartFromRoot {
+			continue
+		}
+		return err
+	}
+}
+
+// crabInsertOnce is a single attempt at crabInsert's descent. It never
+// blocks on a latch while already holding a different node's latch: every
+// "lock next, then release current" hand-over-hand step below uses TryLock
+// and returns errRestartFromRoot the instant it would otherwise have
+// blocked, after releasing everything it still holds. See errRestartFromRoot
+// for why this makes a lock-ordering cycle across concurrent
+// crabInsert/findParent/propagate calls structurally impossible.
+//
+// Restarting the whole walk on a TryLock miss is always safe: this function
+// performs no mutation of its own before reaching a leaf -- only
+// insertIntoLeafAndPropagate (called only once this function has
+// unconditionally committed to a specific leaf) ever writes -- so re-running
+// the purely read-only descent from scratch can never leave partial state
+// behind.
+func (t *Tree) crabInsertOnce(rootID uint64, path string, fileID uint64) error {
 	store := t.Store
 
 	store.Lock(rootID)
@@ -559,7 +637,13 @@ func (t *Tree) crabInsert(rootID uint64, path string, fileID uint64) error {
 		if isLeaf {
 			for leaf.NextLeaf != noSibling {
 				nextID := leaf.NextLeaf
-				store.Lock(nextID)
+				if !store.TryLock(nextID) {
+					store.Unlock(currentID)
+					if crabRetryHook != nil {
+						crabRetryHook(nextID)
+					}
+					return errRestartFromRoot
+				}
 				nextIsLeaf, nextLeaf, _, err := store.ReadNode(nextID)
 				if err != nil {
 					store.Unlock(nextID)
@@ -594,7 +678,13 @@ func (t *Tree) crabInsert(rootID uint64, path string, fileID uint64) error {
 
 		for internal.NextSibling != noSibling {
 			nextID := internal.NextSibling
-			store.Lock(nextID)
+			if !store.TryLock(nextID) {
+				store.Unlock(currentID)
+				if crabRetryHook != nil {
+					crabRetryHook(nextID)
+				}
+				return errRestartFromRoot
+			}
 			nextIsLeaf, _, nextInternal, err := store.ReadNode(nextID)
 			if err != nil {
 				store.Unlock(nextID)
@@ -622,7 +712,13 @@ func (t *Tree) crabInsert(rootID uint64, path string, fileID uint64) error {
 		i := sort.Search(len(internal.Keys), func(i int) bool { return path < internal.Keys[i] })
 		childID := internal.Children[i]
 
-		store.Lock(childID)
+		if !store.TryLock(childID) {
+			store.Unlock(currentID)
+			if crabRetryHook != nil {
+				crabRetryHook(childID)
+			}
+			return errRestartFromRoot
+		}
 		store.Unlock(currentID)
 		currentID = childID
 	}
@@ -706,6 +802,26 @@ func (t *Tree) insertIntoLeafAndPropagate(leafID uint64, leaf LeafNode, path str
 // listed child, which would mean childID is not actually reachable via
 // path from rootID -- a caller bug, not a concurrency race).
 func (t *Tree) findParent(rootID uint64, path string, childID uint64) (uint64, error) {
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			crabRetryBackoff(attempt)
+		}
+		parentID, err := t.findParentOnce(rootID, path, childID)
+		if err == errRestartFromRoot {
+			continue
+		}
+		return parentID, err
+	}
+}
+
+// findParentOnce is a single attempt at findParent's descent. Like
+// crabInsertOnce, it never blocks on a latch while already holding a
+// different node's latch: every hand-over-hand step uses TryLock and returns
+// errRestartFromRoot -- causing findParent to restart the whole read-only
+// descent from rootID -- the instant it would otherwise have blocked. See
+// errRestartFromRoot's doc comment for why this makes a lock-ordering cycle
+// with concurrent crabInsert/propagate calls structurally impossible.
+func (t *Tree) findParentOnce(rootID uint64, path string, childID uint64) (uint64, error) {
 	store := t.Store
 
 	// ancestorID is the last internal node whose Children slice we
@@ -762,7 +878,13 @@ func (t *Tree) findParent(rootID uint64, path string, childID uint64) (uint64, e
 					return 0, fmt.Errorf("btree: internal invariant violated: findParent reached the end of the leaf chain at %d (starting from leaf %d) while searching for the current parent of %d along path %q", currentID, ancestorLeafEntry, childID, path)
 				}
 				nextID := leaf.NextLeaf
-				store.Lock(nextID)
+				if !store.TryLock(nextID) {
+					store.Unlock(currentID)
+					if crabRetryHook != nil {
+						crabRetryHook(nextID)
+					}
+					return 0, errRestartFromRoot
+				}
 				nextIsLeaf, nextLeaf, _, err := store.ReadNode(nextID)
 				if err != nil {
 					store.Unlock(nextID)
@@ -790,7 +912,13 @@ func (t *Tree) findParent(rootID uint64, path string, childID uint64) (uint64, e
 		// the level below) has already been split off to the right.
 		for internal.NextSibling != noSibling {
 			nextID := internal.NextSibling
-			store.Lock(nextID)
+			if !store.TryLock(nextID) {
+				store.Unlock(currentID)
+				if crabRetryHook != nil {
+					crabRetryHook(nextID)
+				}
+				return 0, errRestartFromRoot
+			}
 			nextIsLeaf, _, nextInternal, err := store.ReadNode(nextID)
 			if err != nil {
 				store.Unlock(nextID)
@@ -822,7 +950,13 @@ func (t *Tree) findParent(rootID uint64, path string, childID uint64) (uint64, e
 		i := sort.Search(len(internal.Keys), func(i int) bool { return path < internal.Keys[i] })
 		nextID := internal.Children[i]
 
-		store.Lock(nextID)
+		if !store.TryLock(nextID) {
+			store.Unlock(currentID)
+			if crabRetryHook != nil {
+				crabRetryHook(nextID)
+			}
+			return 0, errRestartFromRoot
+		}
 		store.Unlock(currentID)
 		ancestorID = currentID
 		ancestorLeafEntry = nextID
@@ -948,10 +1082,39 @@ func (t *Tree) propagate(childIDBeingReplaced uint64, promotedKey string, newChi
 		// (GitHub issue #9 fix round 2) the moment the precondition is ever
 		// violated, so a violation instead fails loudly with a distinct
 		// invariant-violation error rather than a silent fallback.
-		pos := sort.Search(len(parent.Keys), func(i int) bool { return parent.Keys[i] > promotedKey })
+		//
+		// (2a.4.2 fix round 3 re-verification note: round 2's sort.Search
+		// formula above was proven, by exhaustive case analysis over every
+		// permutation of the scenario it was written to fix, to be
+		// mathematically identical to the plain "pos := j" positional index
+		// in every case -- j is already promotedKey's correct sorted
+		// position by construction, since promotedKey always falls strictly
+		// between parent.Keys[j-1] and parent.Keys[j] whenever j is
+		// childIDBeingReplaced's own current position. The 154 clean stress
+		// runs credited to round 2 were very likely incidental timing
+		// perturbation rather than an actual fix. Using "pos := j" directly
+		// is simpler and avoids a redundant O(log n) search for the exact
+		// same value; the bounds check immediately below is kept as a
+		// permanent, cheap (O(1)) invariant guard on that equivalence.)
+		pos := j
 		if pos < j {
 			store.Unlock(parentID)
 			return fmt.Errorf("btree: internal invariant violated: propagate computed sorted insertion position %d for promoted key %q less than childIDBeingReplaced %d's own current position %d in parent %d (Keys=%v)", pos, promotedKey, childIDBeingReplaced, j, parentID, parent.Keys)
+		}
+		// Permanent, cheap (O(1)) invariant guard: promotedKey must fall
+		// strictly between parent.Keys[j-1] and parent.Keys[j] (whichever
+		// exist). If this ever fires, childIDBeingReplaced's computed
+		// position j -- not the positional-vs-sorted insertion formula --
+		// is the source of corruption, which is valuable enough signal to
+		// keep checking on every propagate call, not just during
+		// diagnosis.
+		if j > 0 && parent.Keys[j-1] >= promotedKey {
+			store.Unlock(parentID)
+			return fmt.Errorf("btree: internal invariant violated: promotedKey %q <= parent.Keys[j-1]=%q (j=%d, childIDBeingReplaced=%d, parentID=%d, parent.Keys=%v, parent.Children=%v)", promotedKey, parent.Keys[j-1], j, childIDBeingReplaced, parentID, parent.Keys, parent.Children)
+		}
+		if j < len(parent.Keys) && parent.Keys[j] <= promotedKey {
+			store.Unlock(parentID)
+			return fmt.Errorf("btree: internal invariant violated: promotedKey %q >= parent.Keys[j]=%q (j=%d, childIDBeingReplaced=%d, parentID=%d, parent.Keys=%v, parent.Children=%v)", promotedKey, parent.Keys[j], j, childIDBeingReplaced, parentID, parent.Keys, parent.Children)
 		}
 
 		newParent := insertIntoInternal(parent, pos, promotedKey, newChildID)
