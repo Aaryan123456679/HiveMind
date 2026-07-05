@@ -1,0 +1,56 @@
+{
+  "subtask": "2a.2.3",
+  "issue": 7,
+  "commit": "d69cf0a83d17b4c069fe610c077e6395f784d203",
+  "verdict": "CHANGES_REQUESTED",
+  "summary": "TestGCUnderConcurrency is a genuine, well-built broad concurrency stress test (real overlapping writers/readers/compactor, high compaction churn) and the acceptance criterion as literally stated (no reclaim of a version referenced by an in-flight snapshot) passes cleanly and reproducibly. However, empirical testing shows it has effectively ZERO chance of catching the exact 2a.2.2 TOCTOU regression class it is documented/commit-messaged as covering, and its 'long-running readers' framing overstates actual concurrent overlap.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Test spec matches: go test ./engine/mvcc/... -race -run TestGCUnderConcurrency exists, uses concurrent writers/readers/compactor against a shared fileID, and t.Fatalf's on any violation. Acceptance criterion ('never reclaims a version still referenced by an in-flight snapshot') is checked via error-free + byte-exact re-read assertions."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Consistent with docs/LLD/mvcc.md's epoch-refcount GC scheme and read.go/gc.go's documented invariants. Test is test-only, no production code touched (confirmed via git show d69cf0a --stat: gc_test.go +187 only)."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Test-only change. Full engine module: go test ./... -race -count=1 all green (btree, catalog, mvcc, wal, root). go build ./..., go vet ./..., gofmt -l all clean."
+    },
+    "test_coverage_and_teeth": {
+      "status": "fail",
+      "evidence": "CRITICAL FINDING (directly answers task's #1/#3 focus): reverted read.go's NewSnapshot ordering (epoch-acquire-after cat.Get, i.e. reintroduced the exact bug 2a.2.2 fixed) in an isolated copy of the module (not the tracked repo) and ran TestGCUnderConcurrency -race -count=10 then -count=20 (30 total runs): 30/30 PASSED. Zero detections. By contrast TestNewSnapshotClosesEpochAcquireVersionReadRace (the deterministic hook-based regression test) fails immediately and reliably on the same reverted code. This falsifies the commit message's claim that TestGCUnderConcurrency exercises 'the same class of race ... but exercised here as a broad ... stress test rather than a single deterministically-paused interleaving' -- in practice the race window (a few CPU instructions between AcquireCurrentEpoch and cat.Get) is far too narrow for unforced goroutine scheduling to land in in ~30 runs, so this test provides no real safety net against that specific regression reappearing via a future refactor; only the narrow deterministic test does. Additionally, instrumented run showed: readers (8 goroutines x 15 rounds) all finish in ~107ms out of the claimed 1500ms testDuration -- i.e. 'long-running readers... concurrently overlapping many writer commits' actually only overlaps for ~7% of the test's wall time; for the remaining ~93% only writers+compactor run with zero open snapshots. Writer churn is also modest (56 total commits across 4 writers over 1.5s, likely due to WAL fsync/lock contention with the hot compactor loop, which ran 13006 iterations and deleted 205 files) -- so only a handful of version transitions actually occur during the narrow reader-active window. Net effect: the test IS a legitimate, non-rubber-stamp general-purpose GC-under-load stress test (good for catching many classes of use-after-reclaim bugs), but its documented purpose of specifically re-proving the 2a.2.2 TOCTOU fix under broad concurrency is not supported by evidence and should not be relied upon as such."
+    },
+    "edge_cases": {
+      "status": "comment",
+      "evidence": "Only a single shared fileID is exercised. Given the epoch counter is store-wide/global (not per-fileID, per gc.go's EpochManager doc comment), a multi-fileID variant (e.g. one fileID's long-lived reader pinning the global epoch while a different fileID's writer/compactor churns) would exercise the global-epoch design more realistically and is currently untested by this or any prior subtask. Not required by the literal acceptance criteria, but is a coverage gap worth closing given the global (not per-fileID) epoch design."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "Test-only, no new attack surface."
+    },
+    "performance": {
+      "status": "comment",
+      "evidence": "Test runtime ~1.6-1.7s per run, acceptable. testDuration=1500ms is a fixed sleep-based bound (not iteration-count based), which is standard for this kind of stress test and not inherently flaky, but combined with the fixed readerRounds=15 causes readers to exit early on fast machines (see teeth finding above) -- on a slower CI machine reader rounds would take longer and might cover more of the window (self-correcting in the safe direction), but on a very fast machine the effective coverage window could be even shorter than the ~107ms observed locally."
+    },
+    "maintainability": {
+      "status": "comment",
+      "evidence": "Doc comment on TestGCUnderConcurrency (lines 515-529) makes an overclaim about equivalence to the deterministic regression test's race-catching power (see teeth finding). Recommend either: (a) toning down the doc comment to state this is a complementary broad-stress test for general GC safety, not a substitute for the deterministic hook-based regression test which remains the sole reliable guard against the specific ordering bug, and/or (b) restructuring readers to run for the full stop-channel duration (removing the fixed readerRounds early-exit) so the claimed 'long-running readers... throughout' framing matches actual behavior."
+    },
+    "confidence": {
+      "status": "medium",
+      "evidence": "High confidence in the empirical findings (30/30 non-detection is a strong, reproducible signal, obtained via an isolated non-committed copy of the module -- the tracked repository/source was not modified, confirmed via git status clean afterward). Medium overall confidence in verdict severity judgment: the test still satisfies its literal acceptance criteria and provides real (if narrower-than-advertised) value; reasonable reviewers could argue this is PASS_WITH_COMMENTS rather than CHANGES_REQUESTED given the deterministic 2a.2.2 test already covers the specific regression class."
+    }
+  },
+  "task_2a2_status_note": "Not a verdict on task-2a.2 as a whole: since 2a.2.3 is CHANGES_REQUESTED, task-2a.2 (2a.2.1-2a.2.3) is NOT yet fully verified and issue #7 should not be closed until this subtask's comments are addressed (or explicitly accepted as-is) and re-verified.",
+  "recommendation": "Update TestGCUnderConcurrency's doc comment to not overclaim equivalence to the deterministic TOCTOU regression test (state clearly that this stress test is a complement, not a substitute, for TestNewSnapshotClosesEpochAcquireVersionReadRace). Optionally strengthen the stress test itself (readers loop until `stop` rather than a fixed round count) to genuinely overlap with the full test duration. Optionally add a multi-fileID variant given the global (not per-fileID) epoch design. None of these require production code changes.",
+  "build_and_test_results": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "gofmt_l": "clean",
+    "mvcc_full_suite_race_v_count1": "pass (12 test functions, all subtests pass)",
+    "TestGCUnderConcurrency_race_count20_on_fixed_code": "pass, no flakiness (in addition to count=10 in the full-suite run)",
+    "engine_module_full_race_count1": "pass (engine, btree, catalog, mvcc, wal all ok; graph/loadtest/rpc/split have no test files)",
+    "reverted_bug_control_experiment": "conducted on an isolated non-repo copy of engine/ only; TestNewSnapshotClosesEpochAcquireVersionReadRace fails immediately (1/1) as expected; TestGCUnderConcurrency passes 30/30 (10+20) despite the reintroduced bug"
+  }
+}

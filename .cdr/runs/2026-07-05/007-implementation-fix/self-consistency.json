@@ -1,0 +1,38 @@
+{
+  "subtask": "2a.2.3",
+  "trigger": {
+    "prior_run": "2026-07-05-006-verification",
+    "verdict": "CHANGES_REQUESTED",
+    "findings_addressed": [
+      "test_coverage_and_teeth: doc comment overclaimed equivalence to TestNewSnapshotClosesEpochAcquireVersionReadRace's deterministic TOCTOU race; verifier's revert-and-rerun experiment (reverted read.go's fix, ran TestGCUnderConcurrency -race -count=20 and -count=10, 30 total runs) produced ZERO detections while the deterministic hook-based test failed 1/1 -- proving the two tests are not equivalent.",
+      "test_coverage_and_teeth: instrumentation showed all 8 readers (fixed readerRounds=15) finished in ~107ms of a ~1500ms testDuration (~93% of the run had zero open snapshots), undermining the 'long-running readers... throughout' framing."
+    ]
+  },
+  "changes_made": [
+    {
+      "file": "engine/mvcc/gc_test.go",
+      "change": "Rewrote TestGCUnderConcurrency's doc comment to explicitly state it is NOT a substitute for or equivalent to TestNewSnapshotClosesEpochAcquireVersionReadRace, cites the verifier's empirical 30-run zero-detection result plus the deterministic test's 1/1 failure on the same reverted code, and reframes this test as a broad general-purpose stress test complementary to (not replacing) the narrow deterministic regression test."
+    },
+    {
+      "file": "engine/mvcc/gc_test.go",
+      "change": "Removed fixed readerRounds=15 cap; readers now loop unbounded on the same shared `stop` channel the writers and compactor already used, so they keep opening/holding/closing snapshots for the entire testDuration instead of finishing early.",
+      "change_2": "Added per-reader readerActive[] wall-clock span tracking (first round start to last round completion) and a post-run self-consistency assertion (t.Fatalf) that every reader's active span is at least 50% of testDuration, to prevent silent regression of the coverage gap."
+    }
+  ],
+  "build_and_test_results": {
+    "gofmt_l": "clean (no output)",
+    "go_build": "pass",
+    "go_vet": "pass",
+    "mvcc_full_suite_race_v_count1": "pass, all 12 test functions pass (TestEpochRefcount, TestEpochRefcountConcurrent, TestCompactor + 2 subtests, TestNewSnapshotClosesEpochAcquireVersionReadRace, TestGCUnderConcurrency, TestConcurrentReadersWriters, TestSnapshotRead, TestSnapshotReadNoVersionCommitted, TestVersionWriter + 4 subtests, TestCurrentVersionCAS, TestVersionCASWAL + 3 subtests)",
+    "TestGCUnderConcurrency_race_count10": "10/10 pass, each run ~1.62-1.64s (matches testDuration=1.5s + overhead), confirming readers now overlap for the full window rather than finishing at ~107ms",
+    "TestGCUnderConcurrency_race_count20": "20/20 pass, each run ~1.59-1.63s, no flakiness",
+    "engine_full_race_count1": "pass across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal (graph/loadtest/rpc/split have no test files); zero regressions"
+  },
+  "instrumentation_check": {
+    "mechanism": "readerActive[readerID] = lastRoundEnd.Sub(readerStart), captured when each reader observes `stop` closed; asserted against minAcceptableOverlap = 50% of testDuration (750ms) inside the test itself as t.Fatalf, not just observed manually.",
+    "observed_behavior": "Because readers now loop on `stop` (same signal as writers/compactor) instead of a fixed round count, and total wall-clock test run time (~1.62-1.64s) closely tracks testDuration (1.5s) plus a small fixed teardown overhead across all 30 repeated runs (10x + 20x), readers structurally cannot finish early anymore -- their only exit condition is the shared stop signal fired after testDuration. This replaces the prior ~107ms-of-1500ms (~7%) overlap with effectively the full window.",
+    "conclusion": "Self-consistency confirms the fix: reader-active-time is now close to testDuration (bounded below by the in-test assertion), not 14x shorter as instrumented in the verifier's prior finding."
+  },
+  "self_consistency_note": "This is internal sanity only (build green, all tests pass, matrix from validation covered, instrumentation confirms the coverage gap is closed). This is NOT independent verification -- per invariant I4, /cdr:verify must independently re-assess.",
+  "status": "completed"
+}

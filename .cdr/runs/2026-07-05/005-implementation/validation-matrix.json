@@ -1,0 +1,41 @@
+{
+  "subtask": "task-2a.2.3",
+  "rows": [
+    {
+      "criterion": "No active snapshot's pinned version is ever deleted while still referenced",
+      "covered_by": "TestGCUnderConcurrency: each long-running reader re-Reads its pinned version after a hold-open window (concurrent writers + compactor running) and asserts no error + byte-exact match against its first read"
+    },
+    {
+      "criterion": "Reader's final Read must SUCCEED (file must still exist), not error 'not found'",
+      "covered_by": "TestGCUnderConcurrency: second Read()'s error is explicitly asserted nil, recorded as a failure (not a silent skip) otherwise"
+    },
+    {
+      "criterion": "Content read must match exactly what was true at acquisition (no torn/wrong content)",
+      "covered_by": "TestGCUnderConcurrency: byte-for-byte comparison between the read taken immediately after NewSnapshot and the read taken after the hold-open window"
+    },
+    {
+      "criterion": "Concurrent writers continuously advancing versions",
+      "covered_by": "TestGCUnderConcurrency writer goroutines looping CommitVersion for the shared fileID for the test's duration"
+    },
+    {
+      "criterion": "Concurrent compactor running throughout",
+      "covered_by": "TestGCUnderConcurrency compactor goroutine looping RunCompaction back-to-back for the test's duration"
+    },
+    {
+      "criterion": "Failures surfaced via shared error-collection mechanism, fail loudly",
+      "covered_by": "TestGCUnderConcurrency: mutex-guarded failure slice appended to by reader goroutines, asserted empty (t.Fatalf with full contents) after wg.Wait()"
+    },
+    {
+      "criterion": "Runs cleanly under -race",
+      "covered_by": "go test ./engine/mvcc/... -race -run TestGCUnderConcurrency (self-consistency step); also full package -race run"
+    },
+    {
+      "criterion": "No regressions on existing mvcc tests",
+      "covered_by": "go test ./engine/mvcc/... -race -v -count=1 (self-consistency step)"
+    },
+    {
+      "criterion": "Not flaky",
+      "covered_by": "go test ./engine/mvcc/... -race -run TestGCUnderConcurrency -count=5 (self-consistency step)"
+    }
+  ]
+}

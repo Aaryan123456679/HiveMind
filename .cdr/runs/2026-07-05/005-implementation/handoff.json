@@ -1,0 +1,18 @@
+{
+  "subtask": "task-2a.2.3",
+  "status": "implemented",
+  "commit": "d69cf0a",
+  "run_dir": ".cdr/runs/2026-07-05/005-implementation",
+  "files_changed": [
+    "engine/mvcc/gc_test.go"
+  ],
+  "new_test": {
+    "name": "TestGCUnderConcurrency",
+    "location": "engine/mvcc/gc_test.go (appended after TestNewSnapshotClosesEpochAcquireVersionReadRace)",
+    "run_cmd": "go test ./engine/mvcc/... -race -run TestGCUnderConcurrency -v"
+  },
+  "self_consistency": ".cdr/runs/2026-07-05/005-implementation/self-consistency.json",
+  "validation_matrix": ".cdr/runs/2026-07-05/005-implementation/validation-matrix.json",
+  "important_note": "This closes out ALL of task-2a.2 (2a.2.1 EpochManager, 2a.2.2 RunCompaction + TOCTOU fix, 2a.2.3 this concurrency test). Once /cdr:verify passes this run, task-2a.2 and GitHub issue #7 should become closable. With issue #7 done, Phase 2a's remaining work is task-2a.3 (Catalog concurrent-correctness hardening, issue #8) and task-2a.4 (Latch-crabbing B+Tree concurrency, issue #9).",
+  "not_done_by_this_agent": "No self-verification performed (invariant I4). Do not treat self-consistency checks as independent verification -- /cdr:verify must review this run."
+}

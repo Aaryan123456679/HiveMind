@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "006-verification",
+  "macro": "cdr-verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "2a.2.3",
+  "git_head": "d69cf0a83d17b4c069fe610c077e6395f784d203",
+  "run_key": "sha256:issue7-2a.2.3-d69cf0a-gc_test.go-verify",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-05T03:29:59Z",
+  "ended_at": "2026-07-05T04:10:00Z"
+}

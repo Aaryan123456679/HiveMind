@@ -1,0 +1,12 @@
+{
+  "subtask": "task-2a.2.3",
+  "checks": [
+    {"check": "gofmt -l engine/mvcc/gc_test.go", "result": "clean (no output)"},
+    {"check": "go build ./...", "result": "pass"},
+    {"check": "go vet ./mvcc/...", "result": "pass"},
+    {"check": "go test ./engine/mvcc/... -race -v -count=1", "result": "PASS, all 12 test functions (including new TestGCUnderConcurrency), 15.4s"},
+    {"check": "go test ./engine/mvcc/... -race -run TestGCUnderConcurrency -count=5 -v", "result": "PASS x5, ~1.6s each, no flakiness observed"},
+    {"check": "validation-matrix coverage", "result": "all rows covered, see validation-matrix.json"}
+  ],
+  "note": "This is internal sanity only (build green, matrix covered, no regressions) -- NOT independent verification. /cdr:verify must still review this before task-2a.2.3 / task-2a.2 / issue #7 can be closed."
+}

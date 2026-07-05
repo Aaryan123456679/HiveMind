@@ -1,0 +1,38 @@
+{
+  "run_id": "2026-07-05-007-implementation-fix",
+  "subtask": "2a.2.3",
+  "issue": 7,
+  "status": "completed",
+  "commit": "a1f220d",
+  "prior_verification_run": ".cdr/runs/2026-07-05/006-verification/verification.json",
+  "prior_verdict": "CHANGES_REQUESTED",
+  "what_changed": [
+    {
+      "file": "engine/mvcc/gc_test.go",
+      "symbol": "TestGCUnderConcurrency",
+      "what": "Doc comment above the function (previously lines ~515-529) rewritten to remove the claim that this test exercises 'the same class of race' as TestNewSnapshotClosesEpochAcquireVersionReadRace. Now explicitly states it is NOT a substitute for that deterministic regression test, cites the verifier's empirical finding (reverted read.go fix, TestGCUnderConcurrency -race -count=10 and -count=20 = 30 total runs, zero detections, vs. the deterministic hook-based test failing 1/1 on the same reverted code), and reframes this test as a broad, general-purpose stress test that COMPLEMENTS but does not replace the narrow deterministic test.",
+      "why": "Verifier's dimension test_coverage_and_teeth flagged this as an overclaim -- the real TOCTOU window (a few instructions between AcquireCurrentEpoch and cat.Get) is far too narrow for unforced goroutine scheduling under -race to reliably hit, so the doc comment's equivalence claim was empirically false."
+    },
+    {
+      "file": "engine/mvcc/gc_test.go",
+      "symbol": "TestGCUnderConcurrency",
+      "what": "Removed the fixed readerRounds=15 constant. Readers now loop unbounded, driven by the same shared `stop` channel that already bounds writers and the compactor, so they keep opening/reading/closing snapshots for the entire testDuration (1500ms) instead of exhausting their 15 rounds early. Added a readerActive[] wall-clock span (start of first round to end of last round observed before `stop`) per reader, plus a post-wg.Wait() assertion (t.Fatalf) that every reader's active span is at least 50% of testDuration.",
+      "why": "Verifier's instrumentation showed all 8 readers previously finished in ~107ms of the ~1500ms testDuration (~93% of the run had zero open snapshots), undermining the doc comment's claim of readers overlapping writers/compactor 'throughout'. Looping on the shared stop signal structurally guarantees overlap for the full window; the new in-test assertion prevents silent regression of this coverage gap in the future."
+    }
+  ],
+  "verification_commands_run": [
+    "gofmt -l engine/mvcc/gc_test.go -> clean",
+    "go build ./... -> pass",
+    "go vet ./... -> pass",
+    "go test ./mvcc/... -race -v -count=1 -> pass, all 12 test functions",
+    "go test ./mvcc/... -race -run TestGCUnderConcurrency -count=10 -v -> 10/10 pass, each run ~1.62-1.64s",
+    "go test ./mvcc/... -race -run TestGCUnderConcurrency -count=20 -v -> 20/20 pass, each run ~1.59-1.63s",
+    "go test ./... -race -count=1 -> pass across engine, btree, catalog, mvcc, wal; zero regressions"
+  ],
+  "self_consistency_artifact": ".cdr/runs/2026-07-05/007-implementation-fix/self-consistency.json",
+  "not_verified_by_self": "Per invariant I4, this run did not verify its own work. Independent verification via /cdr:verify is required next.",
+  "index_updates": {
+    "task_jsonl": "task-2a.2.3 entry updated: runs now includes 2026-07-05-006-verification and 2026-07-05-007-implementation-fix, commit updated to a1f220d, notes describe the fix cycle, state remains 'implemented' (needs re-verification), verification field reset to null. NOTE: .cdr/index/task.jsonl and .cdr/index/regression.jsonl currently carry uncommitted working-tree changes (consistent with the pre-existing uncommitted state observed at the start of this run from prior 005/006 runs) and were not committed as part of this run's single commit (a1f220d), which contains only engine/mvcc/gc_test.go."
+  },
+  "next_step": "Run /cdr:verify for subtask 2a.2.3 against commit a1f220d."
+}

@@ -1,0 +1,63 @@
+{
+  "subtask": "2a.2.3",
+  "issue": 7,
+  "commit": "a1f220d89220515b17b4c4e69126e489d750a581",
+  "reverifies_run": ".cdr/runs/2026-07-05/006-verification/verification.json",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Both findings from run 006 are genuinely fixed. Doc comment on TestGCUnderConcurrency no longer claims equivalence to 2a.2.2's deterministic race test; it now explicitly states this is a broad, general-purpose concurrency stress test that complements (does not substitute for) the narrow deterministic regression test, citing the empirical 30-run revert-and-rerun finding from run 006. Readers now loop unbounded on the shared `stop` channel (same one used by writers/compactor) instead of a fixed readerRounds=15 cap, so they open/hold/close snapshots for the full testDuration. A new in-test assertion requires each reader's active span to be >=50% of testDuration. Independent instrumentation (temporary debug print, reverted after use) measured actual per-reader active spans at ~1.502-1.503s out of a 1.5s testDuration (~100% overlap), versus the previously-measured ~107ms/1500ms (~7%) on the pre-fix code -- confirming the coverage gap is closed, not just nominally addressed.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Both required fixes present in current engine/mvcc/gc_test.go: (1) doc comment (lines 515-541) rewritten to disclaim equivalence and cite empirical finding; (2) readers loop on `stop` channel (line 660) rather than a bounded round counter, confirmed by grep and full read of the function body."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Test-only change (engine/mvcc/gc_test.go); no production code touched (git diff a1f220d confirms). Consistent with docs/LLD/mvcc.md's documented epoch-refcount GC/snapshot-visibility scheme; test still exercises the invariant 'old versions reclaimed only once no in-flight reader holds a referencing snapshot' via read.go/gc.go's public API surface, no deviation from documented design."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go build ./... and go vet ./... clean (engine module). gofmt -l . produced no output. Full engine/mvcc suite: go test ./mvcc/... -race -v -count=1 -- all 12 test functions pass. Full engine module: go test ./... -race -count=1 -- all packages pass (engine, btree, catalog, mvcc, wal; graph/loadtest/rpc/split have no test files), zero regressions."
+    },
+    "test_coverage_and_teeth": {
+      "status": "pass",
+      "evidence": "TestGCUnderConcurrency: -race -count=10 (10/10 pass, ~1.60-1.63s each, consistent with full testDuration) and -race -count=20 (20/20 pass, single green run) on current fixed code -- no flakiness observed, resolving run 006's finding of readers finishing at ~107ms/1500ms. Independent instrumentation via a temporary debug print (reverted immediately after, confirmed via git diff showing zero residual change) measured readerActive spans of 1.502-1.503s out of 1.5s testDuration across all 8 readers on a representative run, i.e. readers now overlap writers/compactor for essentially the entire test window, not just an early fraction. The new >=50% assertion is real and meaningfully wired: readerStart is captured at goroutine entry, lastRoundEnd is updated after each completed round, and readerActive[readerID] is only set on the stop-channel branch after wg.Wait() (line 716) has already returned in the test's own goroutine, so there is no read/write race on the slice. The 50% threshold sits with ample margin below the ~100% actually observed and well above the ~7% failure mode it targets, so it is neither trivially satisfiable nor tuned to the point of being fragile."
+    },
+    "edge_cases": {
+      "status": "comment",
+      "evidence": "If stop fires in the narrow window before a reader's very first select check (practically never given testDuration=1500ms vs sub-millisecond goroutine startup), readerActive would read 0 and correctly fail the assertion rather than silently passing -- this is fail-safe, not a bug. No other edge case gaps identified versus run 006's findings."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "Test-only, no new attack surface, unchanged from run 006's assessment."
+    },
+    "performance": {
+      "status": "comment",
+      "evidence": "TestGCUnderConcurrency now consistently takes ~1.6-1.65s (vs testDuration=1.5s) under -race across all repeated runs; this is a deliberate, bounded cost of the fix (widening reader coverage) and acceptable for a stress test, not a regression concern for production code."
+    },
+    "maintainability": {
+      "status": "comment",
+      "evidence": "Doc comment is now longer and more nuanced (citing an empirical run count), which is appropriate given it documents a real design decision, but future maintainers changing testDuration or reader-loop mechanics should be aware the >=50% assertion is directly load-bearing for catching a re-introduced coverage gap and should not be casually loosened or removed."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Both original findings independently re-verified via direct code reading, fresh test runs (count=1/10/20, full module -race), and independent instrumentation of actual reader active-time (not just trusting the in-test assertion) that closely matches the fix's claims (~100% overlap vs. the prior ~7%)."
+    }
+  },
+  "further_disproof_attempts": {
+    "new_flakiness_from_widened_overlap": "No new flakiness observed in 31 total TestGCUnderConcurrency runs (1 + 10 + 20) under -race. Reasoned about slow/contended-CI risk to the 50% assertion: readerStart is captured only once the goroutine begins executing (excludes initial scheduling latency), each round is small (~3-4ms of sleeps plus a few store operations), and the assertion only requires the reader to keep making incremental progress across the ~1.5s window, not high throughput -- for it to fail, a reader would need to be starved for over half the test duration, which is a pathological scheduling scenario not expected under Go's fair scheduler even under load. Margin (50% threshold vs. ~100% observed vs. ~7% failure mode) is generous in both directions.",
+    "doc_comment_accuracy": "Confirmed accurate and non-misleading: it explicitly disclaims equivalence to the deterministic test, describes the actual mechanism (unforced scheduling vs. deterministic hook-based pausing), and cites the specific empirical evidence (30 runs, zero detections on reverted code) rather than making an unverifiable claim.",
+    "other": "No further issues found in test coverage, maintainability, or architecture conformance beyond the comments already listed."
+  },
+  "task_2a2_status_note": "This was the last of task-2a.2's subtasks (2a.2.1, 2a.2.2, 2a.2.3). Given this verifies PASS_WITH_COMMENTS (no CHANGES_REQUESTED/FAIL findings), and assuming 2a.2.1 and 2a.2.2 have each already reached a passing verdict in their own runs, task-2a.2 as a whole appears fully verified and GitHub issue #7 is closable. This is a note only -- no closing action taken by this agent.",
+  "build_and_test_results": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "gofmt_l": "clean",
+    "mvcc_full_suite_race_v_count1": "pass (12/12 test functions)",
+    "TestGCUnderConcurrency_race_count10": "10/10 pass (~1.60-1.63s each)",
+    "TestGCUnderConcurrency_race_count20": "20/20 pass",
+    "full_engine_module_race_count1": "pass (engine, btree, catalog, mvcc, wal all green; graph/loadtest/rpc/split have no test files)",
+    "instrumented_reader_active_span_sample": "[1.502982583s 1.502846s 1.503138458s 1.502897542s 1.502683708s 1.502883916s 1.501541083s 1.503116417s] out of testDuration=1.5s"
+  },
+  "recommendation": "Accept as-is. No changes requested. Optional future note: keep the >=50% assertion intact if testDuration or reader-loop mechanics are ever refactored, since it is the load-bearing regression guard for the coverage gap this fix closed."
+}

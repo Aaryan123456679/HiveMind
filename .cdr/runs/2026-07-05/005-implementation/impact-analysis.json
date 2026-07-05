@@ -1,0 +1,21 @@
+{
+  "subtask": "task-2a.2.3",
+  "files_changed": [
+    "engine/mvcc/gc_test.go"
+  ],
+  "files_read_only": [
+    "engine/mvcc/gc.go",
+    "engine/mvcc/read.go",
+    "engine/mvcc/write.go",
+    "engine/mvcc/mvcc_test.go",
+    "engine/mvcc/write_test.go"
+  ],
+  "new_public_api": [],
+  "risk": "low",
+  "rationale": "Test-only addition (new test function + helpers in gc_test.go); no production code (gc.go/read.go/write.go) is modified. Risk is limited to test flakiness under -race, mitigated by reusing already-proven-correct primitives (EpochManager, RunCompaction, NewSnapshot/Close, CommitVersion) from 2a.2.1/2a.2.2 rather than adding new production logic.",
+  "backward_compatibility": "N/A (test-only change)",
+  "dependencies": [
+    "task-2a.2.1 (EpochManager) - verified",
+    "task-2a.2.2 (RunCompaction, NewSnapshot TOCTOU fix) - verified"
+  ]
+}
