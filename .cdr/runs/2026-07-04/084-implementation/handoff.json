@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-04-084-implementation",
+  "subtask": "2a.2.2",
+  "status": "completed",
+  "commit": "a5231d3",
+  "commit_subject": "feat(mvcc): background compactor reclaiming eligible old versions (2a.2.2)",
+  "note_to_verifier": "This run was RESUMED after a prior implementation agent was cut off mid-task by an API error before committing. The prior agent had already produced requirement.md, architecture-discovery.md, impact-analysis.json, plan.md, validation-matrix.json (all present in this run dir, unchanged from the prior agent's work) and left gc.go/write.go/read.go modified but gc_test.go missing TestCompactor. This resuming agent added TestCompactor, ran full verification-adjacent self-consistency checks, and committed. Do not assume the design docs in this run dir were written by this same agent turn.",
+  "files_touched": {
+    "engine/mvcc/gc.go": "new RunCompaction(cat, vw, em, fileID) ([]uint64, error) and VersionWriter.listVersionFiles helper; see doc comments in-file for full reclaim-decision reasoning",
+    "engine/mvcc/write.go": "VersionWriter gained versionEpochs sync.Map + recordVersionEpoch/nextRecordedVersionEpoch methods; CommitVersion now calls em.AdvanceEpoch() and recordVersionEpoch immediately after a successful CAS, before returning",
+    "engine/mvcc/read.go": "Snapshot gained em/epoch fields; NewSnapshot(cat, vw, em, fileID) now calls em.AcquireCurrentEpoch() after reading rec.CurrentVersion; new Snapshot.Close() calls em.Release(epoch); SnapshotRead defers Close()",
+    "engine/mvcc/gc_test.go": "added TestCompactor (two subtests: 'no open snapshots reclaims everything reclaimable', 'open snapshot pins its version until closed') plus versionExists/containsVersion test helpers -- this is the main new work of this resumed run",
+    "engine/mvcc/read_test.go": "TestSnapshotRead/TestSnapshotReadNoVersionCommitted updated to new NewSnapshot(cat, vw, em, fileID) signature and Close() their snapshots (pre-existing, from prior agent turn, verified still passing)",
+    "engine/mvcc/write_test.go": "call sites updated to new CommitVersion signature with em param (pre-existing, from prior agent turn, verified still passing)",
+    "engine/mvcc/mvcc_test.go": "TestConcurrentReadersWriters reader loop closes each iteration's Snapshot explicitly (not deferred, to avoid piling up thousands of deferred closes) (pre-existing, from prior agent turn, verified still passing)"
+  },
+  "design_pointers": {
+    "epoch_version_mapping": "gc.go RunCompaction doc comment + write.go VersionWriter.recordVersionEpoch/nextRecordedVersionEpoch doc comments: epoch numbering is GLOBAL (shared across fileIDs), not per-fileID. For fileID F, versionEpochs[F][v] records the epoch AdvanceEpoch returned for the commit that made v's successor current -- i.e. v's 'superseded-at epoch'. RunCompaction looks up the smallest recorded version > v via nextRecordedVersionEpoch to bridge gaps left by orphaned losing-CAS-retry version files (which never get their own recorded epoch).",
+    "reclaim_decision": "gc.go RunCompaction: for non-current v with known supersededAtEpoch E, delete iff !anyReferenced || minRef >= E. Current version is always skipped unconditionally, verified explicitly via two separate TestCompactor assertions (before and after closing the pinning snapshot).",
+    "known_limitation": "versionEpochs map is in-memory only, scoped to one VersionWriter process lifetime; does not survive restart. Documented in gc.go/write.go doc comments, out of scope for 2a.2.2 per plan.md, flagged for a future subtask if crash-safe reclamation across restarts is needed.",
+    "concurrency_deferred": "Full concurrent stress-testing of RunCompaction running alongside concurrent CommitVersion/NewSnapshot calls is explicitly out of scope for 2a.2.2, deferred to 2a.2.3 per plan.md and gc.go's doc comments."
+  },
+  "verification_commands": {
+    "package": "cd engine && go test ./mvcc/... -race -v -count=1",
+    "flakiness": "cd engine && go test ./mvcc/... -run TestCompactor -race -count=3",
+    "full_module": "cd engine && go test ./... -race -count=1",
+    "static": "cd engine && gofmt -l . && go vet ./..."
+  },
+  "self_consistency_ref": ".cdr/runs/2026-07-04/084-implementation/self-consistency.json",
+  "next_step": "/cdr:verify should independently verify this work (this agent did not verify its own work per invariant I4)."
+}
