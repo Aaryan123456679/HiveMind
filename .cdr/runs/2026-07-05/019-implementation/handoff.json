@@ -3,7 +3,7 @@
   "run_id": "2026-07-05-019-implementation",
   "subtask": "task-2a.4.2",
   "status": "completed",
-  "commit": "<filled in after commit, see git log>",
+  "commit": "eff41a0",
   "crabbing_discipline": {
     "summary": "Literal window-of-2 latch crabbing (root-to-leaf, at most parent+child held at once) plus Lehman & Yao Blink-tree move-right recovery to make that budget safe.",
     "descent": "engine/btree/insert.go: Tree.crabInsert (lock root; loop: read node, peek-and-move-right if a right sibling's true lower bound is <= target key, else compute child index, lock child, unlock parent, descend)",
