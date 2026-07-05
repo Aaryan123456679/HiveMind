@@ -1,0 +1,54 @@
+{
+  "subtask": "2a.4.1",
+  "issue": 9,
+  "commits_verified": ["5cc69e3", "44b6c0e"],
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "Every node ID has a lazily-created nodeLatch (sync.Mutex + atomic.Uint64 version). WriteNode (engine/btree/lookup.go:105-121) is the sole node-content mutation path and bumps version by exactly 1 on every successful write. TestNodeLatchFields verifies single/sequential/isolated/concurrent increments."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "Matches docs/LLD/btree.md Concurrency section verbatim (writer-only latch-crabbing mutex; lock-free optimistic reads via version counter). Registry-keyed-by-nodeID design is a reasonable consequence of the pre-existing ephemeral-value-struct node model (confirmed by reading node.go/lookup.go: ReadNode/WriteNode decode/encode fresh structs, no cached node object)."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "go build ./... and go vet ./... clean (engine module). gofmt -l clean. Full `go test ./... -race -count=1` in engine module: engine, engine/btree, engine/catalog, engine/mvcc, engine/wal all pass, zero regressions. -run TestNodeLatchFields -count=10 -race stable (no flakes)."
+    },
+    "lazy_population_race_point1": {
+      "status": "PASS - NOT A BUG",
+      "evidence": "latchFor() (latch.go) takes s.latchesMu (plain sync.Mutex) BEFORE the map nil-check, map-init, lookup, and insert -- the entire check-then-set sequence is inside the critical section, so two concurrent first-touch Lock(nodeID) calls for the same never-seen nodeID cannot race; the second caller always observes the first's inserted *nodeLatch. Airtight."
+    },
+    "choke_point_claim_point3": {
+      "status": "PASS - VERIFIED",
+      "evidence": "grep across engine/btree/*.go (excluding tests) shows the only os.File.WriteAt call touching node-content bytes is inside NodeStore.WriteNode; insert.go's writeLeaf/writeInternal helpers (lines ~411,420) and delete.go funnel exclusively through store.WriteNode. persist.go's SaveRoot/LoadRoot write to a separate '.root' sidecar file (root node ID only, 8 bytes) and insert.go's NodeAllocator writes to a separate '.nodealloc' sidecar file (allocator high-water-mark) -- neither touches node content or bypasses the version bump. No bypass found."
+    },
+    "unbounded_growth_point2": {
+      "status": "COMMENT",
+      "evidence": "latches map never evicts entries (no node-deletion hook). No eviction is disclosed in latch.go's doc comments or LLD as a known limitation for this subtask, though it mirrors an existing undisclosed precedent (engine/mvcc/write.go's commitLocks sync.Map also never evicts). Acceptable for 2a.4.1's scope (matches acceptance criteria as written) but should be called out explicitly as a follow-up risk before 2a.4.2/3 wire real insert/delete traffic through Lock/Unlock, since B+Tree nodes can churn significantly under sustained workloads and the registry is process-lifetime-unbounded today."
+    },
+    "deadlock_risk_point5": {
+      "status": "PASS",
+      "evidence": "insert.go/delete.go call sites do not call Lock/Unlock at all today (confirmed by grep - zero Lock/Unlock call sites outside node_test.go), so there is no current production path that violates the Lock-before/Unlock-after convention; the convention is unenforced but also unused today. Acceptance criteria is satisfied for current (test-only) callers; full enforcement is correctly deferred to 2a.4.2/2a.4.3."
+    },
+    "test_coverage_point4": {
+      "status": "PASS",
+      "evidence": "TestNodeLatchFields (node_test.go) has 5 subtests: zero-initial-version, single mutation (+1 exactly), 5 sequential mutations (monotonic, final==5), cross-node isolation, and a genuine 50-goroutine x 20-mutations concurrent subtest where ALL goroutines contend on the SAME nodeID (not disjoint IDs) via real Lock()/WriteNode()/Unlock(), asserting final version == 1000 exactly under -race. This proves no lost updates and no double-increments under real contention."
+    },
+    "maintainability": {
+      "status": "COMMENT",
+      "evidence": "node.go's pre-existing on-disk offVersion/LeafNode.Version/InternalNode.Version field doc comments still say 'actual CAS/atomic version-bump logic... is implemented by a later, concurrency-focused subtask' -- that promise is now effectively obsolete/misleading since this subtask (the 'later, concurrency-focused subtask' the comment anticipated) deliberately chose NOT to wire that field and instead built an entirely separate in-memory version counter (disclosed in plan.md/handoff.json, but node.go's own comments were not updated to reflect this final decision). A future maintainer reading node.go in isolation would incorrectly believe a not-yet-written subtask will still bump that field. Recommend updating node.go's doc comments in a follow-up to point at latch.go instead of implying pending work. NodeStore.Lock(nodeID)/Unlock(nodeID)/Version(nodeID) API is a natural fit for 2a.4.2's root-to-leaf crabbing (call Lock per node while descending, Unlock parent once child is locked)."
+    },
+    "security": {"status": "PASS", "evidence": "No new external input surface; nodeID is an internal uint64 already validated by ReadNode/WriteNode's reservedNodeID guard."},
+    "performance": {"status": "PASS", "evidence": "Version() is a single atomic load, non-blocking as documented. latchFor's map access under a single global mutex could become a contention point once 2a.4.2 wires real concurrent crabbing across many distinct nodeIDs, but that's explicitly out of scope for this subtask and noted as a design tradeoff, not a defect."}
+  },
+  "high_risk_findings_disproved": [
+    "Lazy-population race (point 1): checked exact source, confirmed the outer sync.Mutex fully guards the check-then-insert sequence; NOT a bug.",
+    "Sole choke-point claim (point 3): confirmed via full-package grep that WriteNode is the only path writing node-content bytes; SaveRoot/NodeAllocator write to disjoint sidecar files."
+  ],
+  "non_blocking_findings": [
+    "Registry has no eviction and this is undisclosed as a known limitation in-repo (precedented elsewhere in the codebase, e.g. engine/mvcc's commitLocks).",
+    "node.go's on-disk Version field doc comments are now stale/misleading given the final design decision to keep it permanently unused."
+  ]
+}
