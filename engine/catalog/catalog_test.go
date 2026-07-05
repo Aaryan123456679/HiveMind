@@ -276,6 +276,153 @@ func TestCatalogGetDeleteNotFound(t *testing.T) {
 	}
 }
 
+// --- Scenario 5: high-goroutine-count CRUD stress test across many fileIDs, verified
+// against a serial-execution oracle (2a.3.1) ---
+//
+// Put/Get/Delete on DIFFERENT fileIDs are commutative from the Catalog's observable
+// API (no cross-fileID state), so the only ordering that matters for correctness is the
+// ordering of operations WITHIN a single fileID's sequence. This test assigns each
+// fileID one of a handful of FIXED, deterministic Put/Delete patterns (see
+// stressPatterns below) and runs each fileID's own pattern in its own goroutine so that
+// within-fileID ordering is guaranteed even though different fileIDs' goroutines race
+// against each other, unordered, concurrently. The expected final state per fileID is
+// computed directly from the fixed pattern definition (equivalent to running that same
+// fixed sequence serially in a single goroutine) — this is the "serial-execution
+// oracle" the test spec calls for.
+//
+// numFileIDsStress is deliberately >> numStripes (256) so that many fileIDs collide
+// into the SAME stripe (average numFileIDsStress/numStripes fileIDs per stripe),
+// actually stressing cross-fileID contention on shared stripes rather than merely
+// spreading every fileID into its own distinct stripe.
+
+const numFileIDsStress = 2000
+
+// recordForVersion builds a CatalogRecord for fileID whose fields vary by version, so
+// that final-state assertions in TestStripedConcurrencyStress check full record
+// equality (not just presence/absence) — a stray version written by the wrong
+// goroutine, or a torn read mixing fields from two versions, would be caught.
+func recordForVersion(fileID, version uint64) CatalogRecord {
+	return CatalogRecord{
+		FileID:         fileID,
+		PathHash:       fileID * 31,
+		CurrentVersion: version,
+		SizeBytes:      1024 * version,
+		Status:         StatusActive,
+		ParentTopicID:  0,
+		LastModified:   1234567890 + int64(version),
+	}
+}
+
+// stressOutcome describes the expected final state for a fileID after its pattern's
+// fixed op sequence has run to completion, plus the ops themselves (executed, in
+// order, by the single goroutine dedicated to that fileID).
+type stressOutcome struct {
+	ops         func(c *Catalog, fileID uint64) error // runs the fixed sequence for fileID
+	wantPresent bool
+	wantVersion uint64 // meaningful only if wantPresent; the version recordForVersion(fileID, wantVersion) should match
+}
+
+// stressPatterns is the fixed table of per-fileID CRUD sequences, selected by
+// fileID % len(stressPatterns). Each pattern's expected final state is derived
+// statically from its own op sequence (the serial-execution oracle).
+var stressPatterns = []stressOutcome{
+	// pattern 0: Put(v1) -> final: present, v1
+	{
+		ops: func(c *Catalog, fileID uint64) error {
+			return c.Put(recordForVersion(fileID, 1))
+		},
+		wantPresent: true,
+		wantVersion: 1,
+	},
+	// pattern 1: Put(v1), Delete -> final: absent
+	{
+		ops: func(c *Catalog, fileID uint64) error {
+			if err := c.Put(recordForVersion(fileID, 1)); err != nil {
+				return err
+			}
+			return c.Delete(fileID)
+		},
+		wantPresent: false,
+	},
+	// pattern 2: Put(v1), Put(v2) -> final: present, v2
+	{
+		ops: func(c *Catalog, fileID uint64) error {
+			if err := c.Put(recordForVersion(fileID, 1)); err != nil {
+				return err
+			}
+			return c.Put(recordForVersion(fileID, 2))
+		},
+		wantPresent: true,
+		wantVersion: 2,
+	},
+	// pattern 3: Put(v1), Delete, Put(v2) -> final: present, v2
+	{
+		ops: func(c *Catalog, fileID uint64) error {
+			if err := c.Put(recordForVersion(fileID, 1)); err != nil {
+				return err
+			}
+			if err := c.Delete(fileID); err != nil {
+				return err
+			}
+			return c.Put(recordForVersion(fileID, 2))
+		},
+		wantPresent: true,
+		wantVersion: 2,
+	},
+	// pattern 4: Put(v1), Put(v2), Delete -> final: absent
+	{
+		ops: func(c *Catalog, fileID uint64) error {
+			if err := c.Put(recordForVersion(fileID, 1)); err != nil {
+				return err
+			}
+			if err := c.Put(recordForVersion(fileID, 2)); err != nil {
+				return err
+			}
+			return c.Delete(fileID)
+		},
+		wantPresent: false,
+	},
+}
+
+func TestStripedConcurrencyStress(t *testing.T) {
+	c := newTestCatalog(t)
+
+	var wg sync.WaitGroup
+	for fid := uint64(1); fid <= numFileIDsStress; fid++ {
+		fid := fid
+		pattern := stressPatterns[fid%uint64(len(stressPatterns))]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := pattern.ops(c, fid); err != nil {
+				t.Errorf("fileID=%d: op sequence failed: %v", fid, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// All goroutines have finished (wg.Wait returned); verify final state for every
+	// fileID, single-threaded, against the serial-execution oracle derived from each
+	// fileID's fixed pattern.
+	for fid := uint64(1); fid <= numFileIDsStress; fid++ {
+		pattern := stressPatterns[fid%uint64(len(stressPatterns))]
+		got, err := c.Get(fid)
+		if pattern.wantPresent {
+			if err != nil {
+				t.Fatalf("fileID=%d: final Get: %v, want a present record (pattern %d)", fid, err, fid%uint64(len(stressPatterns)))
+			}
+			want := recordForVersion(fid, pattern.wantVersion)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("fileID=%d: final Get = %+v, want %+v", fid, got, want)
+			}
+		} else {
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("fileID=%d: final Get: err = %v, want ErrNotFound (pattern %d)", fid, err, fid%uint64(len(stressPatterns)))
+			}
+		}
+	}
+}
+
 // Sanity check that stripeFor is deterministic and spans the documented stripe count,
 // used as a building block by the contention test above.
 func TestCatalogStripeForSanity(t *testing.T) {
