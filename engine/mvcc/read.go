@@ -50,7 +50,7 @@ type Snapshot struct {
 // VersionWriter.CommitVersion's own precondition on the write side.
 //
 // Epoch wiring (2a.2.2): NewSnapshot acquires em's current epoch, via
-// em.AcquireCurrentEpoch(), AFTER reading rec.CurrentVersion — the "increment on
+// em.AcquireCurrentEpoch(), BEFORE reading rec.CurrentVersion — the "increment on
 // start" half of docs/LLD/mvcc.md's "Garbage collection" contract. This Snapshot MUST
 // eventually have Close called on it (typically via defer) to release that reference;
 // otherwise its acquired epoch's refcount never returns to zero and the background
@@ -58,20 +58,68 @@ type Snapshot struct {
 // it. Callers that don't need to hold onto the Snapshot itself should use
 // SnapshotRead, which closes internally.
 //
-// Race note: reading rec.CurrentVersion and acquiring the epoch are two separate
-// steps, not one atomic operation. A concurrent commit could advance the global epoch
-// in between. Because epochs only ever increase (AdvanceEpoch never rewinds), this can
-// only make the epoch this Snapshot ends up acquiring NEWER than "the epoch that was
-// current when this Snapshot's version was actually read" — meaning this Snapshot
-// always advertises a reference at least as protective as necessary for the version it
-// pinned, never less. The consequence is possible delayed reclamation of a
-// version, never premature (unsafe) reclamation of one still in use.
+// Race note (fix for issue #7 / 2a.2.2 verification CHANGES_REQUESTED): acquiring the
+// epoch and reading rec.CurrentVersion are two separate steps, not one atomic
+// operation, so ORDER matters. Acquiring the epoch FIRST, then reading CurrentVersion
+// second, is not just "safer" than the reverse order — it is required for
+// correctness, and is provably race-free:
+//
+// Let E0 be the epoch this call acquires (read under em.mu at time T_acquire) and let
+// V be the version observed by the following cat.Get (at time T_read > T_acquire).
+// Catalog.CompareAndSwapCurrentVersion is a linearizable, per-fileID-locked,
+// monotonically-forward CAS (see catalog.go), so cat.Get returning CurrentVersion==V
+// at T_read means no CAS moving CurrentVersion away from V has applied yet at
+// T_read — i.e. any CommitVersion that eventually supersedes V must have its CAS
+// apply at some T_cas > T_read. write.go's commitVersionWithHook calls
+// em.AdvanceEpoch() only AFTER that CAS has applied (see its "committed" branch), so
+// the resulting epoch E' — the one recordVersionEpoch(fileID, V's-successor, E')
+// stores as V's supersededAtEpoch — is produced by an AdvanceEpoch call at some
+// T_advance > T_cas > T_read > T_acquire. AcquireCurrentEpoch and AdvanceEpoch are
+// both critical sections guarded by the same em.mu, and neither T_read nor T_cas
+// touches em.mu, so the real-time ordering T_acquire < T_advance forces
+// AcquireCurrentEpoch's critical section (which reads em.current == E0) to fully
+// complete before AdvanceEpoch's critical section (which computes E' ==
+// em.current-at-that-point + 1) begins. Hence em.current >= E0 when AdvanceEpoch
+// runs, so E' >= E0+1, i.e. E' is always STRICTLY GREATER than E0 — never equal,
+// never less. Consequently gc.go's RunCompaction skip condition
+// (anyReferenced && minRef < supersededAtEpoch(V)) is guaranteed true for as long as
+// this Snapshot is open and pinned to V (since minRef <= E0 < E' ==
+// supersededAtEpoch(V)): RunCompaction can never delete V's file while this Snapshot
+// still references it. This holds even if the subsequent cat.Get instead observes a
+// newer version than V (because some commit's CAS raced ahead of it) — in that case
+// the Snapshot simply pins to that newer, still-current version, which is trivially
+// safe to reference. No retry/seqlock loop is needed; the reordering alone closes the
+// race. (The previous version of this comment, which had NewSnapshot acquire the
+// epoch AFTER reading CurrentVersion and claimed the only consequence was "delayed,
+// never premature" reclamation, was incorrect for that ordering: a concurrent commit
+// completing fully between the two steps could make the acquired epoch >=
+// supersededAtEpoch(V) even though the Snapshot was still pinned to V, causing
+// RunCompaction to delete V's file while still live-referenced. See
+// .cdr/runs/2026-07-05/001-verification/verification.json and
+// .cdr/runs/2026-07-05/002-implementation-fix/plan.md for the full writeup.)
 func NewSnapshot(cat *catalog.Catalog, vw *VersionWriter, em *EpochManager, fileID uint64) (*Snapshot, error) {
+	return newSnapshotWithHook(cat, vw, em, fileID, nil)
+}
+
+// newSnapshotWithHook is NewSnapshot's real implementation, with an internal
+// test-only seam: afterAcquireBeforeVersionRead, if non-nil, is invoked after the
+// epoch has already been acquired (em.AcquireCurrentEpoch has returned) but before
+// cat.Get reads CurrentVersion. This lets gc_test.go pause NewSnapshot at exactly
+// that point, race a concurrent CommitVersion + RunCompaction to completion in that
+// gap, then resume and assert the pinned version's file still exists and is still
+// readable — proving the race described in NewSnapshot's doc comment is closed by the
+// acquire-then-read ordering. Same before/after channel-handoff technique as
+// readWithHook above and commitVersionWithHook's afterWALBeforeApply in write.go.
+func newSnapshotWithHook(cat *catalog.Catalog, vw *VersionWriter, em *EpochManager, fileID uint64, afterAcquireBeforeVersionRead func()) (*Snapshot, error) {
+	epoch := em.AcquireCurrentEpoch()
+	if afterAcquireBeforeVersionRead != nil {
+		afterAcquireBeforeVersionRead()
+	}
 	rec, err := cat.Get(fileID)
 	if err != nil {
+		em.Release(epoch)
 		return nil, fmt.Errorf("mvcc: new snapshot: reading catalog record for fileID %d: %w", fileID, err)
 	}
-	epoch := em.AcquireCurrentEpoch()
 	return &Snapshot{vw: vw, fileID: fileID, version: rec.CurrentVersion, em: em, epoch: epoch}, nil
 }
 

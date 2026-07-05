@@ -363,3 +363,150 @@ func TestCompactor(t *testing.T) {
 		}
 	})
 }
+
+// TestNewSnapshotClosesEpochAcquireVersionReadRace is a regression test for issue #7
+// (subtask 2a.2.2's independent verification, CHANGES_REQUESTED): it exercises the
+// exact TOCTOU interleaving that used to let RunCompaction prematurely delete a
+// version file still referenced by a live, un-closed Snapshot.
+//
+// The old (buggy) NewSnapshot read CurrentVersion FIRST and acquired the epoch
+// SECOND. This test pauses NewSnapshot in the gap between its (now reordered) two
+// steps -- right after the epoch has been acquired but before CurrentVersion is read
+// -- and, in that gap, runs a full concurrent CommitVersion (superseding the version
+// this Snapshot is about to pin to) followed by RunCompaction to completion. If the
+// race were still open, RunCompaction would delete the paused Snapshot's
+// soon-to-be-pinned version file before the Snapshot ever resumes and reads it. With
+// the fix (epoch acquired first), the proof in read.go's NewSnapshot doc comment
+// guarantees this can never happen: the resumed Snapshot's pinned version file must
+// still exist and be readable.
+func TestNewSnapshotClosesEpochAcquireVersionReadRace(t *testing.T) {
+	dir := t.TempDir()
+	vw, err := NewVersionWriter(dir)
+	if err != nil {
+		t.Fatalf("NewVersionWriter: %v", err)
+	}
+	cat := newTestCatalog(t)
+	w, _ := newTestWAL(t, dir)
+	em := NewEpochManager()
+
+	const fileID = uint64(99)
+	if err := cat.Put(catalog.CatalogRecord{
+		FileID:         fileID,
+		CurrentVersion: 0,
+		Status:         catalog.StatusActive,
+	}); err != nil {
+		t.Fatalf("seeding initial catalog record: %v", err)
+	}
+
+	v1Content := []byte("v1-content-pinned-by-paused-snapshot")
+	v1, err := vw.CommitVersion(cat, w, em, fileID, v1Content)
+	if err != nil {
+		t.Fatalf("CommitVersion (v1): %v", err)
+	}
+	if v1 != 1 {
+		t.Fatalf("CommitVersion (v1) = %d, want 1", v1)
+	}
+
+	// Channels orchestrating the interleaving: pause newSnapshotWithHook right after
+	// it has acquired the epoch but before it reads CurrentVersion, let a concurrent
+	// CommitVersion (v2) + RunCompaction run to completion in that window, then
+	// resume the paused NewSnapshot call.
+	pausedAfterAcquire := make(chan struct{})
+	resumeSnapshot := make(chan struct{})
+
+	snapResult := make(chan *Snapshot, 1)
+	snapErr := make(chan error, 1)
+
+	go func() {
+		snap, err := newSnapshotWithHook(cat, vw, em, fileID, func() {
+			close(pausedAfterAcquire)
+			<-resumeSnapshot
+		})
+		snapResult <- snap
+		snapErr <- err
+	}()
+
+	// Wait until the epoch has been acquired and NewSnapshot is paused right before
+	// reading CurrentVersion.
+	<-pausedAfterAcquire
+
+	v2Content := []byte("v2-content-committed-while-snapshot-paused")
+	v2, err := vw.CommitVersion(cat, w, em, fileID, v2Content)
+	if err != nil {
+		t.Fatalf("CommitVersion (v2, concurrent with paused NewSnapshot): %v", err)
+	}
+	if v2 != 2 {
+		t.Fatalf("CommitVersion (v2) = %d, want 2", v2)
+	}
+
+	// Run compaction while the paused NewSnapshot has already acquired its epoch (so
+	// it counts toward MinReferencedEpoch) but has NOT yet read CurrentVersion. If
+	// the race were open, this call would delete v1's file: v1 is no longer current
+	// (v2 is), and the paused snapshot's acquired epoch would (under the OLD, buggy
+	// ordering) understate the protection v1 needs. Under the fix, the acquired
+	// epoch is guaranteed to be < v1's supersededAtEpoch, so v1 must survive.
+	if _, err := RunCompaction(cat, vw, em, fileID); err != nil {
+		t.Fatalf("RunCompaction (while NewSnapshot paused mid-acquire): %v", err)
+	}
+
+	if !versionExists(t, vw, fileID, 1) {
+		t.Fatal("version 1 file deleted by RunCompaction while a snapshot was mid-acquire and about to pin to it -- TOCTOU race in NewSnapshot is NOT closed")
+	}
+
+	// Let the paused NewSnapshot resume and read CurrentVersion now that v2 is
+	// current and RunCompaction has already run once.
+	close(resumeSnapshot)
+
+	snap := <-snapResult
+	if err := <-snapErr; err != nil {
+		t.Fatalf("NewSnapshot (resumed after concurrent v2 commit + RunCompaction): %v", err)
+	}
+
+	// The resumed snapshot observed the race window fully play out before its
+	// cat.Get ran, so it must be pinned to the NEW current version (v2), not v1 --
+	// this is the "reads newer version" branch of the reordering's safety argument,
+	// not the primary "reads stale V, epoch still protects it" branch, but both must
+	// hold.
+	if snap.Version() != 2 {
+		t.Fatalf("Snapshot.Version() after resuming = %d, want 2 (CurrentVersion had already advanced by the time cat.Get ran)", snap.Version())
+	}
+
+	got, err := snap.Read()
+	if err != nil {
+		t.Fatalf("Snapshot.Read() after resuming from paused mid-acquire race window: %v", err)
+	}
+	if string(got) != string(v2Content) {
+		t.Fatalf("Snapshot.Read() = %q, want %q", got, v2Content)
+	}
+
+	// Sanity check on v1 specifically: it is genuinely still on disk and still
+	// byte-for-byte readable via a direct Snapshot pinned to it, proving RunCompaction
+	// did not silently corrupt or partially remove it.
+	v1Path := vw.VersionPath(fileID, 1)
+	v1Bytes, err := os.ReadFile(v1Path)
+	if err != nil {
+		t.Fatalf("reading version 1's file directly after the race window: %v", err)
+	}
+	if string(v1Bytes) != string(v1Content) {
+		t.Fatalf("version 1 file content = %q, want %q (unchanged)", v1Bytes, v1Content)
+	}
+
+	// Now close the resumed snapshot so no snapshot references v1's epoch, and
+	// confirm a fresh RunCompaction pass is free to reclaim it -- confirming the
+	// earlier survival was due to correct refcounting, not a compaction that simply
+	// never runs.
+	if err := snap.Close(); err != nil {
+		t.Fatalf("snap.Close(): %v", err)
+	}
+
+	deleted, err := RunCompaction(cat, vw, em, fileID)
+	if err != nil {
+		t.Fatalf("RunCompaction (after snapshot closed): %v", err)
+	}
+	if !containsVersion(deleted, 1) {
+		t.Fatalf("RunCompaction after closing the snapshot did not reclaim version 1, deleted=%v", deleted)
+	}
+	if versionExists(t, vw, fileID, 1) {
+		t.Fatal("version 1 file still exists on disk after closing the pinning snapshot and re-running RunCompaction")
+	}
+}
