@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-2a.2.2",
+  "issue": 7,
+  "commits": ["a5231d3283649023d5a654d05e4a314728845208", "7b25eeb02b5c71255022d078dada3283f3216a43"],
+  "verdict": "CHANGES_REQUESTED",
+  "central_question": {
+    "question": "Is NewSnapshot's two-step 'read CurrentVersion, then acquire current epoch' sequence actually safe, or can a concurrent commit interleaved between those two steps cause RunCompaction to prematurely reclaim the exact version the snapshot is pinned to?",
+    "judgment": "UNSAFE. Reproduced deterministically (see gc.go/read.go trace + zzrace_test.go repro run in this session, not committed): NewSnapshot does (1) cat.Get -> pins version V, then (2) em.AcquireCurrentEpoch(). If a concurrent CommitVersion completes fully between steps (1) and (2) -- writing V's successor, calling AdvanceEpoch(), and recordVersionEpoch(fileID, successor, E) -- then step (2) acquires an epoch >= E even though the Snapshot's pinned version is still V, superseded AT epoch E. RunCompaction's check for V is `MinReferencedEpoch() >= supersededAtEpoch(V)`; since this snapshot's own held epoch is >= E, it does not lower MinReferencedEpoch below E, so the algorithm concludes V is unreferenced and deletes it -- while the live Snapshot object still exists, has never been closed, and is pinned to V. A subsequent snap.Read() call fails with 'no such file or directory'. This directly violates the read.go Snapshot doc comment's own guarantee ('a snapshotted version N's file is guaranteed to exist ... for as long as this Snapshot lives') and the literal acceptance criteria ('deleted only once its epoch's refcount is zero and it is not the current version') -- the refcount protecting V's true holder is not actually zero, it is just mis-recorded as a newer epoch due to the non-atomic read-then-acquire race.",
+    "residual_risk": "The race window is narrow (must land between two sequential lines inside NewSnapshot with no synchronization) but is entirely plausible in production: any commit on the same fileID racing with a NewSnapshot call, or even a commit on a DIFFERENT fileID (since epoch is store-wide) that happens to land in that window for THIS fileID's own concurrent commit, can trigger it. It requires a live compactor running concurrently with live readers -- which is precisely the target operating scenario for 2a.2.3. This is a genuine correctness bug, not a hypothetical: reproduced with a same-process, non-adversarial sequential interleaving (no goroutines needed), so a true concurrent stress test would hit it with moderate probability. The fix is straightforward: NewSnapshot must acquire the epoch BEFORE (or atomically with) reading CurrentVersion, e.g. call em.AcquireCurrentEpoch() first, then cat.Get() -- so the acquired epoch is always <= the true epoch of whatever version is read, which is the direction the code's own race-note comment (read.go lines 61-68) already argues is safe, but the implementation does not actually follow that order."
+  },
+  "dimensions": {
+    "requirements": {
+      "status": "fail",
+      "evidence": "Literal acceptance criterion 'a version file is deleted only once its epoch's refcount is zero and it is not the current version' is violated by the read.go NewSnapshot / gc.go RunCompaction interaction described above: a version can be reclaimed while a live, un-closed Snapshot still pins it, because the snapshot's acquired epoch can be newer than its true pinned version's epoch due to a TOCTOU race between cat.Get and AcquireCurrentEpoch in NewSnapshot (read.go:69-76)."
+    },
+    "architecture_conformance": {
+      "status": "fail",
+      "evidence": "docs/LLD/mvcc.md's Garbage collection section states 'version eligible for GC once its epoch's refcount reaches zero and it is not the current version.' The implementation's refcount accounting is not faithful to which version a live snapshot is actually reading in this race window, so the refcount signal used to authorize deletion is not trustworthy in all cases -- violating the architectural contract's intent even though the mechanical refcount bookkeeping (EpochManager itself, verified in 2a.2.1) is correct in isolation."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Full engine module test suite (`go test ./... -race -count=1` from engine/) passes with zero regressions across btree, catalog, mvcc, wal. gofmt/go vet/go build all clean. The bug found is a new correctness gap introduced by this subtask's wiring (2a.2.2), not a regression of prior subtasks' behavior; EpochManager's own bookkeeping (2a.2.1) remains correct."
+    },
+    "edge_cases": {
+      "status": "changes_requested",
+      "evidence": "Numeric trace requested in task #1 (v1 superseded@epoch5, v2 superseded@epoch8, v3=current, live snapshot@epoch6): code correctly retains v2 (6<8) and correctly reclaims v1 (6>=5) for that specific well-formed scenario -- MinReferencedEpoch>=supersededAtEpoch is the right comparison IF the epoch recorded for a live snapshot accurately reflects the epoch as-of when its pinned version was read. The bug is that this precondition can be violated by the read-then-acquire race in NewSnapshot (see central_question). Additionally: the 'no recorded successor -> skip conservatively' path (item #2) was traced and found correct/safe -- every non-current version does get a recorded successor once ANY later version successfully commits (nextRecordedVersionEpoch scans for the smallest recorded version > candidate, not literally candidate+1, so orphaned lost-CAS version files are correctly bridged). Crash-recovery reasoning (item #3) was traced and confirmed sound: a fresh process's EpochManager restarting at epoch 1 with an empty versionEpochs map causes nextRecordedVersionEpoch to return ok=false for every pre-restart version until the first post-restart commit records a successor, which produces a safe (if overly coarse) collapsing of all older versions into the first post-restart epoch -- this is conservative, not unsafe, and does not compound with the read.go race bug in any new way beyond what's already described. The already-removed-file idempotent-race path (item #7, two concurrent RunCompaction calls) is only argued in a comment, never tested by any -race concurrent test -- explicitly deferred to 2a.2.3 per the doc comment, acceptable for this subtask's stated scope but worth tracking."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new external input surface; fileID/version are internal uint64s, os.Remove operates on paths built from vw.dir + fileID + version, no path traversal surface introduced. No secrets or auth logic touched."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "RunCompaction is O(#version files for fileID) with an O(#recorded versions for fileID) nextRecordedVersionEpoch scan per candidate -- acceptable for expected compaction-frequency invocation. No lock contention introduced on the hot read/write paths beyond the pre-existing EpochManager mutex (2a.2.1, already reviewed) and the pre-existing per-fileID commitLocks (2a.1.4)."
+    },
+    "maintainability": {
+      "status": "pass_with_comments",
+      "evidence": "Code and doc comments are thorough and the reasoning is mostly documented (e.g. race note in read.go), but the specific race-note conclusion ('possible delayed reclamation of a version, never premature (unsafe) reclamation') is factually incorrect for the read-then-acquire ordering actually implemented, which is worse than an undocumented bug: a future maintainer reading that comment would reasonably conclude this exact scenario is already handled safely. Comment should be corrected once the ordering bug is fixed, or the ordering should be fixed to match what the comment already (incorrectly) claims is the actual behavior."
+    },
+    "test_coverage": {
+      "status": "changes_requested",
+      "evidence": "TestCompactor (gc_test.go) is a real, sound test for both its stated scenarios (full reclamation with no open snapshots; current-version-never-reclaimed via a pinned-then-released snapshot) -- the 'current never reclaimed' assertion is meaningfully tested via a second RunCompaction pass after the pinning snapshot is closed, proving it's checked independent of refcount rather than true by incidental construction. However, there is NO test exercising the NewSnapshot cat.Get-then-AcquireCurrentEpoch race window at all (all existing tests create snapshots and run compactions fully sequentially, never interleaved with a concurrent commit landing exactly between those two lines), so the bug found in this review slipped through entirely. A regression test reproducing this race (deterministically, by manually constructing the interleaving as done in this review's throwaway zzrace_test.go, or via a synchronization hook analogous to afterWALBeforeApply/afterSnapshotBeforeRead) should be added once the fix lands."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "The bug was not just reasoned about but reproduced deterministically in this session (test file created, run, and removed -- no source modified, repo left clean) by manually simulating the exact two-step race NewSnapshot performs, confirming premature deletion of a version file that a live, un-closed Snapshot object was still pinned to, and confirming the subsequent Read() call fails."
+    },
+    "possible_improvements": [
+      "Reorder NewSnapshot to call em.AcquireCurrentEpoch() BEFORE cat.Get(), so the acquired epoch is always <= the true epoch of the version actually read -- matching the safety direction the existing (currently incorrect) race-note comment already argues for.",
+      "Add a synchronization test hook (mirroring afterWALBeforeApply / afterSnapshotBeforeRead's existing pattern in this same package) to deterministically interleave a NewSnapshot call with a concurrent CommitVersion landing between its two internal steps, and assert RunCompaction never reclaims the pinned version in that interleaving.",
+      "Correct the read.go race-note comment (lines 61-68) once the ordering is fixed, since its current conclusion is not true of the code as written.",
+      "Consider adding a genuinely concurrent (goroutine-based, -race) RunCompaction-vs-RunCompaction double-delete test per item #7, rather than leaving it as comment-only reasoning, even if full stress testing is formally 2a.2.3's scope -- a minimal two-call idempotency test would be cheap and directly validates the os.Remove-is-benign-no-op claim."
+    ]
+  },
+  "commands_run": [
+    "(cd engine && go build ./... && go vet ./...) -> OK, clean",
+    "gofmt -l engine/mvcc -> no output, clean",
+    "go test ./engine/mvcc/... -race -v -count=1 -> all PASS",
+    "go test ./engine/mvcc/... -run TestCompactor -race -count=10 -> OK, no flakes",
+    "go test ./... -race -count=1 (from engine/) -> all PASS across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal; zero regressions",
+    "Manual deterministic race reproduction: added engine/mvcc/zzrace_test.go (temporary, removed after run, not committed) simulating NewSnapshot's cat.Get-then-AcquireCurrentEpoch race by manual struct construction; confirmed premature reclamation of a live-pinned version and a subsequent Read() failure ('no such file or directory')"
+  ]
+}

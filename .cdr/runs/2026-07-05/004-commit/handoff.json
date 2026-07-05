@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-05-004-commit",
+  "subtask": "task-2a.2.2",
+  "produced": {
+    "commit_doc": ".cdr/commits/task-2a.2.2.md",
+    "index_updates": [".cdr/index/task.jsonl"]
+  },
+  "sources_consulted": {
+    "verification": ".cdr/runs/2026-07-05/003-verification/verification.json",
+    "first_verification": ".cdr/runs/2026-07-05/001-verification/",
+    "implementation_fix": ".cdr/runs/2026-07-05/002-implementation-fix/",
+    "original_implementation": ".cdr/runs/2026-07-04/084-implementation/"
+  },
+  "notes": "task-2a.2.2 moved to state=verified, commit=acc7601 (final fix commit). Parent task-2a.2 left as planned (2a.2.3 still pending)."
+}

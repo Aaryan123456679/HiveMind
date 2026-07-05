@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "from_run": "003-verification",
+  "subtask": "task-2a.2.2",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-05/003-verification/verification.json",
+    "fixed_source": "engine/mvcc/read.go:100-124 (NewSnapshot / newSnapshotWithHook)",
+    "commit_synchronization_evidence": [
+      "engine/mvcc/gc.go:41-87 (EpochManager: single em.mu guarding current+refcounts)",
+      "engine/catalog/catalog.go:219-226,300-343 (Catalog.Get / CompareAndSwapCurrentVersion share per-fileID stripe lock)",
+      "engine/mvcc/write.go:261-289 (commitVersionWithHook calls AdvanceEpoch only after CAS applies)"
+    ],
+    "new_regression_test": "engine/mvcc/gc_test.go:382-512 (TestNewSnapshotClosesEpochAcquireVersionReadRace)",
+    "prior_verification": ".cdr/runs/2026-07-05/001-verification/verification.json"
+  },
+  "no_further_action_required": true
+}

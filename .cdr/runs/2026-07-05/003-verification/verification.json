@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-2a.2.2",
+  "issue": 7,
+  "round": 2,
+  "commits": ["acc760129ececc8eb83938123c05f9a94af8eccc", "afb3fbc7a171dc57d063d04790f1a10025f21371"],
+  "verdict": "PASS_WITH_COMMENTS",
+  "central_question": {
+    "question": "Does reordering NewSnapshot to call em.AcquireCurrentEpoch() before cat.Get() actually close the TOCTOU race, and is the accompanying real-time/happens-before proof rigorous (not just informal 'logically after' reasoning) given AcquireCurrentEpoch/AdvanceEpoch and cat.Get/CompareAndSwapCurrentVersion run on different goroutines guarded by two different mutexes (em.mu and Catalog's per-fileID stripe lock)?",
+    "judgment": "Yes on both counts. Code: newSnapshotWithHook (read.go:113-124) calls epoch := em.AcquireCurrentEpoch() first, then cat.Get(fileID) second, and correctly calls em.Release(epoch) on the cat.Get error path (no refcount leak). Proof: verified line-by-line against the actual synchronization primitives rather than trusting the comment. (1) EpochManager.AcquireCurrentEpoch and AdvanceEpoch (gc.go:70-87) are both guarded by the single em.mu -- confirmed by reading gc.go directly, not inferred. (2) Catalog.Get and Catalog.CompareAndSwapCurrentVersion (catalog.go:219-226, 300-343) both take the SAME per-fileID stripe lock (c.stripes[stripeFor(fileID)]) and the CAS holds that lock for its entire read-check-write-persist sequence, so Get-observing-V-at-T_read genuinely, via real mutual exclusion (not just monotonic version numbers), forces any CAS that supersedes V to acquire the stripe lock strictly after T_read. (3) write.go's commitVersionWithHook only calls em.AdvanceEpoch() after walCAS returns true, and walCAS's CAS call happens synchronously inside wal.AppendAndApply's callback before walCAS returns -- so T_cas < T_advance is real single-goroutine program order, not a race. Chaining these (T_acquire < T_read via NewSnapshot's own program order; T_read < T_cas via the shared stripe lock; T_cas < T_advance via CommitVersion's own program order) gives a genuine real-time inequality T_acquire < T_advance for the specific AdvanceEpoch call that produces V's supersededAtEpoch. Because AcquireCurrentEpoch and AdvanceEpoch are mutex-serialized on em.mu and em.current is monotonic non-decreasing, this real-time ordering forces em.current >= E0 when that AdvanceEpoch call runs, hence E' = em.current+1 >= E0+1, strictly greater than E0, in every interleaving -- not merely 'in the interleaving the implementer tested.' Go's memory model explicitly grants synchronizes-with edges across Lock/Unlock pairs on the same mutex, so this is a valid happens-before argument, not just informal reasoning on one goroutine's program order. No gap found; the proof holds under real synchronization, not merely logical/program-order intuition."
+  },
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Fix directly closes the exact gap identified in 001-verification: a live Snapshot's pinned version can no longer be reclaimed by RunCompaction under any interleaving, satisfying 2a.2.2's 'deleted only once its epoch refcount is zero' acceptance criterion. Confirmed via code inspection (read.go) and the new regression test."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches docs/LLD/mvcc.md's epoch-GC contract ('increment on start' before the version is even known is a stronger, still-conformant reading of the contract). The corrected doc comment (read.go:61-99) is accurate and no longer contradicts the code, unlike the pre-fix comment 001-verification flagged as both wrong AND describing the wrong order."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git diff a5231d3..acc7601 -- engine/mvcc/write.go engine/mvcc/gc.go is empty: the fix touches only read.go (NewSnapshot reordering) and gc_test.go (new test). Full module test suite (go test ./... -race -count=1) passes with zero regressions across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Re-verified (unaffected by this fix, unchanged since 001): RunCompaction's no-recorded-successor path (nextRecordedVersionEpoch ok==false) still conservatively skips reclaiming, current-version-never-reclaimed check (v == currentVersion) intact, crash-safety reasoning (WAL-before-CAS in walCAS) untouched since write.go is unmodified. New edge case introduced by the fix and explicitly checked: cat.Get failing after epoch acquisition correctly releases the epoch (read.go:119-121), verified no refcount leak on that path."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new external input surface; unchanged from 001-verification's assessment."
+    },
+    "performance": {
+      "status": "pass_with_comments",
+      "evidence": "Correctness-safe over-protection tradeoff introduced by the reordering (this is the 'other direction' explicitly investigated per task step 6, and is NOT the fixed under-protection bug): since the epoch is acquired before CurrentVersion is read, and epoch is a single global counter shared across ALL fileIDs, a NewSnapshot call that is delayed between acquire and Get (e.g. due to stripe-lock contention or scheduler delay) will hold an epoch reference that is older than necessary relative to the version it ends up pinning. This can cause RunCompaction to conservatively withhold reclaiming other, unrelated superseded versions store-wide for longer than strictly required. This is a GC-effectiveness cost, not a correctness/data-loss risk -- explicitly distinguished from the fixed premature-reclamation bug, which was a correctness violation. Not flagged as blocking; noted as a possible improvement below."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Doc comment (read.go:52-99) is thorough, accurate, and explicitly documents why the previous comment/ordering was wrong -- good practice for a subtle concurrency fix. Test naming and comments in gc_test.go clearly explain the interleaving being proven."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestNewSnapshotClosesEpochAcquireVersionReadRace (gc_test.go:382-512) is a genuine, non-sequential-disguised concurrency test: it launches newSnapshotWithHook in a real goroutine, blocks it inside the hook via a channel receive (<-resumeSnapshot) exactly between AcquireCurrentEpoch and cat.Get, and only after the main goroutine's <-pausedAfterAcquire unblocks does it run a full concurrent CommitVersion(v2) + RunCompaction to completion, asserting v1's file survives before resuming the paused snapshot. Independent static-analysis re-derivation (not just trusting the implementer's self-report) confirms this test would fail under the pre-fix ordering: under the old (Get-then-Acquire) order, pausing at the analogous point (after Get, before Acquire) would mean the paused snapshot has not yet incremented any refcount, so RunCompaction's anyReferenced would be false (or would not count this snapshot), and v1 would be deleted unconditionally at the RunCompaction call inside the test -- exactly triggering the test's 'version 1 file deleted' failure. Ran the test (and TestCompactor) 20x with -race and no flakes; full engine/mvcc package and full engine module both pass with -race, -count=1."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Independently re-derived the happens-before proof from the actual mutex usage in gc.go and catalog.go rather than accepting the comment's claim at face value; found the synchronization primitives (em.mu, Catalog's per-fileID stripe lock shared by Get and CompareAndSwapCurrentVersion) genuinely establish every real-time inequality the proof depends on. Ran all requested build/vet/fmt/test/repeat commands directly rather than relying on the implementer's reported results."
+    },
+    "possible_improvements": [
+      "Document the over-protection / reduced-GC-effectiveness tradeoff (epoch acquired before the version it will pin is known, widening the window during which unrelated versions store-wide are conservatively retained) in NewSnapshot's doc comment or docs/LLD/mvcc.md, so it's understood as an accepted design tradeoff rather than rediscovered later as a 'GC isn't reclaiming enough' bug report.",
+      "Consider adding -count=N (e.g. 20+) with -race for TestNewSnapshotClosesEpochAcquireVersionReadRace and TestCompactor specifically to CI, given this is exactly the class of bug (real interleaving-dependent race) that a single run can miss even with -race, since -race only detects actually-occurring conflicting accesses in the executed interleaving."
+    ]
+  },
+  "commands_run": [
+    "(cd engine && go build ./... && go vet ./...) -> OK, clean",
+    "gofmt -l engine -> no output, clean",
+    "go test ./mvcc/... -race -v -count=1 (from engine/) -> all PASS including TestNewSnapshotClosesEpochAcquireVersionReadRace and TestCompactor",
+    "go test ./mvcc/... -race -run 'TestNewSnapshotClosesEpochAcquireVersionReadRace|TestCompactor' -count=20 -v -> all PASS, no flakes",
+    "go test ./... -race -count=1 (from engine/) -> all PASS across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal; zero regressions",
+    "git diff a5231d3..acc7601 -- engine/mvcc/write.go engine/mvcc/gc.go -> empty, confirming fix scope is exactly read.go + gc_test.go",
+    "Manual code inspection of gc.go's EpochManager (single em.mu guarding current+refcounts) and catalog.go's Catalog (Get and CompareAndSwapCurrentVersion sharing the same per-fileID stripe lock) to independently verify the real synchronization primitives the race-freedom proof depends on, rather than trusting the doc comment's claims"
+  ]
+}
