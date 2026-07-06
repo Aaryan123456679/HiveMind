@@ -1,0 +1,14 @@
+{
+  "subtask": "task-2b.1.1",
+  "checks": [
+    {"cmd": "go build ./... (from engine/)", "result": "pass"},
+    {"cmd": "go vet ./... (from engine/)", "result": "pass"},
+    {"cmd": "gofmt -l . (from engine/)", "result": "pass, no output (initially flagged trigger_test.go on first pass; ran gofmt -w to fix spacing, re-checked clean)"},
+    {"cmd": "go test ./split/... -v -count=1 -timeout 5m (from engine/)", "result": "pass, all 4 top-level tests / 24 subtests green"},
+    {"cmd": "go test ./split/... -run TestThresholdDetection -v -count=1 -timeout 5m (from engine/)", "result": "pass, matches exact test spec invocation from issue #10 / subtask brief"},
+    {"cmd": "go test ./catalog/... -count=1 -timeout 5m (from engine/, regression check since architecture-discovery noted a pre-existing related stub there)", "result": "pass, no regressions - expected, since this subtask deliberately did not modify engine/catalog/"}
+  ],
+  "validation_matrix_coverage": "All 12 rows in validation-matrix.json map onto passing named subtests (see trigger_test.go); all 4 acceptance-criteria scenarios (a)-(d) and all named edge cases from the subtask brief are exercised.",
+  "note": "This is internal build/test sanity only, not independent verification (invariant I4 - implementation agent does not verify its own work). /cdr:verify should be run next.",
+  "verdict": "self-consistent, ready for handoff"
+}

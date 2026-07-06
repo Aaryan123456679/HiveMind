@@ -1,0 +1,20 @@
+{
+  "subtask": "task-2b.1.1",
+  "new_files": [
+    "engine/split/trigger.go",
+    "engine/split/trigger_test.go"
+  ],
+  "modified_files": [],
+  "modules_touched": ["engine/split"],
+  "modules_not_touched_but_related": [
+    "engine/catalog (ContentStore.Append already has an inline, task-1.4.3 pre-existing threshold-crossing stub with matching boundary semantics; NOT modified here, wiring deferred to a later subtask)"
+  ],
+  "downstream_consumers": [
+    "None yet — engine/split/guard.go (2b.1.2) and engine/split/orchestrate.go (2b.1.3) are future siblings in the same package that will likely consume this hook's Signal type, but are out of scope for this run.",
+    "agents/ingestion's ProposeSplit RPC is the eventual end consumer of a real split trigger per docs/LLD/split.md, but that wiring is issues #11-14, far out of scope."
+  ],
+  "risk_level": "low-for-this-subtask / high-for-the-epic",
+  "risk_notes": "This subtask itself is a small, pure, dependency-free addition with no wiring into any live call path, so blast radius of a bug here is currently zero (nothing calls it yet). However per AGENT.md's explicit framing, engine/split/ is the highest-risk correctness surface of the whole project, and this hook's exactly-once-per-crossing semantics are foundational for every later subtask (CAS guard in 2b.1.2 assumes it only needs to fire the CAS attempt once per real crossing signal; a double-signal or missed-signal bug here would compound into missed/duplicate splits later). Elevated test rigor applied accordingly (see validation-matrix.json).",
+  "backward_compatibility": "N/A - new package, no existing callers.",
+  "concurrency_considerations": "Trigger.Detect is a pure, stateless computation given (fileID, oldSize, newSize, thresholdBytes) - no shared mutable state, no locks needed in this package. Thread-safety of the actual before/after size observation is the caller's responsibility (already handled today by ContentStore.Append's per-fileID striped mutex in engine/catalog/content.go). Documented explicitly in trigger.go's doc comments so a future integrator does not assume Trigger provides its own synchronization."
+}

@@ -1,0 +1,20 @@
+{
+  "subtask": "task-2b.1.1",
+  "rows": [
+    {"id": "V1", "scenario": "Append stays under threshold", "acceptance_ref": "(a)", "input": "threshold=100, old=10, new=50", "expected": "no signal", "test": "TestThresholdDetection/stays_under"},
+    {"id": "V2", "scenario": "Append lands exactly ON threshold boundary", "acceptance_ref": "(b) boundary", "input": "threshold=100, old=90, new=100", "expected": "no signal (strictly-over required)", "test": "TestThresholdDetection/exact_boundary_no_signal"},
+    {"id": "V3", "scenario": "Append crosses threshold by 1 byte", "acceptance_ref": "(b)", "input": "threshold=100, old=99, new=101", "expected": "exactly one signal, Signal fields correctly populated", "test": "TestThresholdDetection/crosses_by_one"},
+    {"id": "V4", "scenario": "Subsequent append when already over threshold", "acceptance_ref": "(c)", "input": "threshold=100, old=150, new=200", "expected": "no signal (no re-signal)", "test": "TestThresholdDetection/already_over_no_resignal"},
+    {"id": "V5", "scenario": "Cumulative small appends crossing on one specific append", "acceptance_ref": "(d)", "input": "threshold=100, sequence 0->30->60->90->110->140", "expected": "signal fires only on the 90->110 step", "test": "TestThresholdDetection/cumulative_sequence_signals_once"},
+    {"id": "V6", "scenario": "Zero-byte append, under threshold", "acceptance_ref": "edge case", "input": "threshold=100, old=new=50", "expected": "no signal", "test": "TestThresholdDetection/zero_byte_append_under"},
+    {"id": "V7", "scenario": "Zero-byte append, over threshold", "acceptance_ref": "edge case", "input": "threshold=100, old=new=150", "expected": "no signal", "test": "TestThresholdDetection/zero_byte_append_over"},
+    {"id": "V8", "scenario": "Invalid threshold (zero)", "acceptance_ref": "edge case", "input": "NewTrigger(0)", "expected": "non-nil error, nil Trigger", "test": "TestNewTriggerValidation/zero_threshold_rejected"},
+    {"id": "V9", "scenario": "Valid threshold", "acceptance_ref": "edge case", "input": "NewTrigger(1)", "expected": "no error, usable Trigger", "test": "TestNewTriggerValidation/positive_threshold_accepted"},
+    {"id": "V10", "scenario": "Defensive guard: shrinking size pair (not a valid append)", "acceptance_ref": "edge case", "input": "threshold=100, old=200, new=50", "expected": "no signal", "test": "TestThresholdDetection/shrinking_pair_no_signal"},
+    {"id": "V11", "scenario": "DefaultTrigger uses documented default and fires correctly", "acceptance_ref": "config default", "input": "DefaultTrigger(), old=8000, new=9000 (threshold 8192)", "expected": "ThresholdBytes()==8192, signal fires", "test": "TestDefaultTrigger"},
+    {"id": "V12", "scenario": "File already over threshold at hook install time, single Detect call with old already > threshold", "acceptance_ref": "edge case (retroactive signal)", "input": "threshold=100, old=500, new=600", "expected": "no signal", "test": "TestThresholdDetection/already_over_no_resignal (covers this via V4's same shape)"}
+  ],
+  "coverage_summary": "All 4 acceptance-criteria scenarios (a)-(d) plus all 6 named edge cases from the subtask brief (zero-byte append, exact boundary, invalid threshold, already-over-at-install, shrinking/defensive guard, cumulative crossing) are covered by named subtests.",
+  "build_gate": "go build ./... && go vet ./... && gofmt -l . clean from engine/ dir",
+  "test_gate": "go test ./split/... -v -count=1 -timeout 5m from engine/ dir, all green"
+}
