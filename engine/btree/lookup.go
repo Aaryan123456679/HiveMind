@@ -322,7 +322,15 @@ func lookupOnce(store *NodeStore, rootID uint64, path string) (fileID uint64, fo
 		if !nextIsLeaf {
 			return 0, false, fmt.Errorf("btree: internal invariant violated: NextLeaf chain led to a non-leaf node %d", nextID)
 		}
-		if len(nextLeaf.Keys) > 0 && path < nextLeaf.Keys[0] {
+		// 2a.4.5 fix: an empty sibling must never be moved into -- see
+		// crabInsertOnce's identical fix (insert.go) for the full
+		// root-cause writeup. A NextLeaf sibling that is completely empty
+		// is, under Delete's tombstone policy, a drained leaf awaiting its
+		// own repair, not a genuine split-off right half; it carries no
+		// usable lower-bound key of its own, so falling through to "move
+		// right" whenever it happens to be empty would misroute this read
+		// into an unrelated, out-of-range leaf.
+		if len(nextLeaf.Keys) == 0 || path < nextLeaf.Keys[0] {
 			break
 		}
 		currentID = nextID

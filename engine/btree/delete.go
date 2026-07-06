@@ -516,7 +516,16 @@ func (t *Tree) crabDeleteOnce(rootID uint64, path string) (bool, error) {
 						store.Unlock(currentID)
 						return false, fmt.Errorf("btree: internal invariant violated: NextLeaf chain led to non-leaf node %d", nextID)
 					}
-					if len(nextLeaf.Keys) > 0 && path < nextLeaf.Keys[0] {
+					// 2a.4.5 fix: an empty sibling must never be moved into --
+					// see crabInsertOnce's identical fix (insert.go) for the
+					// full root-cause writeup. A NextLeaf sibling that is
+					// completely empty is, under Delete's tombstone policy, a
+					// drained leaf awaiting its own repair, not a genuine
+					// split-off right half; it carries no usable lower-bound
+					// key of its own, so falling through to "move right"
+					// whenever it happens to be empty would misroute this
+					// delete into an unrelated, out-of-range leaf.
+					if len(nextLeaf.Keys) == 0 || path < nextLeaf.Keys[0] {
 						store.Unlock(nextID)
 						break
 					}
@@ -754,6 +763,30 @@ func (t *Tree) repairEmptyLeafAtParent(parentID, leafID uint64, path string) (re
 			return false, err
 		}
 		if leftIsLeaf {
+			// 2a.4.5 fix: both the borrow-from-left and merge-into-left
+			// branches below unconditionally overwrite leftID's NextLeaf
+			// field to point directly at leafID (or splice past it). That
+			// is only safe if leftID's CURRENT, freshly-read NextLeaf
+			// still actually equals leafID -- i.e. leftID and leafID are
+			// still true, immediate chain neighbors. If a concurrent
+			// Insert has split leftID (writing a new right-half node in
+			// between, referenced by leftID.NextLeaf) but has not yet run
+			// propagate to link that node into parentID's Children
+			// (propagate needs parentID's latch, held here for the whole
+			// borrow/merge decision, so it is necessarily still pending),
+			// then blindly overwriting leftID.NextLeaf would skip over --
+			// and permanently orphan -- that not-yet-linked, live node.
+			// Detect this race up front and retry via a fresh findParent,
+			// by which point the pending split's propagate call will
+			// typically have completed and leftID will no longer be the
+			// correct left candidate for leafID (the newly-linked node
+			// will be).
+			if left.NextLeaf != leafID {
+				store.Unlock(leftID)
+				store.Unlock(leafID)
+				store.Unlock(parentID)
+				return true, nil
+			}
 			if len(left.Keys) > 1 {
 				// Borrow one key from the left sibling.
 				borrowedKey := left.Keys[len(left.Keys)-1]
@@ -797,7 +830,11 @@ func (t *Tree) repairEmptyLeafAtParent(parentID, leafID uint64, path string) (re
 				return false, nil
 			}
 
-			// Merge current (empty) leaf into the left sibling.
+			// Merge current (empty) leaf into the left sibling. Safe to
+			// splice leftID straight to emptyNextLeaf here: the
+			// left.NextLeaf == leafID race guard above already ruled out
+			// the concurrent-split case (see its comment for the full
+			// writeup).
 			mergedLeft := LeafNode{Keys: left.Keys, FileIDs: left.FileIDs, NextLeaf: emptyNextLeaf}
 			if err := writeLeaf(store, leftID, mergedLeft); err != nil {
 				store.Unlock(leftID)

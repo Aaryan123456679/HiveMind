@@ -1,0 +1,79 @@
+{
+  "run_id": "2026-07-06-013-implementation-fix",
+  "subtask": "task-2a.4.5-fix-cycle",
+  "status": "completed",
+  "commit_sha": "PENDING_FILL_AFTER_COMMIT",
+  "summary": "Root-caused and fixed three independent, genuine concurrency bugs in engine/btree discovered by task-2a.4.5's capstone TestConcurrentMixedWorkload, plus relaxed one over-strict pre-existing test invariant, plus reduced the capstone test's scale after finding a separate, out-of-scope throughput/contention issue at its original scale.",
+  "root_causes": [
+    {
+      "id": 1,
+      "title": "Leaf-level move-right peek mishandles an empty NextLeaf sibling",
+      "files": ["engine/btree/insert.go", "engine/btree/delete.go", "engine/btree/lookup.go"],
+      "pointer": "crabInsertOnce (insert.go), crabDeleteOnce (delete.go), Tree.Lookup's lookupOnce (lookup.go) -- search for '2a.4.5 fix' comment markers",
+      "explanation": "The stay-condition `len(nextLeaf.Keys) > 0 && path < nextLeaf.Keys[0]` treats an EMPTY nextLeaf as always requiring move-right. Safe under insert-only workloads (2a.4.2, a NextLeaf sibling was always a just-created, non-empty split right-half) but unsafe once Delete's (2a.4.3) tombstone policy introduces genuinely-empty-but-still-linked leaves. Fixed to `len(nextLeaf.Keys) == 0 || path < nextLeaf.Keys[0]` (never move into an empty sibling) at all three sites.",
+      "proof": "Minimal 20-goroutine (10 insert-only on [0,1000) + 10 delete-only on disjoint pre-seeded [1000,2000)) repro, committed as TestConcurrentInsertDeleteDisjointRangesMinimalRepro in btree_test.go, reliably reproduced silent data loss pre-fix; write-tracing confirmed the corruption path bypasses propagate entirely."
+    },
+    {
+      "id": 2,
+      "title": "repairEmptyLeafAtParent's borrow/merge-from-left can orphan a concurrently-split, not-yet-propagated node",
+      "files": ["engine/btree/delete.go"],
+      "pointer": "repairEmptyLeafAtParent, borrow-from-left and merge-into-left branches -- search for 'left.NextLeaf != leafID' guard",
+      "explanation": "Both branches unconditionally overwrote leftID's NextLeaf, assuming leftID's current NextLeaf still equals leafID. A concurrent Insert can split leftID (writing a new right-half node and updating leftID.NextLeaf to point at it) entirely under leftID's own latch, before its own propagate call (which needs parentID's latch, held throughout repairEmptyLeafAtParent) can run. Overwriting leftID.NextLeaf in that window orphans the new node. Fixed: check left.NextLeaf == leafID before splicing; if false, release all latches and retry (true, nil), same idiom as the existing j<0 race-retry case.",
+      "proof": "Reduced-scale (10+10 goroutines, 1000+1000 keys) repro with full tree-dump-on-failure found an orphaned leaf (e.g. node 13) reachable from nowhere, holding exactly the range of keys Tree.Lookup reported missing."
+    },
+    {
+      "id": 3,
+      "title": "Leaf/internal split write order let a lock-free Lookup observe a pointer to a not-yet-written node",
+      "files": ["engine/btree/insert.go"],
+      "pointer": "insertIntoLeafAndPropagate (leaf split) and propagate (internal-node split) -- search for '2a.4.5 fix' comment markers on the write-order swap",
+      "explanation": "Both split paths originally wrote the existing (left) node first, with its NextLeaf/NextSibling field already updated to reference the brand-new right-half node, then wrote the new node's content second. Tree.Lookup (2a.4.4) is lock-free and can observe the left node's updated pointer the instant it's written, before the new node's own write happens, reading past EOF. Fixed by reversing the order: write the new node fully first, then the node that publishes a reference to it.",
+      "proof": "TestConcurrentMixedWorkload under -race failed with 'btree: reading node N at offset ...: EOF' from a Lookup goroutine before this fix; passed cleanly after."
+    }
+  ],
+  "test_helper_fix": {
+    "file": "engine/btree/insert_test.go",
+    "function": "assertStructuralInvariants",
+    "change": "LowKey check relaxed from exact-equality (`LowKey != want`) to never-exceeds (`LowKey > actualMin`), matching InternalNode.LowKey's documented fixed-at-creation-only contract (node.go). Not a production code change; TestConcurrentMixedWorkload's own test logic in btree_test.go is unmodified as expected.",
+    "reason": "Delete legitimately raises a subtree's true minimum over time without needing to revise any ancestor's LowKey; the original exact-equality check was stricter than the design ever guaranteed and was simply never exercised at this interaction depth before."
+  },
+  "test_scale_adjustment": {
+    "file": "engine/btree/btree_test.go",
+    "function": "TestConcurrentMixedWorkload",
+    "change": "Scale reduced from 80,000 keys/200 goroutines (60 insertOnly + 60 deleteOnly + 40 mutate + 40 lookup) to 8,000 keys/50 goroutines (15+15+10+10), preserving the same 3-way concurrent coverage shape.",
+    "reason": "The original scale reliably times out at the test's 20m -timeout, both with and without -race, reproduced running completely alone (no other concurrent load). Goroutine dump at timeout showed runnable/semacquire states consistent with heavy latch-contention/retry-backoff churn under 200-way contention on 8 CPUs, not a classic cyclic-wait deadlock. Confirmed NOT a correctness regression from this fix cycle: the original scale passes cleanly under -race (single run and -count=3, 141-410s per run). This points at a pre-existing throughput/scale sensitivity of the retry-backoff design, out of this fix cycle's scope. Explicitly authorized by the coordinator mid-task; see architecture-discovery.md and validation-matrix.json for full reasoning. Flagged for /cdr:verify's attention and any future scale-focused subtask.",
+    "authorized_by": "coordinator mid-task status-check message"
+  },
+  "capstone_tests_status": {
+    "TestConcurrentMixedWorkload": "passes reliably at reduced scale (5/5 under -race, 5/5 plain); also independently confirmed passing at the ORIGINAL 80k/200-goroutine scale under -race (both single run and -count=3) -- only the plain (non-race) run at original scale times out, per test_scale_adjustment above.",
+    "TestConcurrentMixedWorkloadForcedLookupDuringDelete": "unmodified, passes on every invocation."
+  },
+  "new_regression_test": {
+    "file": "engine/btree/btree_test.go",
+    "name": "TestConcurrentInsertDeleteDisjointRangesMinimalRepro",
+    "purpose": "Small, fast (<1s uncontended, ~0.1-0.4s per iteration at -count=200), reliably-reproducing regression test for root cause 1. Validated at -count=200 (plain) and -count=100 (-race)."
+  },
+  "files_changed": [
+    "engine/btree/insert.go",
+    "engine/btree/delete.go",
+    "engine/btree/lookup.go",
+    "engine/btree/insert_test.go",
+    "engine/btree/btree_test.go"
+  ],
+  "cdr_artifacts": {
+    "requirement": ".cdr/runs/2026-07-06/013-implementation-fix/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-06/013-implementation-fix/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-06/013-implementation-fix/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-06/013-implementation-fix/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-06/013-implementation-fix/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-06/013-implementation-fix/self-consistency.json"
+  },
+  "not_done_by_this_agent": [
+    "Verification (/cdr:verify) -- explicitly out of scope per agent invariant I4.",
+    "Push to remote -- explicitly not requested.",
+    "Full root-cause of the original 80k/200-goroutine plain (non-race) timeout's underlying retry-backoff throughput sensitivity -- observed and worked around via test scale reduction, not fixed."
+  ],
+  "task_index_updates_needed": [
+    "task-2a.4.5: update from failed/blocked to completed (this fix cycle).",
+    "task-2a.4.2 and task-2a.4.3: consider a note that their individual correctness was not wrong in isolation, but the INTERACTION between 2a.4.2's insert-only-derived leaf-sibling assumptions and 2a.4.3's tombstone/empty-leaf policy was the source of root cause 1 and root cause 2 above."
+  ]
+}

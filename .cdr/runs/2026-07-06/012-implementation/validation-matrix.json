@@ -1,0 +1,41 @@
+{
+  "subtask": "task-2a.4.5",
+  "dimensions": [
+    {
+      "requirement": "mixed insert/delete/lookup workload across disjoint AND overlapping subtrees",
+      "covered_by": "TestConcurrentMixedWorkload: insertOnly/deleteOnly/mutate role-ranges are disjoint by key index (no overlap between roles); mutate goroutines force splits+merges repeatedly in their own region while lookup goroutines scan the ENTIRE keyspace (including actively-mutating ranges) throughout, giving genuine physical overlap at the node/leaf level even though the oracle partition is logically disjoint by key"
+    },
+    {
+      "requirement": "final tree state matches an oracle",
+      "covered_by": "static, scheduling-independent partition of key indices into insertOnly/deleteOnly/mutate roles with collision-proof fileID(i,v)=i*10+v encoding; wantPresent/wantAbsent computed directly from the partition, verified via assertAllLookupable (free Lookup), a Tree.Lookup cross-check, assertAbsent, assertStructuralInvariants(exact wantKeyCount), assertNoOrphanedPointers"
+    },
+    {
+      "requirement": "zero race-detector reports",
+      "covered_by": "all self-consistency go test invocations run with -race; full existing suite + 5x repeat of exact test-spec invocation + extra solo repeats"
+    },
+    {
+      "requirement": "lookups never error/panic/corrupt during concurrent mutation",
+      "covered_by": "every Tree.Lookup call in the lookup goroutines is checked inline: err must be nil; if found, fileID must be a member of that key's precomputed validFileIDs set (corruption-by-construction detection via disjoint fileID encoding), reported through an error channel drained after wg.Wait()"
+    },
+    {
+      "requirement": "scale mirrors/exceeds 2a.4.2 VeryDeepOverlappingSubtree (160g/80k) and 2a.4.4 InterleavedWithInsertDelete",
+      "covered_by": "80,000 total keys, 160 write-side goroutines (60+60+40) + 40 continuous lookup goroutines = 200 total concurrent goroutines"
+    },
+    {
+      "requirement": "explicit -timeout on every go test invocation",
+      "covered_by": "self-consistency step 6 uses -timeout on every invocation (10m full suite, 20m 5x repeat, generous solo-repeat timeouts)"
+    },
+    {
+      "requirement": "cross-check Tree.Lookup against free Lookup",
+      "covered_by": "post-workload validation step 4 (plan.md) checks every wantPresent key via both APIs"
+    },
+    {
+      "requirement": "deterministic coverage of a specific known-tricky interleaving (design guidance item 5)",
+      "covered_by": "TestConcurrentMixedWorkloadForcedLookupDuringDelete: hook-based forced pause of Tree.Lookup mid-read, concurrent Tree.Delete mutates the exact same node, forced version-mismatch retry verified via optimisticRetryHook"
+    },
+    {
+      "requirement": "reuse existing helpers rather than reinvent",
+      "covered_by": "newTestStoreAndAllocator, genKey, insertN, assertAllLookupable, assertAbsent, assertStructuralInvariants, assertNoOrphanedPointers, optimisticReadHook/optimisticRetryHook all reused verbatim from insert_test.go/delete_test.go/lookup_test.go"
+    }
+  ]
+}

@@ -164,14 +164,27 @@ func assertAllLookupable(t *testing.T, store *NodeStore, rootID uint64, inserted
 //     acyclic, strictly-increasing (by subtree minimum key) chain covering
 //     every internal node at that depth, with exactly one chain head (the
 //     node with LowKey == "") and the chain terminating at noSibling
-//   - every internal node's LowKey exactly equals the minimum key reachable
-//     in its own subtree, except the chain head at each level (LowKey == "")
+//   - every internal node's LowKey is a valid (never-exceeded) lower bound
+//     for the minimum key reachable in its own subtree, except the chain
+//     head at each level (LowKey == "")
 //
 // The last two points close the gap flagged by 2a.4.2's fix regression
 // (GitHub issue #9): the original assertStructuralInvariants only checked
 // leaf-level NextLeaf/sorted-keys, so it could not have caught -- and would
 // not catch a future regression of -- findParent's internal-level move-right
 // and LowKey-based routing.
+//
+// LowKey is checked as "<= actual subtree min", not "== actual subtree
+// min" (2a.4.5 fix): per InternalNode.LowKey's doc comment (node.go),
+// LowKey is fixed forever once a node is created by a split and is never
+// revised afterward, whereas the node's true subtree minimum can move
+// strictly higher over time as Delete removes that subtree's own
+// leftmost keys. That drift is intentional and harmless for routing
+// (crabInsert/crabDelete/Lookup's move-right peeks only ever need LowKey
+// to be a safe, non-exceeded lower bound, never an exact tracker; see
+// insert.go/delete.go/lookup.go's identical peek logic) -- only a LowKey
+// that is GREATER than the true subtree minimum would indicate genuine
+// misrouted content and is still treated as a hard failure below.
 func assertStructuralInvariants(t *testing.T, store *NodeStore, rootID uint64, wantKeyCount int) {
 	t.Helper()
 
@@ -222,8 +235,8 @@ func assertStructuralInvariants(t *testing.T, store *NodeStore, rootID uint64, w
 			t.Fatalf("internal node %d: Keys not sorted ascending: %v", nodeID, internal.Keys)
 		}
 		if internal.LowKey != "" {
-			if want, ok := subtreeMinKey(nodeID); ok && internal.LowKey != want {
-				t.Fatalf("internal node %d: LowKey = %q, want %q (its own subtree's minimum key)", nodeID, internal.LowKey, want)
+			if actualMin, ok := subtreeMinKey(nodeID); ok && internal.LowKey > actualMin {
+				t.Fatalf("internal node %d: LowKey = %q exceeds its own subtree's actual minimum key %q (LowKey must never be greater than the true subtree minimum)", nodeID, internal.LowKey, actualMin)
 			}
 		}
 		for _, child := range internal.Children {

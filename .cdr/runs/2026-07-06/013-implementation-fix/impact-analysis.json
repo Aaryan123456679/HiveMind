@@ -1,0 +1,13 @@
+{
+  "files_touched": [
+    "engine/btree/insert.go",
+    "engine/btree/delete.go",
+    "engine/btree/lookup.go",
+    "engine/btree/insert_test.go",
+    "engine/btree/btree_test.go"
+  ],
+  "blast_radius": "engine/btree package only; no public API signature change (Tree.Insert/Tree.Delete/Tree.Lookup semantics unchanged). Four independent, minimal, structural corrections: (1) leaf-level move-right routing condition (crabInsertOnce, crabDeleteOnce, Tree.Lookup's optimistic read) now never treats an empty sibling as a move-right target; (2) repairEmptyLeafAtParent's borrow/merge-from-left branches now detect and retry on a concurrent not-yet-propagated split of the left sibling instead of orphaning it; (3) leaf-split and internal-split write order reversed (new node written before the existing node that publishes a pointer to it), so Tree.Lookup's lock-free optimistic reads can never observe a reference to a not-yet-written node; (4) assertStructuralInvariants' LowKey check relaxed from exact-equality to never-exceeds, matching InternalNode.LowKey's own documented fixed-at-creation contract.",
+  "risk": "high-sensitivity area: package has a documented history of two deadlocks and one silent-data-loss bug (2a.4.2's four fix rounds). Every fix here is minimal and additive: no new locking primitive, no new latch-acquisition ordering, no change to the TryLock+restart-from-root discipline. Fixes (1)-(3) each reuse an idiom already established elsewhere in the same file (LowKey-based never-a-content-tracker guard, the existing 'benign race -> retry' pattern, and the existing 'write new node under its own lock' pattern respectively).",
+  "regression_surface": "Every existing test that exercises leaf-level NextLeaf move-right peeking, leaf/internal splits, or delete's borrow/merge repair paths across insert_test.go, delete_test.go, lookup_test.go, scan_test.go, node_test.go, btree_test.go must remain green. assertStructuralInvariants is called by many of those tests, so its relaxed LowKey check is exercised broadly, not just by the capstone test.",
+  "rollback_plan": "Single local commit; revert if verify finds a defect."
+}

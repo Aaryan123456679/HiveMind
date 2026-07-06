@@ -665,7 +665,39 @@ func (t *Tree) crabInsertOnce(rootID uint64, path string, fileID uint64) error {
 				// misroute a key that still belongs in currentID. See
 				// InternalNode.LowKey's doc comment for the identical
 				// reasoning at internal-node levels.
-				if len(nextLeaf.Keys) > 0 && path < nextLeaf.Keys[0] {
+				//
+				// 2a.4.5 fix: an empty sibling (len(nextLeaf.Keys) == 0) must
+				// NEVER be moved into, regardless of path. Before Delete
+				// (2a.4.3) existed, a NextLeaf sibling was always the product
+				// of a just-completed split and therefore could never be
+				// empty (a leaf split always leaves >= 1 key in both
+				// halves), so the original "len(nextLeaf.Keys) > 0 && path <
+				// nextLeaf.Keys[0]" stay-condition's implicit else branch
+				// (move right whenever the sibling happens to be empty) was
+				// unreachable dead code, not a deliberate decision. Delete's
+				// tombstone policy (delete.go) introduces exactly that case:
+				// a fully-drained leaf stays linked in the NextLeaf chain,
+				// completely empty, until its own repair (borrow/merge)
+				// completes. Such a leaf carries no usable lower-bound key of
+				// its own -- it is not "the split-off right half starting at
+				// its own Keys[0]", it is a hole awaiting repair -- so
+				// falling through to "move right" here would walk a writer
+				// straight past the parent's own already-correct routing
+				// decision (which sent it to currentID, not nextID) into an
+				// unrelated, out-of-range leaf, silently writing a
+				// wrong-range key into it without ever going through
+				// propagate/repair (the leaf is already linked and under
+				// NodeSize, so no split is triggered to catch the mistake).
+				// This was 2a.4.5's capstone mixed-workload test's confirmed,
+				// reliably-reproducing root cause: both the "promotedKey <=
+				// parent.Keys[j-1]" propagate invariant panic and the
+				// silent-data-loss symptom traced back to exactly this
+				// misroute. Requiring the sibling to be non-empty before
+				// ever comparing against its first key closes the gap
+				// structurally, for both the in-range-and-empty and
+				// out-of-range-and-empty cases alike (an empty sibling is
+				// never a valid move-right target, full stop).
+				if len(nextLeaf.Keys) == 0 || path < nextLeaf.Keys[0] {
 					store.Unlock(nextID)
 					break
 				}
@@ -758,17 +790,30 @@ func (t *Tree) insertIntoLeafAndPropagate(leafID uint64, leaf LeafNode, path str
 	}
 	left.NextLeaf = rightID
 
-	werr := writeLeaf(store, leafID, left)
+	// 2a.4.5 fix: write rightID's own content BEFORE publishing it via
+	// leafID.NextLeaf. Tree.Lookup (2a.4.4) is a lock-free optimistic
+	// reader that never takes leafID's latch, so the instant leafID's
+	// on-disk bytes are updated to point at rightID, a concurrent Lookup
+	// can follow that pointer and call ReadNode(rightID) -- with no
+	// latch of its own to wait on. If leafID were written first (the
+	// original order here), that window could land on rightID before
+	// this call's own writeLeaf(rightID, ...) ever ran, reading
+	// off the end of the file (EOF) since rightID's slot in the node
+	// store file may not exist yet at all. Writing rightID first makes
+	// it durably readable before anything can ever reach it, so no
+	// lock-free reader can observe the pointer before the pointee.
+	//
+	// rightID was just allocated by this call: no other goroutine can
+	// possibly know about it yet, so locking it is uncontended, but is
+	// done anyway for hygiene/consistency with the "Lock before
+	// WriteNode" convention. This is the only point where 2 latches
+	// (leafID + rightID) are held simultaneously, both already
+	// accounted for within the parent-and-child budget.
+	store.Lock(rightID)
+	werr := writeLeaf(store, rightID, right)
+	store.Unlock(rightID)
 	if werr == nil {
-		// rightID was just allocated by this call: no other goroutine can
-		// possibly know about it yet, so locking it is uncontended, but is
-		// done anyway for hygiene/consistency with the "Lock before
-		// WriteNode" convention. This is the only point where 2 latches
-		// (leafID + rightID) are held simultaneously, both already
-		// accounted for within the parent-and-child budget.
-		store.Lock(rightID)
-		werr = writeLeaf(store, rightID, right)
-		store.Unlock(rightID)
+		werr = writeLeaf(store, leafID, left)
 	}
 	store.Unlock(leafID)
 	if werr != nil {
@@ -1134,11 +1179,19 @@ func (t *Tree) propagate(childIDBeingReplaced uint64, promotedKey string, newChi
 		}
 		left.NextSibling = rightID
 
-		werr := writeInternal(store, parentID, left)
+		// 2a.4.5 fix: write rightID's own content BEFORE publishing it via
+		// parentID.NextSibling, mirroring insertIntoLeafAndPropagate's
+		// identical leaf-split fix (see its comment for the full
+		// writeup). Tree.Lookup's lock-free optimistic reads can follow
+		// an internal node's NextSibling the instant it is written, with
+		// no latch of their own to wait on; writing rightID first
+		// guarantees it is already durably readable before anything can
+		// ever reach it.
+		store.Lock(rightID)
+		werr := writeInternal(store, rightID, right)
+		store.Unlock(rightID)
 		if werr == nil {
-			store.Lock(rightID)
-			werr = writeInternal(store, rightID, right)
-			store.Unlock(rightID)
+			werr = writeInternal(store, parentID, left)
 		}
 		store.Unlock(parentID)
 		if werr != nil {

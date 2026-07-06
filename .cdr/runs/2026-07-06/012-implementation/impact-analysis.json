@@ -1,0 +1,21 @@
+{
+  "subtask": "task-2a.4.5",
+  "files_touched": [
+    {
+      "path": "engine/btree/btree_test.go",
+      "change": "append TestConcurrentMixedWorkload and a deterministic forced-interleaving companion test; existing TestPersistReload/TestLoadRootFreshIndexFile untouched"
+    }
+  ],
+  "production_code_changes": "none — pure test-only capstone per subtask scope",
+  "dependencies": [
+    "engine/btree/insert.go (Tree.Insert, TryLock/restart discipline)",
+    "engine/btree/delete.go (Tree.Delete, same discipline)",
+    "engine/btree/lookup.go (Tree.Lookup, optimistic version-bracketed read; free Lookup)",
+    "engine/btree/latch.go (NodeStore latch/version registry, no changes needed)",
+    "insert_test.go/delete_test.go helpers: newTestStoreAndAllocator, genKey, insertN, assertAllLookupable, assertStructuralInvariants",
+    "delete_test.go: assertAbsent, assertNoOrphanedPointers"
+  ],
+  "risk": "low — additive test file only; risk is confined to test flakiness/timeout tuning, not production correctness regression",
+  "regression_surface": "entire engine/btree package test suite must remain green; no other package depends on btree test files",
+  "blocking_relationship": "this is the final subtask of task-2a.4 / GitHub issue #9; completing it unblocks/closes Epic Phase 2a"
+}
