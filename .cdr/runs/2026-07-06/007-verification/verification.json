@@ -1,0 +1,63 @@
+{
+  "subtask": "2a.4.3",
+  "commit": "f949d54ef6b6e9a0f730d761517c8fe8dd4ae104",
+  "prior_verdict": "CHANGES_REQUESTED (.cdr/runs/2026-07-06/005-verification/verification.json, commit b46d466)",
+  "verdict": "PASS",
+  "summary": "The single confirmed correctness defect from the prior CHANGES_REQUESTED verdict -- spliceOutDegenerateAncestor's dangling-NextSibling repair only handling the gj>0 (same-grandparent) case, deterministically missing the gj==0 (cross-grandparent) case -- is now fixed correctly. findLeftNeighborAtSameLevel's walk-up-then-descend-down algorithm was independently traced by hand for gj>0, single-level gj==0, and (via a temporary, non-committed adversarial test constructing a 2-level-nested gj==0 chain: ANC first child of G, G first child of P1, P1 NOT first child of root) double-nested gj==0, and is correct in all three cases: the descend-down hop count (levelsUp) exactly matches the walk-up hop count, landing precisely at the spliced ancestor's own tree level regardless of how many levels of first-child nesting exist above it. Lock discipline is sound: the function's first iteration reuses the caller's already-locked grandParentID/grandParent by value with no additional Lock call (avoiding a self-deadlock on the non-reentrant per-node mutex), and every subsequent up-walk or down-descend hop locks exactly one fresh, not-otherwise-held node at a time, unlocking before proceeding -- identical discipline to findParent's own established walk. The regression test now genuinely exercises the concurrent path (Tree.Delete via NewTree, confirmed by inline comment and code), and its independent re-derivation of the level-2 NextSibling chain (walking node-by-node from an independently-re-located X1) is non-tautological -- it does not merely re-check spliceOutDegenerateAncestor's own bookkeeping. Full test suite is green under -race with zero regressions, and the 2-level-nested adversarial temp test (10x -race repeat) confirms the fix generalizes beyond the single-level case the shipped test happens to construct. The 'second bug' the implementer mentions fixing (re-deriving ancestorID's parent via findParent(ancestorID) post-splice, when ancestorID is already unlinked) is correctly avoided in the shipped code: the function takes (grandParentID, grandParent, gj) directly from the caller and never calls findParent(ancestorID).",
+  "dimensions": {
+    "requirements": {
+      "verdict": "PASS",
+      "evidence": "Concurrent delete now removes keys 'without corrupting sibling/parent pointers' in the specific scenario the prior verification identified as a deterministic miss: the gj==0 cross-grandparent case. Verified via re-derivation of the shipped TestDeleteSpliceFirstChildAncestorFixesNextSibling (X2.NextSibling correctly repointed from abandoned ancID to anc2ID) and an additional temporary 2-level-nested test confirming the fix is not merely a single-level patch."
+    },
+    "architecture_conformance": {
+      "verdict": "PASS",
+      "evidence": "findLeftNeighborAtSameLevel reuses findParent for every up-hop past the first (tolerating concurrent restructuring, consistent with the rest of this codebase's 'always re-fetch, never trust stale structure' discipline). The rootMu-ordering divergence flagged in the prior verification (deleteFromLeafAndRepair / finishParentShrinkAfterDelete acquiring rootMu while holding a node latch) is now explicitly documented inline as a load-bearing invariant with the safety argument (rootMu is always a wait-for-graph sink), addressing the prior 'possible_improvements' item."
+    },
+    "deadlock_audit": {
+      "verdict": "PASS",
+      "evidence": "Traced every Lock/TryLock in findLeftNeighborAtSameLevel: the first iteration performs NO Lock call on grandParentID (reuses the caller's already-held latch and already-read struct by value) -- critical, since re-locking a held non-reentrant sync.Mutex would hang forever. Every subsequent up-walk hop (store.Lock(upParentID)) and every down-descend hop (store.Lock(neighbor)) locks exactly one fresh node, reads, and unlocks before the next hop -- never holds two of its own latches simultaneously, and never touches grandParentID or ancestorID again. The caller's own TryLock(neighborID) (never a blocking Lock) at the end preserves the prior verification's 'best-effort, not correctness-required' hygiene-fix discipline. No new deadlock surface introduced."
+    },
+    "regression_risk": {
+      "verdict": "PASS",
+      "evidence": "go build ./..., go vet ./..., gofmt -l . all clean (engine/ module). go test ./btree/... -race -v -count=1 -timeout 5m: 100% pass, zero regressions across all Phase-1 delete tests, TestCrabbingDelete (3 subtests), TestDeleteSpliceFirstChildAncestorFixesNextSibling, all TestCrabbingInsert subtests, TestCrabbingConcurrentPropagateNoDeadlock, TestLookup, TestNodeSerialization, TestNodeLatchFields, TestPrefixScan family. go test ./btree/... -race -count=20 -timeout 10m -run 'TestCrabbingDelete|TestDeleteSpliceFirstChildAncestorFixesNextSibling': clean, no flakiness/hangs across 20 repeats. go test ./... -race -count=1 -timeout 8m: all engine module packages (btree, catalog, mvcc, wal, root) pass."
+    },
+    "edge_cases": {
+      "verdict": "PASS",
+      "evidence": "Single-level gj==0 nesting covered by the shipped TestDeleteSpliceFirstChildAncestorFixesNextSibling. Double-level gj==0 nesting (ANC first child of G, G first child of P1, P1 not first child of root) manually verified via a temporary, non-committed test (TestCDRAdversarialNestedGJZeroSplice) -- passed cleanly (10x -race repeat), confirming the walk-up/descend-down hop-counting generalizes to arbitrary nesting depth rather than only working by construction for the 1-level case. The root-reached-with-no-predecessor case (returns noSibling, nil) and the mid-walk-race defensive guards (curIdx<0, idx2<0, leaf-decoded-mid-descent) were reviewed and are consistent with the function's own documented 'hygiene-only, never correctness-required' contract."
+    },
+    "security": {
+      "verdict": "PASS",
+      "evidence": "No new external input surface. No change to key/path handling; findLeftNeighborAtSameLevel operates purely on already-validated internal node IDs."
+    },
+    "performance": {
+      "verdict": "PASS",
+      "evidence": "Fix-up remains best-effort (TryLock, not blocking Lock, for the final candidate) and adds at most O(tree height) single-latch-at-a-time hops in the rare case a splice happens at a first-child position -- bounded, low-frequency (only on internal-node degenerate-merge splices), and never adds latches to the common-case 2-3 latch delete window."
+    },
+    "maintainability": {
+      "verdict": "PASS",
+      "evidence": "Doc comments on findLeftNeighborAtSameLevel and the surrounding call site are thorough and explain both the walk-up/descend-down algorithm and why (grandParentID, grandParent, gj) are taken directly rather than re-derived. The rootMu-ordering invariant flagged in the prior review is now documented inline at both call sites, closing that maintainability gap."
+    },
+    "test_coverage": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "The shipped regression test only covers 1-level gj==0 nesting; it does not itself prove the walk-up generalizes to 2+ levels of nesting. This verification confirmed generalization via a temporary, non-committed test, but recommends the implementer consider adding a committed multi-level-nested variant (or parameterizing the existing test over nesting depth) for durable regression coverage, since a future refactor of findLeftNeighborAtSameLevel could regress the multi-level case while still passing the single-level shipped test."
+    },
+    "confidence": {
+      "verdict": "HIGH",
+      "evidence": "Backed by full hand-trace of the walk-up/descend-down index arithmetic for gj>0, single-level gj==0, and double-level gj==0 (verified by an actual passing test, not just static reasoning this time), full clean test suite including -race and repeat-count runs, and explicit verification that the first-iteration lock-reuse avoids self-deadlock."
+    },
+    "possible_improvements": [
+      "Add a committed test for 2+-level-nested gj==0 splicing (this verification's temporary TestCDRAdversarialNestedGJZeroSplice, deleted after use, can serve as a starting point) so the walk-up loop's generalization is durably regression-tested rather than resting on this verification's one-time manual check.",
+      "Consider a lightweight invariant check (even just in tests) that walks the entire level's NextSibling chain after every delete/merge in the stress tests to catch any future dangling-pointer regression earlier than a targeted unit test would."
+    ]
+  },
+  "commands_run": [
+    "git show f949d54 --stat",
+    "git show f949d54 -- engine/btree/delete.go",
+    "git show f949d54 -- engine/btree/delete_test.go",
+    "cd engine && go build ./... && go vet ./... && gofmt -l .",
+    "cd engine && go test ./btree/... -race -v -count=1 -timeout 5m",
+    "cd engine && go test ./btree/... -race -count=20 -timeout 10m -run 'TestCrabbingDelete|TestDeleteSpliceFirstChildAncestorFixesNextSibling'",
+    "cd engine && go test ./... -race -count=1 -timeout 8m",
+    "temporary (not committed, deleted after use) engine/btree/zzz_cdr_nested_gj0_test.go: TestCDRAdversarialNestedGJZeroSplice, 2-level-nested gj==0 chain, run standalone -race and -count=10 -race, both clean, then deleted"
+  ]
+}

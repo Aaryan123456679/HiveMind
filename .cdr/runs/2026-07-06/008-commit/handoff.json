@@ -1,0 +1,14 @@
+{
+  "run_id": "2026-07-06-008-commit",
+  "subtask": "2a.4.3",
+  "status": "completed",
+  "verdict_documented": "PASS",
+  "verification_run": "2026-07-06/007-verification",
+  "commits_documented": ["b46d466", "f949d54"],
+  "outputs": {
+    "commit_doc": ".cdr/commits/task-2a.4.3.md",
+    "task_index_entry": ".cdr/index/task.jsonl (id=task-2a.4.3, line 74)",
+    "feature_index": "no new entry added (repo convention: feature.jsonl tracks canonical-doc-level features only; no prior 2a.4.x subtask added an entry there)"
+  },
+  "notes": "task-2a.4.3 state transitioned implemented -> verified. Git commit messages already followed Problem/Solution/Impact standard, no amendment needed. No push performed."
+}
