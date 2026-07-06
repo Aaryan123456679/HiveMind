@@ -1,0 +1,15 @@
+{
+  "run_id": "2026-07-06-011-commit",
+  "subtask": "2a.4.4",
+  "status": "completed",
+  "verdict_documented": "PASS_WITH_COMMENTS",
+  "verification_run": "2026-07-06/010-verification",
+  "commits_documented": ["0bd232e"],
+  "outputs": {
+    "commit_doc": ".cdr/commits/task-2a.4.4.md",
+    "task_index_entry": ".cdr/index/task.jsonl (id=task-2a.4.4)",
+    "feature_index": "no new entry added (repo convention: feature.jsonl tracks canonical-doc-level features only; no prior 2a.4.x subtask added an entry there)",
+    "pending_memory_entry": ".cdr/memory/pending.md (new item: Tree.Lookup doc comments overclaim \"never calls Lock/TryLock\" re: t.Root()/rootMu, F1)"
+  },
+  "notes": "task-2a.4.4 state transitioned implemented -> verified. Git commit message for 0bd232e already followed Problem/Solution/Impact standard, no amendment needed. No push performed."
+}

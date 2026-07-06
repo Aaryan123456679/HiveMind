@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-2a.4.4",
+  "commit_verified": "0bd232e",
+  "cdr_bookkeeping_commit": "b9d33af",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Tree.Lookup implements a genuinely lock-free, version-bracketed optimistic read that never touches per-node latches; the torn-read safety argument is accurate and not understated. One real but narrow claim inaccuracy found: t.Root() (called at the top of every Tree.Lookup retry loop) acquires rootMu, so the claim of zero Lock/TryLock calls anywhere in the read path is not literally true, though this does not affect per-node lock-freedom or produce incorrect results.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "engine/btree/lookup.go: Tree.Lookup added additively; free Lookup (line 162) and descendToLeaf untouched. Reads and writes do not contend on per-node latches: readNodeOptimistic (lookup.go:227) only calls NodeStore.Version (atomic load) and NodeStore.ReadNode (plain ReadAt), never Lock/TryLock. Verified with `grep -n '\\.Lock(\\|\\.TryLock(\\|\\.Unlock(' engine/btree/lookup.go` -> zero matches."
+    },
+    "architecture_conformance": {
+      "status": "pass_with_comments",
+      "evidence": "lookupOnce (lookup.go:251) mirrors crabInsertOnce's Blink-tree move-right shape as claimed, using NextSibling/NextLeaf move-right recovery. Every node visited during a lookup attempt -- root, each internal node, every internal sibling peeked via NextSibling, the leaf, and every leaf sibling peeked via NextLeaf -- is read through readNodeOptimistic's version-before/ReadNode/version-after bracket; verified no gap exists by reading lookupOnce end-to-end. FINDING: Tree.Lookup (lookup.go:356) calls t.Root() at the top of every attempt/retry, and Root() (insert.go) is `t.rootMu.Lock(); defer t.rootMu.Unlock(); return t.root`. rootMu is a real sync.Mutex also acquired by Tree.Insert/Tree.Delete during the rare root-bootstrap and root-split windows (insert.go ~line 544, delete.go ~line 608-610). This means Tree.Lookup CAN be briefly blocked by a concurrent root-changing Insert/Delete, and vice versa -- contradicting the literal claim '(readNodeOptimistic/lookupOnce/Tree.Lookup) never calls NodeStore.Lock or NodeStore.TryLock ... anywhere in the read path' when read as an absolute 'reads never block, ever' guarantee. In practice this is narrow and low-impact (rootMu is uncontended except during the rare instant of first-insert-into-empty-tree or a root split), and does not affect the acceptance criterion's substantive intent (readers must not contend with writers on a per-node basis, which holds), but the doc comments overclaim and should be scoped to 'no per-node latch is ever acquired' rather than an unqualified 'no locks in the read path'. Recommend either rewording the claim or replacing rootMu with an atomic root pointer so the claim becomes literally true."
+    },
+    "torn_read_safety_argument": {
+      "status": "pass",
+      "priority": "highest",
+      "evidence": "Confirmed via source read of NodeStore.ReadNode/WriteNode (lookup.go ~59-121): each is exactly one os.File.ReadAt/WriteAt call of exactly NodeSize=4096 bytes at nodeID*NodeSize, no bufio/cache/buffering layer in front of the raw *os.File (grep for bufio/cache in engine/btree/*.go: none). WriteNode bumps the per-node atomic.Uint64 version via version.Add(1) strictly after WriteAt returns successfully; Version() is a plain atomic.Uint64.Load(). No shared mutable Go-level state crosses the reader/writer boundary: ReadNode always decodes into a freshly allocated []byte and fresh LeafNode/InternalNode value structs per call, and WriteNode's `encoded []byte` argument is always freshly produced by Encode() by the caller -- so there is no aliased slice/struct a writer could be mutating in-place while a reader observes it (which would be a genuine Go-level data race, not just a disk-level torn read). The only cross-goroutine synchronization on the read path is the atomic version counter itself, correctly used. Did not find a more serious problem than the one the implementer flagged: the residual gap is exactly and only the OS/hardware-level question of whether a same-offset, page-sized ReadAt can observe a torn/partial result from a concurrent WriteAt without the version bump yet being visible -- POSIX doesn't guarantee this for regular files (only PIPE_BUF-style guarantees apply to pipes), though in practice Linux/macOS buffered-file-I/O typically serializes same-page read/write via the page cache. The implementer's own characterization (documented, non-blocking, not closeable without reintroducing locking or a full seqlock) is accurate, not understated, and matches what I independently verified.",
+      "race_testing": "Ran the shipped `go test ./btree/... -race -run TestOptimisticRead -count=25 -timeout 15m` (35s) clean, plus a temporary (deleted after use) adversarial test with 64 reader goroutines against a tight/overlapping key set and 16 writer goroutines doing continuous Insert+Delete (~3200 structural mutations total across a ~200s run) -- race-clean, no corrupted/stale fileID observed. No evidence of a real Go-level data race in this path."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "ForcedRetryDeterministic (lookup_test.go): genuinely forces a retry -- pauses Tree.Lookup inside optimisticReadHook after ReadNode but before the confirming Version() re-read, then a separate goroutine performs a REAL tree.Insert that lands on and bumps the version of the exact paused node, only then releases the paused lookup; asserts both atomic retries counter > 0 (via optimisticRetryHook) AND that the final Lookup result is correct -- not merely that the hook fired. InterleavedWithInsertDelete: partitions keys via i%3 into disjoint delete-only / insert-only / untouched-only sets (no key is targeted by more than one operation type), avoiding same-key insert/delete/read races that would make 'the correct answer' ambiguous -- consistent with the 2a.4.2/2a.4.3 oracle convention. NoConcurrency cross-checks Tree.Lookup against the untouched Phase-1 free Lookup over a multi-level (n=500) tree."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go build ./... && go vet ./... && gofmt -l . : clean, no output. go test ./btree/... -race -v -count=1 -timeout 5m: all tests pass (42s), zero regressions across Phase-1, 2a.4.1-2a.4.4 suites (TestCrabbingInsert, TestCrabbingDelete, TestCrabbingConcurrentPropagateNoDeadlock, TestLookup, TestOptimisticRead, TestNodeLatchFields, TestPrefixScan*, etc). go test ./btree/... -race -count=25 -timeout 15m -run TestOptimisticRead: clean (36.7s), exceeding implementer's own count=10. go test ./... -race -count=1 -timeout 8m: clean across engine, engine/btree, engine/catalog, engine/mvcc, engine/wal (no test files in graph/loadtest/rpc/split)."
+    },
+    "security": {"status": "pass", "evidence": "No new external inputs, no new I/O surface beyond existing NodeStore.ReadNode; retains the same reserved-node-ID guard."},
+    "performance": {"status": "pass", "evidence": "Read path is O(descent depth) atomic loads plus plain ReadAt calls, no allocation-heavy retry machinery beyond existing jittered backoff; no regression risk to hot path."},
+    "maintainability": {"status": "pass_with_comments", "evidence": "Doc comments are thorough and mirror established conventions (crabRetryHook/crabRetryBackoff), but the 'never calls Lock/TryLock' claim on Tree.Lookup should be scoped/qualified given the t.Root()->rootMu.Lock() call (see architecture_conformance finding)."},
+    "confidence": {"status": "high", "evidence": "Independently re-derived the full call graph, syscall-level I/O path, and atomicity argument from source; ran build/vet/fmt, the full race suite, an elevated-count targeted race run, the whole-module race suite, and an additional adversarial temp stress test beyond the shipped tests -- all clean."}
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "low",
+      "dimension": "architecture_conformance",
+      "description": "Tree.Lookup's retry loop calls t.Root(), which acquires rootMu (a real sync.Mutex also used by Tree.Insert/Tree.Delete during root-bootstrap/root-split). This contradicts the literal 'zero Lock/TryLock calls anywhere in the read path' claim; a concurrent Lookup can be briefly blocked by, or briefly block, a root-changing Insert/Delete.",
+      "recommendation": "Reword the doc comment to scope the guarantee to per-node latches (which is what actually matters for eliminating reader/writer contention on structural nodes), or replace rootMu with an atomic root pointer so the literal claim holds."
+    }
+  ],
+  "commands_run": [
+    "go build ./... (engine/)",
+    "go vet ./... (engine/)",
+    "gofmt -l . (engine/)",
+    "go test ./btree/... -race -v -count=1 -timeout 5m",
+    "go test ./btree/... -race -count=25 -timeout 15m -run TestOptimisticRead",
+    "go test ./... -race -count=1 -timeout 8m",
+    "temporary adversarial stress test (engine/btree/zz_adversarial_test.go, deleted after use): 64 readers / 16 writers, tight key overlap, -race, ~200s run, clean"
+  ]
+}
