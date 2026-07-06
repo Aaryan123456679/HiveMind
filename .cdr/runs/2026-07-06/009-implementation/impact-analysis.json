@@ -1,0 +1,19 @@
+{
+  "subtask": "task-2a.4.4",
+  "files_changed": [
+    {
+      "path": "engine/btree/lookup.go",
+      "change": "Add Tree.Lookup (new concurrent entry point) plus internal helpers: errOptimisticRetry sentinel, optimisticRetryHook test hook, readNodeOptimistic (version-bracketed single-node read), and lookupOnce (Blink-tree move-right descent mirroring crabInsertOnce's shape, lock-free). Existing free function Lookup and descendToLeaf are untouched."
+    },
+    {
+      "path": "engine/btree/lookup_test.go",
+      "change": "Add TestOptimisticRead: (a) no-concurrency baseline via Tree.Lookup, (b) concurrent Tree.Lookup racing Tree.Insert/Tree.Delete with an independent oracle (mirrors testCrabbingDeleteInterleavedWithInsert's style), (c) deterministic forced-retry test using optimisticRetryHook + a write injected mid-lookup via a synchronization channel."
+    }
+  ],
+  "call_sites_touched": [],
+  "risk": [
+    "Torn on-disk read: ReadNode/WriteNode are single NodeSize(4096)-byte syscalls with no OS-level atomicity guarantee across concurrent ReadAt/WriteAt on the same file region on all platforms/filesystems. The version-mismatch check catches the common case (version bumped strictly after WriteAt completes) but there is a theoretical residual window: content read overlaps the write's WriteAt call, and the version bump (which happens after WriteAt returns) has not yet executed by the time the reader's post-read version check runs, so v1==v2 could observe a torn buffer. Documented explicitly in plan.md; not fixed by locking (forbidden by requirement) and not fixed by changing the version-bump protocol (out of scope, would touch 2a.4.1's established seqlock-free design relied on by 2a.4.2/2a.4.3). Tracked as a deferred, documented residual risk, consistent with this task's 'no cap on retry loop' convention of documenting rather than gold-plating.",
+    "No retry cap on lookupOnce's restart-from-root loop, mirroring crabInsert/crabDelete's existing convention -- intentional, not an oversight."
+  ],
+  "regression_surface": "Existing free Lookup/descendToLeaf untouched; existing Tree.Insert/Tree.Delete untouched; new code is purely additive (new exported Tree.Lookup method + unexported helpers)."
+}

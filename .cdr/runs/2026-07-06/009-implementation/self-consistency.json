@@ -1,0 +1,14 @@
+{
+  "subtask": "task-2a.4.4",
+  "checks": [
+    {"check": "go build ./... (from engine/)", "result": "clean"},
+    {"check": "go vet ./... (from engine/)", "result": "clean"},
+    {"check": "gofmt -l . (from engine/)", "result": "no files listed"},
+    {"check": "go test ./btree/... -race -run TestOptimisticRead -v -timeout 3m", "result": "PASS (NoConcurrency, InterleavedWithInsertDelete, ForcedRetryDeterministic)"},
+    {"check": "go test ./btree/... -race -v -count=1 -timeout 5m (full package, incl. 2a.4.1-2a.4.3's tests)", "result": "PASS, zero regressions, 41.15s"},
+    {"check": "go test ./btree/... -race -run TestOptimisticRead -count=10 -timeout 8m", "result": "PASS, 15.5s, no flakiness/deadlock"},
+    {"check": "grep for .Lock(/.TryLock( in readNodeOptimistic/lookupOnce/Tree.Lookup bodies", "result": "zero matches outside comments -- optimistic read path never blocks"},
+    {"check": "validation-matrix coverage", "result": "all 8 rows covered by the checks/tests above"}
+  ],
+  "note": "This is internal sanity only (build green, matrix covered) -- NOT independent verification. /cdr:verify still required."
+}

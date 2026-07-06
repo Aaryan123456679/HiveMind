@@ -1,0 +1,13 @@
+{
+  "subtask": "task-2a.4.4",
+  "rows": [
+    {"criterion": "Reads do not block writers", "coverage": "readNodeOptimistic/lookupOnce/Tree.Lookup never call Lock/TryLock; code review + grep in self-consistency.", "test": "N/A (structural), grep check"},
+    {"criterion": "Writers do not block on readers", "coverage": "Writers only ever call Lock (mutex), never touch a reader-only path; unchanged from 2a.4.1-2a.4.3.", "test": "existing insert/delete tests unaffected"},
+    {"criterion": "Overlapping structural mutation during read is detected and retried, not returned as corrupt/stale", "coverage": "version-before/content-read/version-after bracket per node hop; mismatch -> errOptimisticRetry -> whole-lookup restart from current root", "test": "TestOptimisticRead/ForcedRetryDeterministic"},
+    {"criterion": "No-concurrency baseline correctness", "coverage": "Tree.Lookup matches Phase-1 Lookup for present/absent keys on a multi-level tree", "test": "TestOptimisticRead/NoConcurrency"},
+    {"criterion": "Concurrent reads vs concurrent writes never return corrupted data, race-clean", "coverage": "concurrent Tree.Lookup goroutines vs concurrent Tree.Insert/Tree.Delete goroutines, oracle-checked, -race", "test": "TestOptimisticRead/InterleavedWithInsertDelete"},
+    {"criterion": "Blink-tree move-right reuse for reads", "coverage": "lookupOnce mirrors crabInsertOnce's NextSibling/LowKey (internal) and NextLeaf/first-key (leaf) move-right loops", "test": "covered implicitly by InterleavedWithInsertDelete (concurrent splits force move-right) + NoConcurrency (multi-level tree)"},
+    {"criterion": "No regressions in existing Phase-1 lookup / 2a.4.1-2a.4.3 tests", "coverage": "full package test suite", "test": "go test ./engine/btree/... -race -v -count=1 -timeout 5m"},
+    {"criterion": "Retry path deadlock/flake-free under repeat", "coverage": "repeat run of the new test", "test": "go test ./engine/btree/... -race -run TestOptimisticRead -count=10 -timeout 8m"}
+  ]
+}

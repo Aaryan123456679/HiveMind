@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-06-009-implementation",
+  "subtask": "task-2a.4.4",
+  "commit": "0bd232e",
+  "files_changed": [
+    "engine/btree/lookup.go",
+    "engine/btree/lookup_test.go"
+  ],
+  "pointers": {
+    "new_entry_point": "engine/btree/lookup.go: func (t *Tree) Lookup(path string) (fileID uint64, found bool, err error)",
+    "core_helpers": [
+      "engine/btree/lookup.go: func readNodeOptimistic(store *NodeStore, nodeID uint64) (isLeaf bool, leaf LeafNode, internal InternalNode, ok bool, err error) -- version-before/ReadNode/version-after bracket, never calls Lock/TryLock",
+      "engine/btree/lookup.go: func lookupOnce(store *NodeStore, rootID uint64, path string) (fileID uint64, found bool, err error) -- Blink-tree move-right descent mirroring crabInsertOnce's shape, lock-free",
+      "engine/btree/lookup.go: var errOptimisticRetry, var optimisticReadHook, var optimisticRetryHook (test-only synchronization hooks, nil no-op in production, mirroring crabRetryHook's shape)"
+    ],
+    "tests": [
+      "engine/btree/lookup_test.go: func TestOptimisticRead (t.Run: NoConcurrency, InterleavedWithInsertDelete, ForcedRetryDeterministic)"
+    ],
+    "unchanged": [
+      "engine/btree/lookup.go: free function Lookup and descendToLeaf -- untouched, still the single-threaded Phase-1 API relied on elsewhere"
+    ]
+  },
+  "protocol_summary": "Per-node optimistic read: (1) atomic Version(nodeID) load before, (2) ReadNode (plain ReadAt+decode, no synchronization), (3) atomic Version(nodeID) load after; ok iff the two loads are equal. Applied to every node visited during descent, including every sibling peeked while chasing InternalNode.NextSibling/LeafNode.NextLeaf for Blink-tree move-right recovery (mirrors crabInsertOnce's exact routing logic, insert.go ~L625-725). Any single mismatch discards the entire lookup attempt and restarts descent from t.Root() (re-read fresh, in case of a concurrent root split), with crabRetryBackoff jitter and no retry cap -- same convention as crabInsert/crabDelete's TryLock-miss restart loops.",
+  "torn_read_safety_argument": "NodeStore.ReadNode and NodeStore.WriteNode are each exactly one syscall (ReadAt/WriteAt respectively) of exactly NodeSize=4096 bytes (one common VM page). WriteNode bumps the version strictly AFTER its WriteAt returns, so if a reader's before/after Version loads are equal, no WriteNode call for that node completed its version bump within the read's window -- sufficient in the ordinary case where the OS does not interleave a concurrent same-page ReadAt/WriteAt byte-by-byte. RESIDUAL, DOCUMENTED, NON-BLOCKING RISK (not eliminated by this subtask): POSIX does not guarantee ReadAt/WriteAt atomicity against each other for arbitrary N; in principle a reader's content read could overlap the tail of a writer's WriteAt (a genuine torn read at the OS/page-cache level) while the writer's version.Add(1) (unsynchronized with the reader's second Version load) has not yet executed, producing v1==v2 over a torn buffer. Not closed by adding Lock/TryLock to the read path (would defeat this subtask's acceptance criterion) nor by changing WriteNode's version-bump scheme to a full seqlock odd/even pair (2a.4.1's explicit, already-verified design choice, relied on by 2a.4.2/2a.4.3; changing it is out of this subtask's scope). See plan.md for the full reasoning.",
+  "deferred_gaps_for_2a.4.5": [
+    "The torn-read residual risk above: a real seqlock (odd-during-write/even-when-stable version scheme in WriteNode) would close it fully but requires revisiting 2a.4.1's shipped design; flag for any future hardening pass, not blocking for 2a.4.5's mixed-workload suite.",
+    "No retry cap on lookupOnce's restart-from-root loop -- same convention as crabInsert/crabDelete's TryLock-miss loops (theoretical livelock risk under adversarial scheduling, mitigated by jittered backoff, never observed).",
+    "No latch/version-registry eviction (pre-existing open item from 2a.4.1, not addressed here, still out of scope).",
+    "2a.4.5 (full mixed-workload race suite) should include Tree.Lookup alongside Tree.Insert/Tree.Delete in its combined stress driver -- this subtask's InterleavedWithInsertDelete test is package-scoped and moderate in scale (4000 keys, 8+8+8 goroutines), not a substitute for 2a.4.5's broader combined suite."
+  ],
+  "self_consistency": "self-consistency.json in this run dir: go build/vet/gofmt clean, full engine/btree -race suite green (41.15s, zero regressions), TestOptimisticRead -count=10 -race clean (15.5s), grep-verified zero Lock/TryLock calls in the new read path.",
+  "verification_required": true,
+  "note": "Implementation agent does not verify its own work. Run /cdr:verify next."
+}
