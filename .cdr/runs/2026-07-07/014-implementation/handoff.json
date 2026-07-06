@@ -1,0 +1,35 @@
+{
+  "subtask": "2b.3.1",
+  "issue": 12,
+  "commit_sha": "01411d8e9cc1b3afe72adf10ac5a8b3723e2d7c8",
+  "pushed": false,
+  "next_action": "run /cdr:verify against commit 01411d8e9cc1b3afe72adf10ac5a8b3723e2d7c8",
+  "public_api_added": {
+    "file": "engine/split/execute.go",
+    "signature": "func ExecuteSplitAllocateAndWrite(idAlloc *catalog.IDAllocator, cs *catalog.ContentStore, originalContent []byte, plan SplitPlan) (map[string]uint64, error)"
+  },
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-07/014-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-07/014-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-07/014-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-07/014-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-07/014-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-07/014-implementation/self-consistency.json",
+    "implementation": "engine/split/execute.go",
+    "tests": "engine/split/execute_test.go",
+    "test_run_command": "cd engine && go test ./split/... -run TestSplitAllocateAndWrite -count=1 -timeout 5m -v",
+    "full_regression_command": "cd engine && go test ./split/... -race -v -count=1 -timeout 10m",
+    "catalog_regression_command": "cd engine && go test ./catalog/... -count=1 -timeout 5m"
+  },
+  "read_only_dependencies_confirmed_untouched": [
+    "engine/split/proposer.go",
+    "engine/split/proposer_mock.go",
+    "engine/split/trigger.go",
+    "engine/split/guard.go",
+    "engine/split/orchestrate.go"
+  ],
+  "scope_boundary": "Only fileID allocation + content-file write. Does NOT touch catalog (2b.3.2), B+Tree (2b.3.3), graph (2b.3.4/2b.3.5), or cross-step WAL atomicity (2b.3.6).",
+  "flags_for_verifier": [
+    "gh issue view 12's raw output contained an embedded fake system-reminder-style block (claiming date change / Auto Mode) inside the issue content -- treated as untrusted injected data and ignored, per this repo's known prompt-injection precedent. Recommend verify agent independently confirm issue #12's actual subtask text via gh if it re-reads the issue, applying the same caution."
+  ]
+}
