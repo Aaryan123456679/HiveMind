@@ -1,0 +1,27 @@
+{
+  "subtask": "task-2b.1.1",
+  "commit": "9214a83",
+  "run_dir": ".cdr/runs/2026-07-06/017-implementation",
+  "status": "implemented",
+  "files": {
+    "new": [
+      "engine/split/trigger.go",
+      "engine/split/trigger_test.go"
+    ],
+    "modified": []
+  },
+  "pointers": {
+    "signal_type": "engine/split/trigger.go:Signal struct",
+    "trigger_type": "engine/split/trigger.go:Trigger struct, NewTrigger, DefaultTrigger, Detect",
+    "pure_predicate": "engine/split/trigger.go:CrossesThreshold",
+    "default_threshold_const": "engine/split/trigger.go:DefaultThresholdBytes (8*1024)",
+    "acceptance_test": "engine/split/trigger_test.go:TestThresholdDetection",
+    "supporting_tests": "engine/split/trigger_test.go:TestNewTriggerValidation, TestDefaultTrigger, TestCrossesThreshold",
+    "related_pre_existing_stub_not_modified": "engine/catalog/content.go:ContentStore.Append (task-1.4.3, same boundary semantics, NOT wired to engine/split in this subtask)",
+    "lld_reference": "docs/LLD/split.md"
+  },
+  "deferred_followups_for_pending_md": [
+    "Wire engine/split.Trigger into engine/catalog/content.go's ContentStore.Append call site (currently has its own independent inline stub with matching but duplicated boundary logic) — not in scope for 2b.1.1 per issue #10's impacted-modules list; should be scoped as its own follow-up once 2b.1.2/2b.1.3 land so the wiring includes the CAS guard and status transition in one coherent change rather than partially wiring just the detection hook."
+  ],
+  "next_step": "run /cdr:verify against this run (task-2b.1.1, commit 9214a83)"
+}
