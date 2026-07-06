@@ -1,0 +1,28 @@
+{
+  "criteria": [
+    {
+      "acceptance_criterion": "test-only mock implementation returns fixed, deterministic [{newPath, sectionRanges}] + redirect-summary fixtures",
+      "covered_by_test": "TestMockSplitProposer/default_plan_for_known_fixture_input (calls ProposeSplit twice with identical fileContent, asserts identical FixtureSplitPlan both times)"
+    },
+    {
+      "acceptance_criterion": "unblocks split-sequence testing before real ProposeSplit RPC exists (caller-configurable, reusable)",
+      "covered_by_test": "TestMockSplitProposer/caller-registered_plan_keyed_by_exact_fileContent (WithPlan) and MockSplitProposer being exported from a non-_test.go file for cross-package reuse"
+    },
+    {
+      "acceptance_criterion": "error path must not be acted on (per SplitProposer doc contract)",
+      "covered_by_test": "TestMockSplitProposer/caller-registered_error_keyed_by_exact_fileContent_takes_precedence and /default_error_when_no_fixture_matches (both assert zero SplitPlan{} returned alongside non-nil error)"
+    },
+    {
+      "acceptance_criterion": "SectionRange fixtures are well-formed (0 <= Start <= End <= len(fileContent))",
+      "covered_by_test": "TestMockSplitProposer/fixture_SectionRanges_respect_the_[0,_len(fileContent)]_invariant"
+    },
+    {
+      "acceptance_criterion": "go test ./engine/split/... -run TestMockSplitProposer passes",
+      "covered_by_test": "self-consistency step: go test ./split/... -run TestMockSplitProposer -count=1 -timeout 5m (from engine/) - PASS"
+    },
+    {
+      "acceptance_criterion": "no regressions to existing engine/split tests (2b.1.1/2b.1.2/2b.1.3/2b.2.1)",
+      "covered_by_test": "self-consistency step: go test ./split/... -race -v -count=1 -timeout 10m - all existing tests (TestSplitProposerInterface, TestThresholdDetection, TestNewTriggerValidation, TestDefaultTrigger, TestCrossesThreshold, TestSplittingStatusIsolation, guard tests) PASS unchanged"
+    }
+  ]
+}

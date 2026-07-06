@@ -1,0 +1,19 @@
+{
+  "subtask": "2b.2.2",
+  "files_added": [
+    "engine/split/proposer_mock.go",
+    "engine/split/proposer_mock_test.go"
+  ],
+  "files_modified": [],
+  "files_forbidden_untouched": [
+    "engine/split/proposer.go",
+    "engine/split/trigger.go",
+    "engine/split/guard.go",
+    "engine/split/orchestrate.go"
+  ],
+  "downstream_consumers": [
+    "future issue #12 (atomic split-transaction execution) test-writing may import MockSplitProposer/FixtureSplitPlan/FixtureFileContent from engine/split as a non-test-only exported package member"
+  ],
+  "risk": "low - additive only, no changes to existing types/interfaces/logic; new file does not alter build graph of any existing package consumer",
+  "regression_surface": "engine/split package tests only (proposer_test.go, trigger_test.go, guard_test.go, orchestrate_test.go) - verified no changes in behavior via full package test run"
+}

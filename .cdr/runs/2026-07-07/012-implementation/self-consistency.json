@@ -1,0 +1,12 @@
+{
+  "commands_run_from": "engine/",
+  "checks": [
+    { "cmd": "go build ./...", "result": "clean, no output" },
+    { "cmd": "go vet ./...", "result": "clean, no output" },
+    { "cmd": "gofmt -l .", "result": "clean, no files listed" },
+    { "cmd": "go test ./split/... -run TestMockSplitProposer -count=1 -timeout 5m -v", "result": "PASS, all 5 subtests" },
+    { "cmd": "go test ./split/... -race -v -count=1 -timeout 10m", "result": "PASS - full split package, zero regressions to TestSplitProposerInterface, TestThresholdDetection, TestNewTriggerValidation, TestDefaultTrigger, TestCrossesThreshold, guard/orchestrate tests" }
+  ],
+  "files_untouched_confirmed": ["proposer.go", "trigger.go", "guard.go", "orchestrate.go"],
+  "note": "Self-consistency only; NOT independent verification per invariant I4. /cdr:verify must review this run."
+}
