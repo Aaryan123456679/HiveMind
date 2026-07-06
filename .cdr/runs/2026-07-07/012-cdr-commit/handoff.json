@@ -1,0 +1,12 @@
+{
+  "run_id": "2026-07-07-012-cdr-commit",
+  "subtask": "2b.2.1",
+  "outputs": {
+    "commit_doc": ".cdr/commits/task-2b.2.1.md",
+    "task_index_entry": ".cdr/index/task.jsonl (id=task-2b.2.1)",
+    "verification_ref": ".cdr/runs/2026-07-07/011-verification/verification.json",
+    "implementation_ref": ".cdr/runs/2026-07-07/010-implementation/",
+    "implementation_commit": "02b6e2d"
+  },
+  "notes": "Docs-only local commit (not pushed). Issue #11 remains open pending 2b.2.2."
+}

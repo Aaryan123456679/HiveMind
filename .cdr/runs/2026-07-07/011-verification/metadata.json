@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "011-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "2b.2.1",
+  "git_head": "02b6e2d74e650beca2b05866b3eaa64065203e64",
+  "run_key": "sha256:2b.2.1|02b6e2d|SplitProposer-interface-verify",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-07T00:00:00Z",
+  "ended_at": "2026-07-07T00:10:00Z"
+}
