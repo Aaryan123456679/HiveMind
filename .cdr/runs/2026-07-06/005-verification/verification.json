@@ -1,0 +1,69 @@
+{
+  "subtask": "2a.4.3",
+  "commit": "b46d466cce6f6e837784523db92de4518988169c",
+  "verdict": "CHANGES_REQUESTED",
+  "summary": "Concurrent-delete crabbing discipline (TryLock+full-release+restart-from-root) is correctly reused and is genuinely deadlock-free per static wait-for-graph analysis and 10 clean adversarial stress runs (128 goroutines x 400 mixed insert/delete/lookup ops, -race, no hangs, no data races). However, the implementer's own claim that the deferred 'cross-grandparent dangling NextSibling' gap is inert/low-risk is factually contradicted by the code: NextSibling is actively dereferenced as a load-bearing 'move right on overshoot' mechanism during top-down descent in both crabDeleteOnce and crabInsertOnce (identical to findParent's own use of it, per 2a.4.2's established B-link design). A stale NextSibling left dangling after spliceOutDegenerateAncestor's grandparent-splice can therefore be followed by a live, concurrent descent into an abandoned, permanently-unreachable-via-Children node -- and because node IDs are never reused/freed, this is not a transient race window but a standing corruption that can misroute future lookups/inserts/deletes. Worse, the fix-up code only ever attempts repair when gj > 0 (the spliced ancestor has a same-grandparent left sibling); whenever the spliced ancestor is its grandparent's FIRST child (gj == 0), the true left neighbor lives under an adjacent grandparent and is deterministically never patched -- this is not even probabilistic, it is a guaranteed miss whenever that structural condition holds. This requires a real fix (or at minimum a proof, backed by a passing adversarial test, that the poisoned link can never actually be reached/misinterpreted), not merely a documented deferral, before this subtask can be accepted as done. Recommend CHANGES_REQUESTED.",
+  "dimensions": {
+    "requirements": {
+      "verdict": "PARTIAL",
+      "evidence": "Concurrent delete removes keys correctly and reuses the crabbing discipline as required (verified via TestCrabbingDelete's 3 subtests, all passing, plus 15x repeat run clean). However 'without corrupting sibling/parent pointers' is NOT fully satisfied: the cross-grandparent NextSibling gap (delete.go lines ~1023-1043) is a genuine, sometimes-deterministic sibling-pointer corruption, contradicting the acceptance criterion's explicit wording."
+    },
+    "architecture_conformance": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "crabDeleteOnce correctly duplicates (not refactors) crabInsertOnce's window-of-2 TryLock shape; reuses errRestartFromRoot/crabRetryBackoff/crabRetryHook/findParent from insert.go unmodified (confirmed: insert.go has zero diff in this commit -- git show b46d466 --stat shows only delete.go/delete_test.go touched). Ancestor cascade mirrors propagate's 1-latch-at-a-time climbing loop. One undocumented divergence from insert.go's stated invariant: deleteFromLeafAndRepair (delete.go:607) and finishParentShrinkAfterDelete (delete.go:937) acquire rootMu WHILE HOLDING an existing node latch (leafID / parentID), the reverse of insert.go's documented rootMu-first-then-fresh-node-latch-only ordering (insert.go:503, 542, 1003). This is proven currently safe by a static argument (rootMu is always a wait-for-graph sink in this codebase: no code path holds rootMu and then Lock()s an existing/contended node -- only brand-new, guaranteed-uncontended nodes), but it is an undocumented, fragile pattern: a future change adding any store.Lock/TryLock call inside a rootMu-held section on an existing node would reintroduce the exact AB-BA deadlock class that 2a.4.2 spent 4 rounds fixing. Should be commented explicitly as a load-bearing invariant, not left implicit."
+    },
+    "deadlock_audit": {
+      "verdict": "PASS",
+      "evidence": "Enumerated every Lock/TryLock call site in the new delete.go code (crabDeleteOnce, deleteFromLeafAndRepair, repairEmptyLeaf, repairEmptyLeafAtParent, finishParentShrinkAfterDelete, spliceOutDegenerateAncestor). Every blocking store.Lock call is either (a) the very first latch in a fresh descent/walk (crabDeleteOnce's Lock(rootID); repairEmptyLeafAtParent's Lock(parentID) right after a fresh findParent; spliceOutDegenerateAncestor's Lock(grandParentID) right after a fresh findParent) with nothing else held, or (b) rootMu, which per the analysis above never blocks while any code holds it waiting on a per-node latch. The 3-latch merge-repair window (parent, empty leaf, sibling) genuinely acquires the 3rd (sibling) latch via TryLock only (delete.go lines ~1030s / ~1063s for left/right candidates), and every miss path releases ALL currently-held latches (verified line-by-line: every 'return false, errRestartFromRoot' branch in repairEmptyLeafAtParent unlocks leafID and parentID, and leftID/rightID when already acquired, before returning) before returning errRestartFromRoot, matching insert.go's proven-safe discipline exactly. No path found where parent+leaf are held via blocking Lock while sibling TryLock fails without a full release."
+    },
+    "adversarial_deadlock_stress": {
+      "verdict": "PASS",
+      "evidence": "Wrote a temporary (deleted after use, not committed) TestCDRAdversarialDeleteInsertStress: 128 goroutines x 400 randomized mixed Insert/Delete/Lookup ops each (51,200 total ops) against a shared 6000-key tree, targeting overlapping/random key ranges to force concurrent merges, splits, and ancestor splices to contend on the same nodes. Ran with `go test ./btree/... -race -run TestCDRAdversarialDeleteInsertStress -timeout 5m` 5 times individually (each completed in ~1.2-2s, well under a 90s in-test deadlock-detection deadline) plus `-count=5 -timeout 5m` for 5 more (10 total clean runs). Zero hangs, zero -race reports, zero errors. This is comparable in scale to the workload that originally caught the 2a.4.2 deadlock."
+    },
+    "regression_risk": {
+      "verdict": "PASS",
+      "evidence": "Full `go test ./engine/btree/... -race -v -count=1 -timeout 5m` passes with zero regressions (all Phase-1 single-threaded delete tests: EmptyTree, AbsentKey, SingleLeaf, LeafMerge, InternalMerge, InsertLookupIntegration, EmptiesSingleLeafTree, ThreeLevelNoSiblingTypeMismatchDataLoss; all 2a.4.2 tests: TestCrabbingInsert x4 subtests, TestCrabbingConcurrentPropagateNoDeadlock; TestLookup, TestNodeSerialization, TestNodeLatchFields, TestPrefixScan x4). `TestCrabbingDelete -count=15 -timeout 10m` clean. Full `go test ./... -race -count=1 -timeout 8m` across the whole engine module (btree, catalog, mvcc, wal, root) passes with zero failures. `go build ./...`, `go vet ./...`, `gofmt -l` all clean (run from engine/ module dir, since repo uses go.work with engine/ and api/ as separate modules)."
+    },
+    "edge_cases": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "SameKeyRace correctly asserts exactly 1 of 16 concurrent racers observes found=true. DisjointSubtrees exercises 24-goroutine round-robin contention. The deferred cross-grandparent NextSibling gap (see requirements/architecture findings above) is itself an unhandled edge case that the implementer characterized incorrectly as inert."
+    },
+    "security": {
+      "verdict": "PASS",
+      "evidence": "No new external input surface; no injection/auth-relevant code introduced. Delete's path parameter is treated as an opaque sorted string key throughout, consistent with existing Lookup/Insert handling."
+    },
+    "performance": {
+      "verdict": "PASS",
+      "evidence": "Latch-crabbing window remains bounded (2-3 latches max) as designed; stress test of 51,200 mixed ops across 128 goroutines completed in ~1.2-2s wall time, consistent with the low-contention design goal for disjoint-subtree operations."
+    },
+    "maintainability": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "Deliberate duplication of crabInsertOnce's shape into crabDeleteOnce (rather than refactoring into a shared generic descent helper) is a reasonable, explicitly-justified tradeoff given insert.go's 'do not touch, now hard-won correct' status, but does mean any future 2a.4.2-style deadlock fix to the descent shape must be manually ported to both crabInsertOnce and crabDeleteOnce -- worth tracking. The rootMu-ordering divergence noted under architecture_conformance should be documented inline, not left implicit, given this codebase's history."
+    },
+    "test_coverage": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "TestCrabbingDelete's InterleavedWithInsert oracle is genuinely well-defined: delete targets (i%3==0 keys) and insert targets (newKey(i) for i%3==1, a distinct derived key string) are drawn from disjoint key spaces by construction, deliberately avoiding the same-key insert-vs-delete race ambiguity, mirroring engine/catalog's TestStripedConcurrencyStress pattern as claimed. However, no test in delete_test.go exercises the specific gj==0 cross-grandparent-splice scenario that would surface the dangling-NextSibling defect found in this review -- this is the concrete missing test that should have caught the requirements gap above."
+    },
+    "confidence": {
+      "verdict": "MEDIUM-HIGH",
+      "evidence": "High confidence in the deadlock-freedom finding (backed by exhaustive static call-site enumeration plus 10 clean high-concurrency stress runs). High confidence in the NextSibling-dangling-pointer finding as well (backed by direct code citations showing NextSibling is actively dereferenced during descent in both crabDeleteOnce and crabInsertOnce, and that the gj==0 case is a deterministic, non-racy miss in the fix-up code) -- but this specific defect was not reproduced via a live concurrent repro within this review's time budget (would require deliberately engineering a multi-level tree where a spliced degenerate ancestor is its grandparent's first child); the finding rests on static code-path analysis rather than an observed test failure."
+    },
+    "possible_improvements": [
+      "Fix or fully re-scope the cross-grandparent NextSibling gap: either extend spliceOutDegenerateAncestor to also handle gj==0 (locate the true left neighbor via the great-grandparent), or make the fix-up mandatory (errRestartFromRoot on TryLock miss) rather than best-effort, or -- if truly deferring to 2a.4.4/2a.4.5 -- change crabDeleteOnce/crabInsertOnce's move-right logic to validate the target via a secondary check (e.g. confirm the node is still reachable/expected) before trusting a followed NextSibling link, and add an explicit test proving the deferred gap is inert given that safeguard.",
+      "Document the rootMu-acquired-while-holding-a-node-latch pattern in deleteFromLeafAndRepair/finishParentShrinkAfterDelete as an explicit, load-bearing invariant (mirroring insert.go's Tree doc comment), including the specific reason it's safe (rootMu is always a sink in the wait-for graph) so future changes don't silently violate it.",
+      "Add a test that specifically constructs a multi-level tree where the degenerate-ancestor splice happens at gj==0 (first child of its grandparent) and asserts the true left neighbor's NextSibling is either correctly patched or is never later followed to an incorrect result."
+    ]
+  },
+  "commands_run": [
+    "git show b46d466 --stat",
+    "git show b46d466 -- engine/btree/delete.go",
+    "git show b46d466 -- engine/btree/delete_test.go",
+    "cd engine && go build ./... && go vet ./... && gofmt -l ./btree/",
+    "cd engine && go test ./btree/... -race -v -count=1 -timeout 5m",
+    "cd engine && go test ./btree/... -race -run TestCrabbingDelete -count=15 -timeout 10m",
+    "cd engine && go test ./btree/... -race -run TestCDRAdversarialDeleteInsertStress -v -timeout 5m (x5 individual runs)",
+    "cd engine && go test ./btree/... -race -run TestCDRAdversarialDeleteInsertStress -count=5 -timeout 5m",
+    "cd engine && go test ./... -race -count=1 -timeout 8m",
+    "temp stress test file engine/btree/zzz_cdr_stress_test.go deleted after use, not committed"
+  ]
+}

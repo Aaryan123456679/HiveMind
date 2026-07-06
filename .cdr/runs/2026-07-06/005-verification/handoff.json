@@ -1,0 +1,15 @@
+{
+  "run_id": "2026-07-06-005-verification",
+  "subtask": "2a.4.3",
+  "commit": "b46d466cce6f6e837784523db92de4518988169c",
+  "verdict": "CHANGES_REQUESTED",
+  "verification_json": ".cdr/runs/2026-07-06/005-verification/verification.json",
+  "regression_entry": ".cdr/index/regression.jsonl (last line, title: 'Dangling cross-grandparent NextSibling after degenerate-ancestor splice is load-bearing, not inert')",
+  "key_evidence_paths": [
+    "engine/btree/delete.go:1023-1043",
+    "engine/btree/delete.go:533-560",
+    "engine/btree/delete.go:607,937 (rootMu-while-node-latch-held ordering divergence, proven safe but undocumented)",
+    "engine/btree/insert.go:679-697,913-931,503,542,1003"
+  ],
+  "next_step": "Implementer must address the gj==0 dangling NextSibling gap (fix or safeguard + test) before this subtask can be re-verified as PASS."
+}

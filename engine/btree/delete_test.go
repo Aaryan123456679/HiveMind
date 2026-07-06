@@ -2,6 +2,7 @@ package btree
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -740,4 +741,217 @@ func testCrabbingDeleteInterleavedWithInsert(t *testing.T) {
 	assertAbsent(t, store, finalRoot, wantAbsent)
 	assertStructuralInvariants(t, store, finalRoot, len(wantPresent))
 	assertNoOrphanedPointers(t, store, finalRoot)
+}
+
+// ---------------------------------------------------------------------------
+// 2a.4.3 fix cycle: TestDeleteSpliceFirstChildAncestorFixesNextSibling.
+//
+// Verification (.cdr/runs/2026-07-06/005-verification/verification.json)
+// found that fix round 1 of spliceOutDegenerateAncestor only patched a
+// degenerate ancestor's true left neighbor when that neighbor was a child of
+// the SAME grandparent (gj > 0). When the spliced ancestor is instead its
+// grandparent's FIRST child (gj == 0), the true left neighbor lives under an
+// entirely different, adjacent grandparent subtree, and was never located or
+// patched -- leaving a dangling NextSibling pointer to the abandoned,
+// unreachable node forever (node IDs are never reused).
+//
+// This test hand-constructs (bypassing Insert entirely, mirroring
+// lookup_test.go's buildTestTree scaffolding) a fixed 4-level tree shaped
+// specifically to force that gj == 0 code path through two levels of
+// "first child of its parent" ancestry, then drives one real Delete call
+// through the exact leaf-empty -> merge -> grandparent-splice cascade, and
+// independently re-derives (never merely re-checking the function's own
+// output) the correct post-splice NextSibling topology by walking the tree
+// structure directly, mirroring assertStructuralInvariants' own
+// subtreeMinKey-style independent-recomputation approach.
+//
+// Tree shape (see inline node-ID constants below for the exact wiring):
+//
+//	root (17): Children=[Gprev(15), G(16)]
+//	  Gprev (15): Children=[X1(11), X2(12)]      -- untouched by the delete
+//	    X1 (11): Children=[leaf 1, leaf 2]         (keys topic0100..0103)
+//	    X2 (12): Children=[leaf 3, leaf 4]         (keys topic0104..0107)
+//	  G (16): Children=[ANC(13), ANC2(14)]
+//	    ANC (13): Children=[leaf 5, leaf 6]        (keys topic0108,0109,0110)
+//	    ANC2 (14): Children=[leaf 7, leaf 8]       (keys topic0200..0203)
+//
+// Level-2 NextSibling chain (X1, X2, ANC, ANC2): X1 -> X2 -> ANC -> ANC2 ->
+// noSibling. Deleting topic0108 then topic0109 empties leaf 5, which merges
+// with leaf 6 (single key, so merge not borrow), degenerating ANC to 1
+// child; ANC is G's FIRST child (gj == 0 in G), so ANC gets spliced out of G
+// entirely. ANC's true NextSibling-chain predecessor is X2 -- NOT a child of
+// G at all, but the last child of Gprev, G's own predecessor at the level
+// above -- exactly the previously-unhandled case. After the fix, X2's
+// NextSibling must be repointed at ANC2 (ANC's own former NextSibling),
+// skipping over the now-abandoned ANC.
+func TestDeleteSpliceFirstChildAncestorFixesNextSibling(t *testing.T) {
+	const (
+		leafX1a   = uint64(1) // topic0100, topic0101
+		leafX1b   = uint64(2) // topic0102, topic0103
+		leafX2a   = uint64(3) // topic0104, topic0105
+		leafX2b   = uint64(4) // topic0106, topic0107
+		leafAncA  = uint64(5) // topic0108, topic0109 -- emptied by this test
+		leafAncB  = uint64(6) // topic0110 (single key: forces merge, not borrow)
+		leafAnc2a = uint64(7) // topic0200, topic0201
+		leafAnc2b = uint64(8) // topic0202, topic0203
+
+		x1ID    = uint64(11)
+		x2ID    = uint64(12)
+		ancID   = uint64(13)
+		anc2ID  = uint64(14)
+		gprevID = uint64(15)
+		gID     = uint64(16)
+		rootID  = uint64(17)
+	)
+
+	path := filepath.Join(t.TempDir(), "name.idx")
+	f, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile: %v", err)
+	}
+	t.Cleanup(func() { f.Close() })
+
+	store := NewNodeStore(f)
+	alloc, err := NewNodeAllocator(store)
+	if err != nil {
+		t.Fatalf("NewNodeAllocator: %v", err)
+	}
+	t.Cleanup(func() { alloc.Close() })
+
+	writeLeafNode := func(id uint64, l LeafNode) {
+		t.Helper()
+		if err := writeLeaf(store, id, l); err != nil {
+			t.Fatalf("writeLeaf(%d): %v", id, err)
+		}
+	}
+	writeInternalNode := func(id uint64, n InternalNode) {
+		t.Helper()
+		if err := writeInternal(store, id, n); err != nil {
+			t.Fatalf("writeInternal(%d): %v", id, err)
+		}
+	}
+
+	// Leaf level, chained left-to-right via NextLeaf covering every leaf.
+	writeLeafNode(leafX1a, LeafNode{Keys: []string{genKey(100), genKey(101)}, FileIDs: []uint64{100, 101}, NextLeaf: leafX1b})
+	writeLeafNode(leafX1b, LeafNode{Keys: []string{genKey(102), genKey(103)}, FileIDs: []uint64{102, 103}, NextLeaf: leafX2a})
+	writeLeafNode(leafX2a, LeafNode{Keys: []string{genKey(104), genKey(105)}, FileIDs: []uint64{104, 105}, NextLeaf: leafX2b})
+	writeLeafNode(leafX2b, LeafNode{Keys: []string{genKey(106), genKey(107)}, FileIDs: []uint64{106, 107}, NextLeaf: leafAncA})
+	writeLeafNode(leafAncA, LeafNode{Keys: []string{genKey(108), genKey(109)}, FileIDs: []uint64{108, 109}, NextLeaf: leafAncB})
+	writeLeafNode(leafAncB, LeafNode{Keys: []string{genKey(110)}, FileIDs: []uint64{110}, NextLeaf: leafAnc2a})
+	writeLeafNode(leafAnc2a, LeafNode{Keys: []string{genKey(200), genKey(201)}, FileIDs: []uint64{200, 201}, NextLeaf: leafAnc2b})
+	writeLeafNode(leafAnc2b, LeafNode{Keys: []string{genKey(202), genKey(203)}, FileIDs: []uint64{202, 203}, NextLeaf: noSibling})
+
+	// Level 2 (X1, X2, ANC, ANC2): NextSibling chain X1 -> X2 -> ANC -> ANC2
+	// -> noSibling. X2.NextSibling == ancID is the dangling link this test
+	// exists to force and verify gets repointed to anc2ID.
+	writeInternalNode(x1ID, InternalNode{Keys: []string{genKey(102)}, Children: []uint64{leafX1a, leafX1b}, NextSibling: x2ID, LowKey: ""})
+	writeInternalNode(x2ID, InternalNode{Keys: []string{genKey(106)}, Children: []uint64{leafX2a, leafX2b}, NextSibling: ancID, LowKey: genKey(104)})
+	writeInternalNode(ancID, InternalNode{Keys: []string{genKey(110)}, Children: []uint64{leafAncA, leafAncB}, NextSibling: anc2ID, LowKey: genKey(108)})
+	writeInternalNode(anc2ID, InternalNode{Keys: []string{genKey(202)}, Children: []uint64{leafAnc2a, leafAnc2b}, NextSibling: noSibling, LowKey: genKey(200)})
+
+	// Level 1 (Gprev, G): Gprev -> G -> noSibling.
+	writeInternalNode(gprevID, InternalNode{Keys: []string{genKey(104)}, Children: []uint64{x1ID, x2ID}, NextSibling: gID, LowKey: ""})
+	writeInternalNode(gID, InternalNode{Keys: []string{genKey(200)}, Children: []uint64{ancID, anc2ID}, NextSibling: noSibling, LowKey: genKey(108)})
+
+	// Root (level 0).
+	writeInternalNode(rootID, InternalNode{Keys: []string{genKey(108)}, Children: []uint64{gprevID, gID}, NextSibling: noSibling, LowKey: ""})
+
+	// Drive the real Delete path: delete topic0108 (leaf still holds
+	// topic0109 afterward, no repair triggered), then topic0109 (leaf 5
+	// becomes empty, triggering merge-with-right-sibling since leaf 6 holds
+	// only 1 key, which degenerates ANC to 1 child and splices it out of G
+	// -- G's FIRST child, exactly the gj == 0 case this fix covers).
+	// This regression targets spliceOutDegenerateAncestor, which is only
+	// reachable via the concurrent Tree.Delete (crabbing) path -- the
+	// free-function Delete(store, alloc, ...) goes through the separate,
+	// single-threaded shrinkParentAfterMerge repair instead and never
+	// exercises the bug this test exists to catch.
+	tr := NewTree(store, alloc, rootID)
+	for _, key := range []string{genKey(108), genKey(109)} {
+		found, err := tr.Delete(key)
+		if err != nil {
+			t.Fatalf("Delete(%q): unexpected error: %v", key, err)
+		}
+		if !found {
+			t.Fatalf("Delete(%q): expected found=true, got false", key)
+		}
+	}
+	currentRoot := tr.Root()
+
+	// The root itself never collapses in this scenario (G still has 2
+	// children after ANC is spliced out: the surviving leaf and ANC2), so
+	// currentRoot must still be rootID.
+	if currentRoot != rootID {
+		t.Fatalf("root changed to %d, want unchanged %d (this scenario should not collapse the root)", currentRoot, rootID)
+	}
+
+	// Independent check #1: every surviving key is still correctly
+	// lookup-able, and the two deleted keys are genuinely gone.
+	assertAbsent(t, store, currentRoot, []string{genKey(108), genKey(109)})
+	wantPresent := map[string]uint64{
+		genKey(100): 100, genKey(101): 101, genKey(102): 102, genKey(103): 103,
+		genKey(104): 104, genKey(105): 105, genKey(106): 106, genKey(107): 107,
+		genKey(110): 110,
+		genKey(200): 200, genKey(201): 201, genKey(202): 202, genKey(203): 203,
+	}
+	assertAllLookupable(t, store, currentRoot, wantPresent)
+	assertNoOrphanedPointers(t, store, currentRoot)
+
+	// Independent check #2 (the core assertion): re-derive G's Children
+	// directly and confirm ancID is no longer reachable at all (spliced
+	// out), then walk the level-2 NextSibling chain from its independently
+	// re-located head (X1, found by descending Children[0] from the root)
+	// and confirm it now reads X1 -> X2 -> ANC2 -> noSibling, with X2's
+	// NextSibling specifically repointed away from the abandoned ancID and
+	// onto anc2ID -- never merely re-checking spliceOutDegenerateAncestor's
+	// own internal bookkeeping.
+	gIsLeaf, _, gNode, err := store.ReadNode(gID)
+	if err != nil {
+		t.Fatalf("ReadNode(G): unexpected error: %v", err)
+	}
+	if gIsLeaf {
+		t.Fatalf("G decoded as a leaf, want internal")
+	}
+	if indexOfChild(gNode.Children, ancID) >= 0 {
+		t.Fatalf("G.Children still references abandoned ancID %d: %v (splice did not remove it)", ancID, gNode.Children)
+	}
+	if len(gNode.Children) != 2 {
+		t.Fatalf("G.Children = %v, want exactly 2 entries (the surviving leaf + anc2ID)", gNode.Children)
+	}
+
+	chain := []uint64{}
+	for id := x1ID; id != noSibling; {
+		isLeaf, _, node, err := store.ReadNode(id)
+		if err != nil {
+			t.Fatalf("ReadNode(%d) while walking level-2 NextSibling chain: %v", id, err)
+		}
+		if isLeaf {
+			t.Fatalf("level-2 NextSibling chain reached a leaf node %d", id)
+		}
+		chain = append(chain, id)
+		if len(chain) > 10 {
+			t.Fatalf("level-2 NextSibling chain did not terminate within 10 hops (cycle?): %v", chain)
+		}
+		id = node.NextSibling
+	}
+	wantChain := []uint64{x1ID, x2ID, anc2ID}
+	if len(chain) != len(wantChain) {
+		t.Fatalf("level-2 NextSibling chain = %v, want %v", chain, wantChain)
+	}
+	for i := range wantChain {
+		if chain[i] != wantChain[i] {
+			t.Fatalf("level-2 NextSibling chain = %v, want %v (X2's NextSibling must skip the abandoned ancID %d and land on anc2ID %d)", chain, wantChain, ancID, anc2ID)
+		}
+	}
+
+	// Belt-and-braces: read X2 directly and assert its NextSibling field is
+	// exactly anc2ID, not noSibling and not the abandoned ancID -- the
+	// single field fix round 1 of this subtask left dangling.
+	_, _, x2Node, err := store.ReadNode(x2ID)
+	if err != nil {
+		t.Fatalf("ReadNode(X2): unexpected error: %v", err)
+	}
+	if x2Node.NextSibling != anc2ID {
+		t.Fatalf("X2.NextSibling = %d, want %d (anc2ID); got noSibling=%d, abandoned ancID=%d for reference", x2Node.NextSibling, anc2ID, noSibling, ancID)
+	}
 }

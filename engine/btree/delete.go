@@ -604,6 +604,16 @@ func (t *Tree) deleteFromLeafAndRepair(leafID uint64, leaf LeafNode, path string
 	// Leaf became empty. If it is currently the tree's root (single-node
 	// tree), the empty-tree-after-delete convention applies: leave it as-is,
 	// matching the single-threaded Delete's documented behavior.
+	//
+	// Lock-ordering note: this acquires rootMu while still holding leafID's
+	// latch -- the REVERSE of insert.go's documented rootMu-first ordering.
+	// This is safe: rootMu is always a wait-for-graph SINK in this package
+	// (nothing that holds rootMu ever attempts to acquire a node latch while
+	// holding it -- every rootMu-holding critical section here only reads or
+	// writes t.root itself), so a cycle through rootMu is structurally
+	// impossible regardless of which order any given call site acquires
+	// rootMu vs. a node latch in. Do not add code inside a rootMu-held
+	// section that blocks on a node latch, or this invariant breaks.
 	t.rootMu.Lock()
 	isRoot := t.root == leafID
 	t.rootMu.Unlock()
@@ -934,6 +944,13 @@ func (t *Tree) finishParentShrinkAfterDelete(parentID uint64, parent InternalNod
 	survivingChild := newParent.Children[0]
 	ancestorNextSibling := newParent.NextSibling
 
+	// Lock-ordering note: this acquires rootMu while still holding
+	// parentID's latch -- the REVERSE of insert.go's documented
+	// rootMu-first ordering. Safe for the same reason noted in
+	// deleteFromLeafAndRepair above: rootMu is always a wait-for-graph SINK
+	// here (its critical sections only ever read/write t.root, never block
+	// on acquiring a node latch), so no lock-ordering cycle can form no
+	// matter which order a given call site takes rootMu vs. a node latch in.
 	t.rootMu.Lock()
 	if t.root == parentID {
 		t.root = survivingChild
@@ -957,20 +974,29 @@ func (t *Tree) finishParentShrinkAfterDelete(parentID uint64, parent InternalNod
 // like propagate's ancestor relocation -- this never needs more than a
 // parent+child latch budget, matching insert's window-of-2.
 //
-// Documented, deferred gap (mirrors 2a.4.2's own tracked "no retry cap"
-// follow-up -- see .cdr/memory/pending.md): if ancestorID's true left
-// neighbor in its level's NextSibling chain is also a child of the SAME
-// grandparent (grandParent.Children[gj-1]), this function patches that
-// neighbor's NextSibling to skip over ancestorID, keeping the chain
-// connected. If instead that left neighbor belongs to a DIFFERENT
-// (sibling) grandparent's subtree, this function does not locate/patch it --
-// doing so would require backward pointers or a full per-level scan, neither
-// of which this package has. That cross-grandparent NextSibling link is left
-// dangling, referencing an abandoned node ID. This is low-risk: top-down
-// lookup/insert/delete correctness never follows a stale NextSibling into an
-// already-Children-unreachable node, so this only affects a pure
-// structural-invariant chain-walk. Flagged for 2a.4.4/2a.4.5 to close if it
-// ever becomes relevant.
+// ancestorID's level-order NextSibling chain must also be kept connected: some
+// node currently has NextSibling == ancestorID, and once ancestorID is spliced
+// out (its own node ID abandoned forever, see the free Delete function's doc
+// comment on "Abandoned node IDs"), that pointer would otherwise dangle,
+// referencing an unreachable node forever (fix round 1 of this subtask
+// shipped with exactly that bug: it only patched the common case where the
+// true left neighbor happens to be a child of the SAME grandparent
+// (grandParent.Children[gj-1]); when ancestorID is instead its grandparent's
+// FIRST child, the true neighbor lives one or more levels up and one subtree
+// to the left, under a different grandparent entirely, and was never located
+// or patched -- see .cdr/runs/2026-07-06/005-verification/verification.json
+// for the full writeup of why this is a genuine correctness bug, not just a
+// cosmetic invariant violation: crabDeleteOnce and crabInsertOnce/findParent
+// all actively dereference NextSibling as a live "move right on overshoot"
+// mechanism during concurrent descent, so a dangling pointer can misroute a
+// concurrent operation into the abandoned node).
+//
+// findLeftNeighborAtSameLevel (below) now finds the true left neighbor
+// uniformly, whether it is a same-grandparent sibling or lives under an
+// entirely different ancestor subtree, using the same level-order
+// NextSibling-chain-walk discipline already established by findParent's own
+// leaf-level NextLeaf-chain-walk recovery: no special-casing on grandparent
+// adjacency is needed.
 func (t *Tree) spliceOutDegenerateAncestor(ancestorID, ancestorNextSibling, survivingChild uint64, path string) error {
 	store := t.Store
 
@@ -1020,29 +1046,164 @@ func (t *Tree) spliceOutDegenerateAncestor(ancestorID, ancestorNextSibling, surv
 			return err
 		}
 
-		// Best-effort same-grandparent chain fix-up (see doc comment above
-		// for the documented cross-grandparent gap). A TryLock miss here is
-		// deliberately NOT treated as errRestartFromRoot: the fix-up is
-		// hygiene, not required for key presence/absence correctness, so we
-		// simply skip it this round rather than paying for a full restart.
-		if gj > 0 {
-			leftID := grandParent.Children[gj-1]
-			if store.TryLock(leftID) {
-				leftIsLeaf, _, leftInternal, lerr := store.ReadNode(leftID)
+		// Best-effort NextSibling chain fix-up: locate whichever node
+		// currently has NextSibling == ancestorID -- regardless of whether
+		// it is a same-grandparent sibling (gj > 0) or lives under an
+		// entirely different ancestor subtree (gj == 0) -- and repoint it
+		// past ancestorID. A TryLock miss (or any other reason the neighbor
+		// can't be confirmed/patched) is deliberately NOT treated as
+		// errRestartFromRoot: the fix-up is hygiene, not required for key
+		// presence/absence correctness, so we simply skip it this round
+		// rather than paying for a full restart.
+		neighborID, nerr := t.findLeftNeighborAtSameLevel(currentRoot, grandParentID, grandParent, gj, path)
+		if nerr != nil {
+			store.Unlock(grandParentID)
+			return nerr
+		}
+		if neighborID != noSibling {
+			if store.TryLock(neighborID) {
+				leftIsLeaf, _, leftInternal, lerr := store.ReadNode(neighborID)
 				if lerr == nil && !leftIsLeaf && leftInternal.NextSibling == ancestorID {
 					fixed := leftInternal
 					fixed.NextSibling = ancestorNextSibling
-					if werr := writeInternal(store, leftID, fixed); werr != nil {
-						store.Unlock(leftID)
+					if werr := writeInternal(store, neighborID, fixed); werr != nil {
+						store.Unlock(neighborID)
 						store.Unlock(grandParentID)
 						return werr
 					}
 				}
-				store.Unlock(leftID)
+				store.Unlock(neighborID)
 			}
 		}
 
 		store.Unlock(grandParentID)
 		return nil
+	}
+}
+
+// findLeftNeighborAtSameLevel locates the node whose NextSibling chain link
+// currently points at ancestorID -- i.e. ancestorID's true predecessor at its
+// own tree level -- regardless of whether that predecessor happens to be a
+// child of ancestorID's immediate parent (the common case) or lives under an
+// entirely different ancestor subtree several levels up and one subtree to
+// the left (the case that fix round 1 of this subtask missed).
+//
+// It takes ancestorID's parent (grandParentID/grandParent, already read by
+// the caller) and ancestorID's index within it (gj) directly, rather than
+// re-deriving them via findParent(ancestorID): by the time this is called,
+// the caller has ALREADY rewritten grandParent's Children to splice
+// ancestorID out (grandParent.Children[gj] == survivingChild now), so
+// ancestorID is no longer reachable as anyone's child at all -- a fresh
+// findParent(ancestorID) call here would either error out or, worse, mis-walk
+// down some unrelated path following stale key-range routing. Passing the
+// pre-computed (grandParentID, grandParent, gj) sidesteps that entirely: the
+// walk only ever needs Children[gj-1] (unaffected by the splice, which only
+// touched index gj) or higher ancestors (still perfectly findable, since only
+// ancestorID's own link was removed).
+//
+// From there it walks UP toward the root, one parent-hop at a time (via
+// findParent for every level above the first, so it always sees the CURRENT
+// parent, tolerating concurrent restructuring), until it finds the first
+// ancestor that is NOT its own parent's first child. That parent's
+// immediately preceding child, call it left, is guaranteed to be the
+// ancestor -- at left's own level -- of ancestorID's true predecessor: on the
+// walk up, every level in between was entered via "current node is index 0 of
+// its parent," so descending back down from left by always taking the LAST
+// child exactly as many times as levels were walked up lands exactly on
+// ancestorID's true predecessor.
+//
+// If the walk up reaches the root without ever finding an ancestor that
+// isn't a first child, ancestorID (and its whole leftmost spine) has no
+// predecessor at all -- ancestorID's own LowKey == "" transitively. The
+// function then returns noSibling and a nil error, signalling "nothing to
+// patch."
+//
+// Read-only and best-effort beyond the first hop: never holds more than one
+// latch at a time (each hop locks, reads, and unlocks before the next; the
+// first hop reuses grandParent's already-locked-by-caller data without
+// re-locking it), so it adds no deadlock surface -- the caller separately
+// (Try)Locks the returned candidate itself and re-verifies its NextSibling
+// before trusting it, exactly as fix round 1 already did for the
+// same-grandparent case. Any race that makes the walk's bookkeeping stale (a
+// concurrent split/merge shifting levels mid-walk) can only ever cause this
+// function to return noSibling or a node whose NextSibling turns out not to
+// equal ancestorID on the caller's final check -- never an incorrect patch of
+// the wrong node -- since the caller always re-verifies before writing.
+func (t *Tree) findLeftNeighborAtSameLevel(currentRoot, grandParentID uint64, grandParent InternalNode, gj int, path string) (uint64, error) {
+	store := t.Store
+
+	levelsUp := 0
+	curParentID := grandParentID
+	curChildren := grandParent.Children
+	curIdx := gj
+	for {
+		if curIdx < 0 {
+			// Race: caller's gj no longer lines up (shouldn't happen for the
+			// first iteration, but a defensive guard for consistency with
+			// the up-walk's own idx<0 handling below).
+			return noSibling, nil
+		}
+
+		if curIdx > 0 {
+			left := curChildren[curIdx-1]
+
+			// Descend from left via "always take the last child" exactly
+			// levelsUp times to reach ancestorID's own level.
+			neighbor := left
+			for i := 0; i < levelsUp; i++ {
+				store.Lock(neighbor)
+				nIsLeaf, _, nInternal, err := store.ReadNode(neighbor)
+				if err != nil {
+					store.Unlock(neighbor)
+					return noSibling, err
+				}
+				if nIsLeaf || len(nInternal.Children) == 0 {
+					// Concurrent restructuring made the computed depth no
+					// longer line up. Abandon the fix-up this round --
+					// purely hygiene, never correctness-required.
+					store.Unlock(neighbor)
+					return noSibling, nil
+				}
+				next := nInternal.Children[len(nInternal.Children)-1]
+				store.Unlock(neighbor)
+				neighbor = next
+			}
+			return neighbor, nil
+		}
+
+		if curParentID == currentRoot {
+			// Reached the root without ever finding a non-first-child
+			// ancestor: no predecessor exists anywhere above ancestorID.
+			return noSibling, nil
+		}
+
+		upParentID, err := t.findParent(currentRoot, path, curParentID)
+		if err != nil {
+			return noSibling, err
+		}
+
+		store.Lock(upParentID)
+		isLeaf, _, upParent, err := store.ReadNode(upParentID)
+		if err != nil {
+			store.Unlock(upParentID)
+			return noSibling, err
+		}
+		if isLeaf {
+			store.Unlock(upParentID)
+			return noSibling, fmt.Errorf("btree: internal invariant violated: ancestor node %d decoded as a leaf", upParentID)
+		}
+		idx2 := indexOfChild(upParent.Children, curParentID)
+		store.Unlock(upParentID)
+		if idx2 < 0 {
+			// Race: curParentID's own parentage changed since findParent
+			// located upParentID. Hygiene-only fix-up, so give up this
+			// round rather than paying for a full restart.
+			return noSibling, nil
+		}
+
+		curParentID = upParentID
+		curChildren = upParent.Children
+		curIdx = idx2
+		levelsUp++
 	}
 }

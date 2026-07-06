@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "run_id": "006-implementation-fix",
+  "subtask": "2a.4.3",
+  "prior_verdict": "CHANGES_REQUESTED (.cdr/runs/2026-07-06/005-verification/verification.json)",
+  "finding_addressed": "spliceOutDegenerateAncestor's fix-round-1 dangling-NextSibling repair only patched a same-grandparent left-neighbor (gj > 0); when the spliced ancestor is its grandparent's first child (gj == 0), the true left neighbor lives under an adjacent grandparent and was never located/patched -- a permanently dangling NextSibling pointer, load-bearing during live concurrent descent (crabDeleteOnce/crabInsertOnce/findParent all dereference NextSibling for move-right routing).",
+  "files_changed": [
+    "engine/btree/delete.go",
+    "engine/btree/delete_test.go"
+  ],
+  "root_cause_of_agent_in_progress_bug": "The interrupted agent's own uncommitted fix (found via git diff before this run) introduced a NEW bug: its findLeftNeighborAtSameLevel(currentRoot, ancestorID, path) re-derived ancestorID's parent via findParent(ancestorID) -- but by the time it's called, the caller (spliceOutDegenerateAncestor) had ALREADY rewritten grandParent.Children to remove ancestorID (replacing it with survivingChild at index gj). findParent could therefore never re-locate ancestorID as anyone's child, so the walk silently failed every time and no patch was ever applied.",
+  "fix_applied": "Changed findLeftNeighborAtSameLevel's signature to accept the already-known (grandParentID, grandParent, gj) directly -- values the caller already has in scope from BEFORE the splice write -- instead of re-deriving them via findParent(ancestorID) post-write. grandParent.Children[gj-1] (needed for the gj>0 base case) is unaffected by the splice (which only touched index gj), and all higher-level up-walks remain perfectly findable via findParent since only ancestorID's own link was removed, not any ancestor above it. First-hop iteration reuses the caller's already-locked grandParent data directly (no re-lock, avoiding a self-deadlock on a non-reentrant mutex); every hop above that locks/reads/unlocks a fresh, previously-unheld node one at a time (no widened latch window, no new deadlock surface).",
+  "second_bug_found_and_fixed": "The interrupted agent's new regression test (TestDeleteSpliceFirstChildAncestorFixesNextSibling) called the free-function Delete(store, alloc, rootID, key) -- the single-threaded Phase-1 entry point, which repairs via the separate shrinkParentAfterMerge path and NEVER reaches spliceOutDegenerateAncestor at all. The test therefore could not have caught the bug it was written for regardless of whether the fix was correct. Fixed by constructing a Tree via NewTree(store, alloc, rootID) and calling tr.Delete(key) (the concurrent crabbing entry point that actually owns spliceOutDegenerateAncestor), reading the final root via tr.Root().",
+  "validation": {
+    "go_build": "clean",
+    "go_vet": "clean",
+    "gofmt": "clean",
+    "engine/btree_full_suite": "PASS (go test ./btree/... -race -v -count=1 -timeout 5m)",
+    "targeted_stress_repeat": "PASS x15 (go test ./btree/... -race -count=15 -timeout 10m -run 'TestCrabbingDelete|TestDeleteSpliceFirstChildAncestorFixesNextSibling')",
+    "whole_engine_module": "PASS (go test ./... -race -count=1 -timeout 8m)"
+  },
+  "deferred_gaps_still_open": [
+    "no retry cap on the TryLock restart-from-root loop (tracked since 2a.4.2, .cdr/memory/pending.md) -- still open, still low-risk, still not observed",
+    "node-latch registry has no eviction (tracked since 2a.4.1) -- still open"
+  ],
+  "next_step": "re-run /cdr:verify for subtask 2a.4.3 against this fix commit before proceeding to 2a.4.4 (lock-free optimistic version-counter read)."
+}

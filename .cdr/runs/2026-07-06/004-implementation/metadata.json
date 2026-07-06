@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-06-004-implementation",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "2a.4.3",
+  "git_head": "ed4d8f7742485293b73a6d276acda72a158a41a3",
+  "run_key": "2a.4.3-ed4d8f77-latch-crabbing-delete",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-06T00:00:00Z",
+  "ended_at": "2026-07-06T00:00:00Z",
+  "commit": "b46d466"
+}

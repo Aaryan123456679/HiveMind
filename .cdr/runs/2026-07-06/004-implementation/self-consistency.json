@@ -1,0 +1,16 @@
+{
+  "build": "go build ./... (engine module) clean",
+  "vet": "go vet ./engine/... clean",
+  "gofmt": "gofmt -l engine/btree/ clean (delete.go, delete_test.go reformatted)",
+  "full_suite": "go test ./engine/btree/... -race -v -count=1 -timeout 5m : PASS, zero regressions (Phase-1 delete tests, 2a.4.1 latch tests, 2a.4.2 insert crabbing tests, lookup/scan/persist/node tests all green)",
+  "new_test": "TestCrabbingDelete (DisjointSubtrees, SameKeyRace, InterleavedWithInsert) PASS under -race",
+  "flakiness_deadlock_check": "go test ./engine/btree/... -race -run TestCrabbingDelete -count=10 -timeout 8m : PASS, no hang, no data race across 10 repeats",
+  "validation_matrix_covered": [
+    "descent mirrors crabInsert window-of-2 TryLock discipline (duplicated, not refactored, per conservative scope)",
+    "leaf-level borrow-left/borrow-right/merge-left/merge-right all exercised via TestDeleteLeafMerge (serial) and TestCrabbingDelete (concurrent)",
+    "internal-node degenerate splice / root collapse exercised via TestDeleteInternalMerge (serial); NextSibling/LowKey preserved on every reconstructed InternalNode in the new concurrent path",
+    "concurrent deletes racing the same key: exactly one found=true (testCrabbingDeleteSameKeyRace)",
+    "concurrent deletes interleaved with concurrent inserts in overlapping key regions, verified against a deterministic serial-execution oracle (testCrabbingDeleteInterleavedWithInsert)",
+    "no orphaned/aliased node pointers after concurrent repair (assertNoOrphanedPointers)"
+  ]
+}

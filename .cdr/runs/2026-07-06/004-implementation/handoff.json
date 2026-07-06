@@ -1,0 +1,45 @@
+{
+  "run_id": "2026-07-06-004-implementation",
+  "subtask": "2a.4.3",
+  "status": "completed",
+  "commit": "b46d466",
+  "files_changed": [
+    "engine/btree/delete.go",
+    "engine/btree/delete_test.go"
+  ],
+  "prerequisite_reading": [
+    ".cdr/commits/task-2a.4.1.md",
+    ".cdr/commits/task-2a.4.2.md"
+  ],
+  "lock_window_discipline": {
+    "descent": "window-of-2 (parent+child), TryLock-based, duplicated from crabInsertOnce's shape into crabDeleteOnce (not a refactor -- crabInsertOnce is insert-specific; insert.go untouched).",
+    "leaf_repair": "widens to 3-latch window (parent, empty leaf, chosen sibling) in repairEmptyLeafAtParent -- delete's genuine extra complexity vs insert's 2-latch split window, since a merge touches two sibling leaves plus their shared parent simultaneously. 3rd latch acquired via TryLock only; full release of all 3 + errRestartFromRoot on a miss.",
+    "ancestor_cascade": "back to 1-latch-at-a-time (finishParentShrinkAfterDelete / spliceOutDegenerateAncestor), structurally identical to propagate's climbing loop: rootMu check, fresh findParent, isolated blocking Lock on a freshly-located, otherwise-unheld ancestor."
+  },
+  "deadlock_freedom_argument": "Every blocking Lock call site in the new code is either (a) the very first Lock in a fresh findParent walk (root, nothing else held -- reused unmodified from insert.go), (b) the isolated Lock(parentID) in repairEmptyLeafAtParent (nothing else held at that point, mirrors propagate's Lock(parentID)), or (c) the isolated Lock(grandParentID) in spliceOutDegenerateAncestor (same argument). Every OTHER latch acquisition (2nd/3rd node in a window) uses TryLock with full release + restart-from-root on a miss -- identical to insert.go's proven-safe pattern. No new blocking-Lock-while-holding-another-latch pattern was introduced.",
+  "functions_added": [
+    "Tree.Delete", "Tree.crabDelete", "Tree.crabDeleteOnce",
+    "Tree.deleteFromLeafAndRepair", "Tree.repairEmptyLeaf",
+    "Tree.repairEmptyLeafAtParent", "Tree.finishParentShrinkAfterDelete",
+    "Tree.spliceOutDegenerateAncestor"
+  ],
+  "tests_added": {
+    "location": "engine/btree/delete_test.go",
+    "entry_point": "TestCrabbingDelete",
+    "subtests": [
+      "DisjointSubtrees (round-robin disjoint key deletes across 24 goroutines, forced leaf/parent contention on repair)",
+      "SameKeyRace (16 goroutines race to delete the same key; exactly 1 found=true asserted)",
+      "InterleavedWithInsert (core acceptance test: concurrent deletes + concurrent inserts in interleaved/overlapping key regions, verified against a deterministic serial-execution oracle, mirroring engine/catalog's TestStripedConcurrencyStress pattern)"
+    ],
+    "commands_run": [
+      "go test ./engine/btree/... -race -run TestCrabbingDelete -v -timeout 5m",
+      "go test ./engine/btree/... -race -v -count=1 -timeout 5m (full suite, zero regressions)",
+      "go test ./engine/btree/... -race -run TestCrabbingDelete -count=10 -timeout 8m (flakiness/deadlock check, clean)"
+    ]
+  },
+  "deferred_gaps_for_2a.4.4_2a.4.5": [
+    "Same class as 2a.4.2's tracked 'no retry cap on TryLock-restart loop' (see .cdr/memory/pending.md) -- reused/extended unchanged, not revisited here.",
+    "New, narrow, documented gap: spliceOutDegenerateAncestor only patches a same-grandparent left-neighbor's NextSibling pointer when splicing out a degenerate internal node. If the true left-neighbor in the level's NextSibling chain instead belongs to a DIFFERENT grandparent's subtree, that cross-grandparent link is left dangling (references an abandoned node ID). Low risk: never affects top-down lookup/insert/delete correctness (nothing follows a stale NextSibling into an already-Children-unreachable node); only a pure structural-invariant chain-walk (assertStructuralInvariants-style) could observe it. Flagged for 2a.4.4 (optimistic lock-free reads) and 2a.4.5 (full mixed-workload race test) to revisit/close if it becomes relevant under deeper/wider trees than this subtask's own tests exercised."
+  ],
+  "next_step": "run /cdr:verify for task-2a.4.3"
+}
