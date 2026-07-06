@@ -1,0 +1,52 @@
+{
+  "requirements": [
+    {
+      "id": "R1",
+      "requirement": "Exactly one winner among many concurrent CAS attempts for the same fileID",
+      "test": "TestSplitInProgressCAS",
+      "mechanism": "atomic.Bool.CompareAndSwap(false,true) inside TryAcquire; N goroutines racing with start barrier; atomic win counter asserted == 1"
+    },
+    {
+      "id": "R2",
+      "requirement": "Losers observe already-in-progress and back off (no retry loop, no silent proceed)",
+      "test": "TestSplitInProgressCAS",
+      "mechanism": "losing goroutines receive false from TryAcquire and return immediately (single attempt, not a loop); asserted N-1 == false"
+    },
+    {
+      "id": "R3",
+      "requirement": "Real CAS primitive, not plain mutex+bool (avoids TOCTOU)",
+      "test": "code review / architecture-discovery.md",
+      "mechanism": "atomic.Bool.CompareAndSwap used directly; no separate check-then-set across two operations"
+    },
+    {
+      "id": "R4",
+      "requirement": "Acquire -> Release -> Re-acquire works",
+      "test": "TestAcquireReleaseReacquire",
+      "mechanism": "sequential TryAcquire/Release/TryAcquire assertions"
+    },
+    {
+      "id": "R5",
+      "requirement": "Different fileIDs are independent",
+      "test": "TestIndependentFileIDs",
+      "mechanism": "concurrent TryAcquire on two distinct fileIDs both succeed"
+    },
+    {
+      "id": "R6",
+      "requirement": "Release without holding is well-defined (no-op per design)",
+      "test": "TestReleaseWithoutHoldingIsNoOp",
+      "mechanism": "Release on fresh fileID does not panic; subsequent TryAcquire still true"
+    },
+    {
+      "id": "R7",
+      "requirement": "-race clean under repeated runs (CAS-contention flakiness check)",
+      "test": "go test ./split/... -race -run TestSplitInProgressCAS -count=5",
+      "mechanism": "self-consistency step"
+    },
+    {
+      "id": "R8",
+      "requirement": "No regression in engine/split, engine/catalog, engine/btree",
+      "test": "go test ./split/... -race -v -count=1; go test ./catalog/... -count=1; go test ./btree/... -race -count=1",
+      "mechanism": "self-consistency step"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "subtask": "2b.1.2",
+  "issue": 10,
+  "new_files": [
+    "engine/split/guard.go",
+    "engine/split/guard_test.go"
+  ],
+  "modified_files": [],
+  "downstream_consumers": [
+    {
+      "package": "engine/split",
+      "future_subtask": "2b.1.3",
+      "note": "will call FileGuard.TryAcquire/Release around catalog SPLITTING-status transition; not implemented in this subtask"
+    }
+  ],
+  "packages_regression_risk": [
+    "engine/catalog (no changes here; regression test run only as safety net per instructions)",
+    "engine/btree (no changes here; regression test run only as safety net per instructions)"
+  ],
+  "memory_docs_touched": [
+    ".cdr/memory/pending.md (append one-line note: new per-file guard registry has same unbounded-growth/no-eviction characteristic as btree NodeStore.latches)"
+  ],
+  "api_surface_added": [
+    "type FileGuard struct{...}",
+    "func NewFileGuard() *FileGuard",
+    "func (g *FileGuard) TryAcquire(fileID uint64) bool",
+    "func (g *FileGuard) Release(fileID uint64)",
+    "func (g *FileGuard) InProgress(fileID uint64) bool  // read-only observability helper, optional"
+  ],
+  "breaking_changes": false
+}

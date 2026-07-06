@@ -1,0 +1,10 @@
+{
+  "build": "go build ./... — clean",
+  "vet": "go vet ./... — clean",
+  "gofmt": "gofmt -l . — no output (clean)",
+  "targeted_race_test": "go test ./split/... -race -run TestSplitInProgressCAS -count=5 -timeout 10m -v — 5/5 PASS",
+  "full_split_race_suite": "go test ./split/... -race -v -count=1 -timeout 10m — all PASS (guard_test.go 5 tests + trigger_test.go pre-existing tests)",
+  "regression_catalog": "go test ./catalog/... -count=1 -timeout 5m — ok (84.804s)",
+  "regression_btree": "go test ./btree/... -race -count=1 -timeout 10m — ok (54.523s)",
+  "note": "This is internal sanity only (build green, validation-matrix covered) — NOT verification. Independent /cdr:verify still required per I4."
+}
