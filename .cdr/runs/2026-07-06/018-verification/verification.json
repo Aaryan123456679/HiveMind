@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-2b.1.1",
+  "commits_reviewed": ["9214a83", "a7eaf44"],
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Detect's condition oldSizeBytes <= threshold && newSizeBytes > threshold, verified in engine/split/trigger.go:154 and via TestThresholdDetection subtests, satisfies all 4 acceptance scenarios (a)-(d): stays-under no signal, crossing exactly-once, already-over no re-signal (also covers hook-install-time already-over case, same input shape), cumulative append sequence signals exactly once on the correct step (90->110 in the 0,30,60,90,110,140 sequence)."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Package scaffold-only prior to this commit; new trigger.go/trigger_test.go match issue #10's impacted-modules list for 2b.1.1 exactly. No engine/catalog files touched (git show 9214a83 --stat confirms only split/ + .cdr/ files changed). CAS guard (guard.go, 2b.1.2) and SPLITTING status transition (orchestrate.go, 2b.1.3) correctly left out of scope."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go test ./catalog/... -count=1 -timeout 5m passes (84s, no failures). engine/catalog/content.go's Append (lines 235-281) confirmed unmodified; its existing thresholdCrossed stub at line 281 (`oldSize <= cs.splitThresholdBytes && newSize > cs.splitThresholdBytes`) is read-verified to match Trigger.CrossesThreshold's boundary semantics exactly, and defaultSplitThresholdBytes (content.go:34) equals DefaultThresholdBytes (trigger.go:11), both 8*1024. No drift found today; genuinely equivalent, not just claimed equivalent."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Zero-byte appends (both under and already-over threshold), exact-boundary landing (strictly-over required, not >=), invalid threshold (0 rejected via error not panic; NewTrigger(1) accepted), shrinking-size defensive guard (newSizeBytes < oldSizeBytes treated as non-signal) are all covered by named subtests in trigger_test.go and pass."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No I/O, no external input parsing, no injection surface; pure arithmetic over uint64s supplied by caller. Not applicable beyond that."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "O(1) pure comparison, no allocation on the non-signal path. Negligible perf surface for this subtask."
+    },
+    "maintainability": {
+      "status": "pass_with_comment",
+      "evidence": "Design is clean: stateless Trigger, exported CrossesThreshold predicate for direct testing, doc comments explicitly warn that statelessness pushes the before/after-size correctness burden onto the caller (currently engine/catalog's per-fileID striped mutex in ContentStore.Append). This is a real design risk for 2b.1.2/2b.1.3 (a caller that races or supplies a stale 'old' size could violate exactly-once), but it is honestly documented rather than silently assumed, and is explicitly deferred by design given no caller exists yet. Recommend 2b.1.2's CAS guard work include a table/property test asserting the caller-discipline contract holds once real wiring exists, not just unit tests of Trigger in isolation."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "All 12 validation-matrix rows map onto named, passing subtests. go test ./split/... -run TestThresholdDetection -v -count=1 -timeout 5m: 8/8 subtests pass. Full go test ./split/... -v -count=1 -timeout 5m: 4 top-level tests, all pass. go build ./..., go vet ./..., gofmt -l . all clean from engine/."
+    },
+    "pending_md_accuracy": {
+      "status": "pass",
+      "evidence": ".cdr/memory/pending.md's new entry ('engine/split.Trigger not yet wired into engine/catalog/content.go's Append') accurately describes the two-independent-implementations situation, correctly attributes the deferral to issue #10's impacted-modules scoping (not an oversight), and gives a reasonable recommendation to wire once 2b.1.2 CAS guard lands. Not overstated or understated relative to the verified code."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Read full trigger.go and trigger_test.go, cross-checked against engine/catalog/content.go's actual Append implementation (not just the implementer's claim), ran all specified test commands plus build/vet/fmt gates, all green with zero fixes needed."
+    }
+  },
+  "improvement_suggestions": [
+    "When 2b.1.2 (CAS guard) wires a real caller to Trigger.Detect, add an integration/property test that specifically exercises concurrent or out-of-order (old,new) pairs for the same fileID to validate the caller-discipline contract that Trigger's docs currently only assert in prose.",
+    "Consider a follow-up compile-time or test-level assertion (e.g. a test in engine/catalog that imports engine/split and asserts DefaultThresholdBytes == defaultSplitThresholdBytes) to catch future drift between the two independent constants before manual wiring happens, rather than relying solely on doc-comment cross-references."
+  ],
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "Two independent implementations of the same boundary-crossing logic exist today (engine/split.CrossesThreshold and engine/catalog/content.go's inline thresholdCrossed expression) with no shared source of truth or drift-detection test; low risk today (deliberately deferred, correctly scoped out of 2b.1.1) but should not be allowed to persist past 2b.1.2/2b.1.3."
+  ]
+}
