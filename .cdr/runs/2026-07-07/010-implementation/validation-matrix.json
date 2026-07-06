@@ -1,0 +1,35 @@
+{
+  "subtask": "2b.2.1",
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "engine/split/ depends only on a SplitProposer interface (ProposeSplit(fileContent) -> plan); no direct gRPC/agent dependency exists yet",
+      "validation": "proposer.go defines SplitProposer with no imports; go list -deps ./split/... shows no grpc-related package",
+      "covered_by": "self-consistency step: go list -deps grep -i grpc (expect empty); manual review of proposer.go's import block (expect none)"
+    },
+    {
+      "id": "AC2",
+      "description": "go build ./engine/split/... succeeds with zero imports of a gRPC client package",
+      "validation": "go build ./split/... clean",
+      "covered_by": "self-consistency step: go build ./..."
+    },
+    {
+      "id": "AC3",
+      "description": "go test ./engine/split/... -run TestSplitProposerInterface asserts the interface contract via a trivial fake",
+      "validation": "proposer_test.go's TestSplitProposerInterface compiles a fakeSplitProposer against the SplitProposer interface and asserts returned SplitPlan/error",
+      "covered_by": "self-consistency step: go test ./split/... -run TestSplitProposerInterface"
+    },
+    {
+      "id": "AC4",
+      "description": "No regression to already-implemented 2b.1.1/2b.1.2/2b.1.3 (trigger.go/guard.go/orchestrate.go untouched, their tests still pass)",
+      "validation": "trigger.go/guard.go/orchestrate.go left byte-for-byte unmodified (git diff shows only new files); full package test suite green",
+      "covered_by": "self-consistency step: go test ./split/... -race -v -count=1 -timeout 10m; git status/diff review before commit"
+    },
+    {
+      "id": "AC5",
+      "description": "SplitPlan shape is minimal and does not over-design fields issue #12 or 2b.2.2 haven't asked for",
+      "validation": "SplitPlan limited to Files []SplitFileProposal + RedirectSummary string; SplitFileProposal limited to NewPath + SectionRanges; SectionRange limited to Start/End",
+      "covered_by": "manual review during implementation + architecture-discovery.md's stated rationale"
+    }
+  ]
+}

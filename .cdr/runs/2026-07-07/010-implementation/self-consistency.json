@@ -1,0 +1,18 @@
+{
+  "subtask": "2b.2.1",
+  "checks": [
+    { "cmd": "go build ./...", "cwd": "engine", "result": "pass" },
+    { "cmd": "go vet ./...", "cwd": "engine", "result": "pass" },
+    { "cmd": "gofmt -l .", "cwd": "engine", "result": "pass", "note": "empty output = no files need formatting" },
+    { "cmd": "go list -deps ./split/... | grep -i grpc", "cwd": "engine", "result": "pass", "note": "grep exit code 1 = zero matches, confirming no gRPC-related import anywhere in engine/split's dependency graph" },
+    { "cmd": "go test ./split/... -run TestSplitProposerInterface -count=1 -timeout 5m -v", "cwd": "engine", "result": "pass" },
+    { "cmd": "go test ./split/... -race -v -count=1 -timeout 10m", "cwd": "engine", "result": "pass", "note": "all pre-existing 2b.1.1 (trigger), 2b.1.2 (guard, via TestSplittingStatusIsolation reuse), 2b.1.3 (orchestrate) tests pass unchanged, zero regressions; new TestSplitProposerInterface passes" }
+  ],
+  "git_diff_scope_check": {
+    "cmd": "git status --short engine/split/",
+    "result": "?? engine/split/proposer.go\n?? engine/split/proposer_test.go",
+    "conclusion": "only new files added; trigger.go/guard.go/orchestrate.go and their tests left byte-for-byte untouched"
+  },
+  "overall": "pass",
+  "note": "This is internal sanity only (build green, matrix covered) per invariant I4 -- it is NOT independent verification. /cdr:verify must still review this work."
+}

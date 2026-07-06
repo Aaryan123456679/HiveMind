@@ -1,0 +1,30 @@
+{
+  "subtask": "2b.2.1",
+  "new_files": [
+    "engine/split/proposer.go",
+    "engine/split/proposer_test.go"
+  ],
+  "modified_files": [],
+  "files_explicitly_not_touched": [
+    "engine/split/trigger.go",
+    "engine/split/guard.go",
+    "engine/split/orchestrate.go",
+    "engine/split/trigger_test.go",
+    "engine/split/guard_test.go",
+    "engine/split/orchestrate_test.go",
+    "engine/split/doc.go"
+  ],
+  "new_public_symbols": [
+    "type SectionRange struct { Start, End int }",
+    "type SplitFileProposal struct { NewPath string; SectionRanges []SectionRange }",
+    "type SplitPlan struct { Files []SplitFileProposal; RedirectSummary string }",
+    "type SplitProposer interface { ProposeSplit(fileContent []byte) (SplitPlan, error) }"
+  ],
+  "new_imports": [],
+  "downstream_consumers": {
+    "issue_12": "will implement the real ProposeSplit-backed SplitProposer once proto/ and agents/ingestion exist in Go-consumable form; consumes SplitPlan.Files/RedirectSummary to actually allocate redirect fileIDs and write content/stub files",
+    "subtask_2b.2.2_not_in_scope_here": "will add engine/split/proposer_mock.go implementing SplitProposer with a deterministic fixture SplitPlan"
+  },
+  "risk": "low - purely additive new file, no changes to existing 2b.1.x behavior or call sites; no wiring of proposer.go into orchestrate.go performed (out of scope)",
+  "build_test_impact": "go build ./engine/split/... and go test ./engine/split/... both must remain green with zero new external (gRPC) imports"
+}
