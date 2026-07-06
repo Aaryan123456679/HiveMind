@@ -2,7 +2,7 @@
   "run_id": "2026-07-06-013-implementation-fix",
   "subtask": "task-2a.4.5-fix-cycle",
   "status": "completed",
-  "commit_sha": "PENDING_FILL_AFTER_COMMIT",
+  "commit_sha": "b31328f",
   "summary": "Root-caused and fixed three independent, genuine concurrency bugs in engine/btree discovered by task-2a.4.5's capstone TestConcurrentMixedWorkload, plus relaxed one over-strict pre-existing test invariant, plus reduced the capstone test's scale after finding a separate, out-of-scope throughput/contention issue at its original scale.",
   "root_causes": [
     {
