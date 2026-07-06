@@ -1,0 +1,31 @@
+{
+  "run_id": "012-implementation",
+  "subtask": "2b.2.2",
+  "commit_sha": "3c83d72",
+  "files_added": [
+    "engine/split/proposer_mock.go",
+    "engine/split/proposer_mock_test.go"
+  ],
+  "key_symbols": {
+    "engine/split/proposer_mock.go": [
+      "MockSplitProposer (struct, lines ~9-30)",
+      "NewMockSplitProposer (constructor, ~33-39)",
+      "MockSplitProposer.WithPlan / WithErr (builders, ~41-56)",
+      "MockSplitProposer.ProposeSplit (~62-75)",
+      "FixtureSplitPlan / FixtureFileContent (package vars, ~78-100)"
+    ],
+    "engine/split/proposer_mock_test.go": [
+      "TestMockSplitProposer (5 subtests: default plan determinism, keyed plan+fallback, error precedence, default error, SectionRange invariant check)"
+    ]
+  },
+  "not_touched": [
+    "engine/split/proposer.go",
+    "engine/split/trigger.go",
+    "engine/split/guard.go",
+    "engine/split/orchestrate.go"
+  ],
+  "self_consistency_pointer": ".cdr/runs/2026-07-07/012-implementation/self-consistency.json",
+  "validation_matrix_pointer": ".cdr/runs/2026-07-07/012-implementation/validation-matrix.json",
+  "next_step": "/cdr:verify against subtask 2b.2.2 acceptance criteria and test spec",
+  "note_for_verifier": "Not self-verified (invariant I4). Confirm: (1) TestMockSplitProposer name/spec match exactly go test ./engine/split/... -run TestMockSplitProposer, (2) MockSplitProposer design choice (caller-configurable keyed fixtures + default, exported non-_test.go file) matches task's design guidance intent, (3) proposer.go/trigger.go/guard.go/orchestrate.go genuinely untouched, (4) full engine/split -race suite has zero regressions vs pre-existing 2b.1.x/2b.2.1 tests."
+}
