@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-verification",
+  "subtask": "2b.1.2",
+  "verdict": "PASS",
+  "pointers": {
+    "verification_json": ".cdr/runs/2026-07-07/005-verification/verification.json",
+    "guard_go": "engine/split/guard.go",
+    "guard_test_go": "engine/split/guard_test.go",
+    "pending_md_note": ".cdr/memory/pending.md:9"
+  }
+}

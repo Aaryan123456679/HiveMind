@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-verification",
+  "subtask": "2b.1.2",
+  "commit_reviewed": "bed7edd0cc2d94b889bf634c31d1b965b1b526e5",
+  "verdict": "PASS",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Acceptance criteria (exactly one winner per fileID threshold crossing, losers told already-in-progress, no retry-loop/silent double-proceed) met by TryAcquire's single atomic.Bool.CompareAndSwap(false,true) call; doc comments explicitly forbid retry-looping or proceeding on false."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "guard.go's stateFor mirrors NodeStore.latchFor in engine/btree/latch.go exactly: g.mu.Lock()/defer Unlock() wraps the entire map-lookup-or-create section (guard.go:72-81 vs latch.go:65-78), so there is no double-checked-locking-without-a-lock window -- exactly one *fileSplitState is ever created per fileID. The CAS primitive is genuine atomic.Bool.CompareAndSwap, not a mutex+bool masquerading as CAS (verified by reading TryAcquire's implementation directly, guard.go:109-111)."
+    },
+    "concurrency_correctness": {
+      "status": "pass",
+      "evidence": "Traced explicitly: (1) two goroutines racing stateFor(fileID) for a never-seen fileID both block on g.mu; whichever acquires it first creates-and-stores the single *fileSplitState, the second observes ok==true and reuses it -- both goroutines always operate on the identical object. (2) Given one shared *fileSplitState, CompareAndSwap(false,true) is a single indivisible hardware operation; exactly one caller observes the false->true transition regardless of arrival order. No plausible interleaving produces two winners for the same fileID."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git show bed7edd --stat confirms only engine/split/guard.go, engine/split/guard_test.go, .cdr/memory/pending.md, and .cdr/runs/2026-07-07/003-implementation/* were touched. No changes to engine/catalog/ (2b.1.3's scope) or engine/btree/. Regression suites green: go test ./catalog/... (80.7s, count=1), go test ./btree/... -race (48.2s, count=1)."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Release-without-holding documented and tested as no-op (unconditional Store(false), no owner-attribution needed since FileGuard has no owner concept, unlike nodeLatch.mu) -- does not corrupt state for a future legitimate holder since Store(false) is idempotent. Independent fileIDs verified non-interfering (TestIndependentFileIDs) including under concurrent TryAcquire for different IDs. Acquire->release->reacquire lifecycle covered (TestAcquireReleaseReacquire)."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestSplitInProgressCAS uses a genuine three-WaitGroup start-barrier (ready/start/done) forcing all 500 goroutines to block at start.Wait() before release, maximizing real contention rather than relying on scheduling luck. Asserts wins.Load() != 1 fails the test (exactly one, not at-least/at-most). Ran under -race, -count=10 and -count=100 (exceeding implementer's baseline), all green with no race reports. Additional tests (acquire/release/reacquire, independent fileIDs, no-op release, InProgress observability) all present and passing per go test ./split/... -race -v -count=1."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No external input parsing, no injection surface; fileID is an internal uint64 key. No secrets or untrusted data handled in this diff."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Per-fileID atomic CAS with mutex only guarding lazy map creation (not steady-state operations) -- matches NodeStore's precedent for avoiding cross-fileID contention. No allocation on the hot CAS path once the entry exists."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Extensive doc comments correctly describe the CAS semantics, the NodeStore analogy, and explicitly scope out 2b.1.3's future work (wiring to Trigger, catalog SPLITTING status, back-off/queueing). pending.md's no-eviction note (line 9) accurately mirrors the existing NodeStore.latches entry (line 5) without overstating or understating growth risk."
+    },
+    "build_verification": {
+      "status": "pass",
+      "evidence": "go build ./... OK; go vet ./... OK; gofmt -l . clean; go test ./split/... -race -run TestSplitInProgressCAS -count=100 -timeout 10m all pass; go test ./split/... -race -v -count=1 -timeout 10m all pass."
+    }
+  },
+  "findings": [],
+  "confidence": "high",
+  "notes": "No plain mutex+bool TOCTOU masquerading as CAS found; no double-checked-locking-without-a-lock bug in the lazy map-creation path. Scope discipline held: nothing touched in engine/catalog/ or engine/btree/. Safe to proceed to 2b.1.3."
+}

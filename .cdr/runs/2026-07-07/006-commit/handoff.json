@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-07-006-commit",
+  "subtask": "2b.1.2",
+  "pointers": {
+    "commit_doc": ".cdr/commits/task-2b.1.2.md",
+    "task_jsonl_entry": ".cdr/index/task.jsonl",
+    "verification_run": ".cdr/runs/2026-07-07/005-verification/verification.json",
+    "issue_comment": "https://github.com/Aaryan123456679/HiveMind/issues/10#issuecomment-4896914895"
+  }
+}

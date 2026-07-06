@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-07-006-commit",
+  "macro": "cdr:commit",
+  "macro_version": "1",
+  "agent": "commit",
+  "subtask": "document task-2b.1.2 (CAS split guard) milestone (commit bed7edd)",
+  "git_head": "bed7edd0cc2d94b889bf634c31d1b965b1b526e5",
+  "run_key": "commit-2b.1.2-cas-guard-bed7edd",
+  "status": "completed",
+  "last_completed_step": "commit_doc_written",
+  "started_at": "2026-07-07T00:00:00Z",
+  "ended_at": "2026-07-07T00:15:00Z"
+}

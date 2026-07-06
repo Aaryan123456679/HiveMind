@@ -1,0 +1,43 @@
+{
+  "subtask": "2b.1.2",
+  "issue": 10,
+  "commit_sha": "bed7edd",
+  "status": "implemented_not_verified",
+  "files_added": [
+    "engine/split/guard.go",
+    "engine/split/guard_test.go"
+  ],
+  "files_modified": [
+    ".cdr/memory/pending.md"
+  ],
+  "run_artifacts": {
+    "requirement": ".cdr/runs/2026-07-07/003-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-07/003-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-07/003-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-07/003-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-07/003-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-07/003-implementation/self-consistency.json"
+  },
+  "public_api_added": [
+    "type FileGuard struct{...}  (engine/split/guard.go)",
+    "func NewFileGuard() *FileGuard",
+    "func (g *FileGuard) TryAcquire(fileID uint64) bool",
+    "func (g *FileGuard) Release(fileID uint64)",
+    "func (g *FileGuard) InProgress(fileID uint64) bool"
+  ],
+  "tests_added": [
+    "TestSplitInProgressCAS (engine/split/guard_test.go) — required test spec from issue #10",
+    "TestAcquireReleaseReacquire",
+    "TestIndependentFileIDs",
+    "TestReleaseWithoutHoldingIsNoOp",
+    "TestInProgressObservability"
+  ],
+  "self_consistency_summary": "go build/vet/gofmt clean; go test ./split/... -race -run TestSplitInProgressCAS -count=5 clean; go test ./split/... -race -v -count=1 clean; go test ./catalog/... -count=1 ok (84.8s); go test ./btree/... -race -count=1 ok (54.5s)",
+  "next_subtask": "2b.1.3 — mark file SPLITTING in catalog, queue new writers, verify MVCC reader isolation (engine/split/orchestrate.go, orchestrate_test.go); should wire split.Trigger.Detect -> FileGuard.TryAcquire -> catalog status transition, per pending.md's noted follow-up",
+  "known_deferred_items": [
+    "FileGuard registry has no eviction (matches btree NodeStore.latches precedent) — noted in .cdr/memory/pending.md",
+    "split.Trigger and FileGuard remain unwired to each other and to engine/catalog by design — 2b.1.3 scope"
+  ],
+  "verification_required": true,
+  "note_for_verifier": "Per invariant I4, this implementation agent did not verify its own work. Run /cdr:verify next against commit bed7edd, focusing on: (1) CAS correctness under -race with high goroutine counts / repeated runs for flakiness, (2) confirm TryAcquire's CompareAndSwap is a single atomic op (no separate load+store), (3) confirm Release's no-op design doesn't mask a real double-release bug class relevant to 2b.1.3's future orchestration, (4) confirm catalog/btree regression suites still pass independently."
+}
