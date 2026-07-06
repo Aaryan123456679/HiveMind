@@ -602,6 +602,7 @@ func (t *Tree) crabInsert(rootID uint64, path string, fileID uint64) error {
 		}
 		err := t.crabInsertOnce(rootID, path, fileID)
 		if err == errRestartFromRoot {
+			restartFromRootCount.Add(1)
 			continue
 		}
 		return err

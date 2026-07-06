@@ -1,0 +1,13 @@
+{
+  "go_build": "clean, no output",
+  "go_vet": "clean, no output",
+  "gofmt_l": "clean, no output",
+  "go_test_btree_race": {
+    "command": "go test ./btree/... -race -v -count=1 -timeout 10m",
+    "result": "PASS",
+    "duration": "58.5s",
+    "new_test_passed": "TestRestartFromRootCountIncrementsOnForcedRestart",
+    "regressions": "none"
+  },
+  "note": "Internal sanity check only per invariant I4; verification is delegated to /cdr:verify."
+}

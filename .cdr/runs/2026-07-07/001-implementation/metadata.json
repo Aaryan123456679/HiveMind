@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-07-001-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "pending.md cleanup: node.go stale version-field docs, lookup.go lock-free overclaim doc fix, restart-from-root observability counter",
+  "git_head": "9214a837ae3c12a0a14e10d16a3aadbfa7968741",
+  "run_key": "btree-pending-cleanup-node-lookup-restartcount-9214a83",
+  "status": "completed",
+  "last_completed_step": "commit",
+  "started_at": "2026-07-06T19:00:00Z",
+  "ended_at": "2026-07-06T19:20:00Z"
+}

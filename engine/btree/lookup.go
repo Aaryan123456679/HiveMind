@@ -346,16 +346,32 @@ func lookupOnce(store *NodeStore, rootID uint64, path string) (fileID uint64, fo
 
 // Lookup performs a lock-free, optimistic point lookup of path in t,
 // concurrency-safe against Tree.Insert/Tree.Delete (2a.4.2/2a.4.3) and other
-// concurrent Tree.Lookup calls: it never calls NodeStore.Lock or TryLock, so
-// it can never block a writer and can never be blocked by one (this
-// subtask's, 2a.4.4's, acceptance criterion). Each node visited is read via
-// readNodeOptimistic's version-before/content-read/version-after protocol;
-// whenever any node's version changed during the read (a concurrent writer's
-// WriteNode call overlapped it), the entire lookup is discarded and retried
-// from the tree's current root (t.Root(), re-read on every attempt in case a
-// concurrent root split installed a new root), with the same jittered
-// backoff (crabRetryBackoff) and "no retry cap" convention insert.go/
-// delete.go's TryLock-miss restart loops already use.
+// concurrent Tree.Lookup calls: at the per-node latch level (NodeStore.Lock/
+// TryLock in latch.go) it is fully lock-free -- readNodeOptimistic never
+// calls Lock or TryLock on any node it visits, so it can never block a
+// writer's or another reader's per-node latch acquisition, and can never
+// itself be blocked by one. This per-node guarantee is what actually matters
+// for eliminating reader/writer contention on structural nodes, and is this
+// subtask's (2a.4.4's) acceptance criterion.
+//
+// One narrow, intentional exception: this function's retry loop calls
+// t.Root() on every attempt (see below), which briefly acquires rootMu --
+// the same tree-level mutex Tree.Insert/Tree.Delete use for root-bootstrap
+// and root-split. This is a tree-level, not a per-node, lock, is held only
+// for the duration of a single map-free field read, and is contended only
+// at the rare instant a root change is actually happening; it does not
+// affect per-node lock-freedom or produce incorrect results, but it does
+// mean this function is not literally "never calls Lock/TryLock anywhere" --
+// only "never takes a per-node latch".
+//
+// Each node visited is read via readNodeOptimistic's version-before/content-
+// read/version-after protocol; whenever any node's version changed during
+// the read (a concurrent writer's WriteNode call overlapped it), the entire
+// lookup is discarded and retried from the tree's current root (t.Root(),
+// re-read on every attempt in case a concurrent root split installed a new
+// root), with the same jittered backoff (crabRetryBackoff) and "no retry
+// cap" convention insert.go/delete.go's TryLock-miss restart loops already
+// use.
 //
 // This is a NEW, additive entry point alongside the pre-existing, untouched
 // free function Lookup (above): Lookup remains the single-threaded, non-
@@ -372,6 +388,7 @@ func (t *Tree) Lookup(path string) (fileID uint64, found bool, err error) {
 		}
 		fileID, found, err := lookupOnce(t.Store, root, path)
 		if err == errOptimisticRetry {
+			restartFromRootCount.Add(1)
 			continue
 		}
 		return fileID, found, err

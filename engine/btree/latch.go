@@ -113,3 +113,30 @@ func (s *NodeStore) TryLock(nodeID uint64) bool {
 func (s *NodeStore) Version(nodeID uint64) uint64 {
 	return s.latchFor(nodeID).version.Load()
 }
+
+// restartFromRootCount is a package-level, purely observational counter
+// incremented once every time crabInsert (insert.go), crabDelete (delete.go),
+// or Tree.Lookup (lookup.go) restarts its walk from the tree's root --
+// whether because a hand-over-hand TryLock miss forced a crabbing writer to
+// give up and restart (errRestartFromRoot), or because an optimistic reader
+// observed a concurrent structural mutation mid-read (errOptimisticRetry).
+//
+// This is pending.md's "consider an optional attempt counter/metric (not a
+// hard cap) to make pathological retry storms observable" recommendation
+// (surfaced during task-2a.4.2 verification): none of these restart loops
+// have, or should have, a maximum-attempt cap -- giving up would mean
+// silently dropping a write or a read, which this package never does. This
+// counter changes nothing about that: it is purely additive instrumentation,
+// read with a single atomic load/increment, with no effect on retry timing,
+// backoff, or control flow. It exists solely so an operator (or a test) can
+// notice an abnormally high restart rate, which would otherwise be invisible.
+var restartFromRootCount atomic.Uint64
+
+// RestartFromRootCount returns the total number of times, across every Tree
+// in this process, that a crabInsert/crabDelete/Tree.Lookup call has
+// restarted its walk from the tree's root since process start. See
+// restartFromRootCount's doc comment for what this counts and why. Intended
+// for observability/metrics and tests; never consulted by any retry logic.
+func RestartFromRootCount() uint64 {
+	return restartFromRootCount.Load()
+}

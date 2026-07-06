@@ -1,0 +1,30 @@
+{
+  "run_id": "2026-07-07-001-implementation",
+  "status": "completed",
+  "summary": "Resolved 3 of 5 pending.md items: node.go stale on-disk Version-field docs, lookup.go lock-free overclaim doc fix, and a new additive restart-from-root observability counter across crabInsert/crabDelete/Tree.Lookup.",
+  "commit": "PENDING_FILL_AFTER_COMMIT",
+  "files_changed": [
+    "engine/btree/node.go",
+    "engine/btree/lookup.go",
+    "engine/btree/latch.go",
+    "engine/btree/insert.go",
+    "engine/btree/delete.go",
+    "engine/btree/restart_count_test.go",
+    ".cdr/memory/pending.md"
+  ],
+  "pointers": {
+    "node_version_field_doc": "engine/btree/node.go (offVersion const ~L31-44, LeafNode.Version ~L69-77, InternalNode.Version ~L92-100)",
+    "lookup_doc_fix": "engine/btree/lookup.go Tree.Lookup doc comment ~L347-372",
+    "restart_counter_definition": "engine/btree/latch.go (restartFromRootCount var + RestartFromRootCount() func, appended after Version())",
+    "restart_counter_call_sites": [
+      "engine/btree/insert.go crabInsert loop (errRestartFromRoot continue branch)",
+      "engine/btree/delete.go crabDelete loop (errRestartFromRoot continue branch)",
+      "engine/btree/lookup.go Tree.Lookup loop (errOptimisticRetry continue branch)"
+    ],
+    "new_test": "engine/btree/restart_count_test.go TestRestartFromRootCountIncrementsOnForcedRestart",
+    "pending_md_diff": "removed items 'node.go stale doc comments...', 'No retry cap on TryLock restart-from-root loop...', 'Tree.Lookup doc comments overclaim...'; left SaveRoot/WAL-replay gap, node-latch registry eviction, and the concurrently-added engine/split.Trigger item untouched"
+  },
+  "self_consistency": ".cdr/runs/2026-07-07/001-implementation/self-consistency.json (go build/vet/gofmt clean; go test ./btree/... -race -count=1 -timeout 10m PASS, 58.5s, zero regressions)",
+  "not_verified": "This run does NOT constitute verification (invariant I4). Next step: /cdr:verify.",
+  "out_of_scope_respected": "engine/split/ untouched"
+}

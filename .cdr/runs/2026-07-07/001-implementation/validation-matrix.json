@@ -1,0 +1,46 @@
+{
+  "items": [
+    {
+      "id": "item1-node-doc",
+      "requirement": "node.go Version field doc comments no longer describe on-disk field as future-work CAS logic; point to latch.go",
+      "validation": "manual doc review + go build/gofmt clean",
+      "status": "covered"
+    },
+    {
+      "id": "item2-lookup-doc",
+      "requirement": "Tree.Lookup doc comment scopes lock-free claim to per-node latches, documents rootMu/t.Root() exception, no logic change",
+      "validation": "manual doc review; diff shows doc-only change; full test suite green (no behavior change)",
+      "status": "covered"
+    },
+    {
+      "id": "item3-counter-api",
+      "requirement": "RestartFromRootCount() exported, incremented once per restart in crabInsert/crabDelete/Tree.Lookup",
+      "validation": "code inspection of 3 call sites; new test TestRestartFromRootCountIncrementsOnForcedRestart",
+      "status": "covered"
+    },
+    {
+      "id": "item3-no-behavior-change",
+      "requirement": "no cap, no early exit, no backoff change introduced",
+      "validation": "diff review — only a single atomic Add(1) line added per loop, no other lines changed in the loops",
+      "status": "covered"
+    },
+    {
+      "id": "regression-safety",
+      "requirement": "zero regressions in engine/btree, no new races",
+      "validation": "go test ./btree/... -race -count=1 -timeout 10m -> ok (63.5s)",
+      "status": "covered"
+    },
+    {
+      "id": "build-hygiene",
+      "requirement": "go build ./... && go vet ./... && gofmt -l . clean",
+      "validation": "all three ran clean with no output",
+      "status": "covered"
+    },
+    {
+      "id": "scope",
+      "requirement": "engine/split/ untouched",
+      "validation": "git diff --stat confirms no files under engine/split/",
+      "status": "covered"
+    }
+  ]
+}

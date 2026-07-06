@@ -463,6 +463,7 @@ func (t *Tree) crabDelete(rootID uint64, path string) (bool, error) {
 		}
 		found, err := t.crabDeleteOnce(rootID, path)
 		if err == errRestartFromRoot {
+			restartFromRootCount.Add(1)
 			continue
 		}
 		return found, err

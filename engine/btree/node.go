@@ -29,12 +29,20 @@ const (
 const (
 	offNodeType = 0
 	offKeyCount = offNodeType + 1 // uint16
-	// offVersion holds an optimistic-concurrency version counter (see the
-	// "Reads" section of docs/LLD/btree.md: readers check that a node's
-	// version counter is unchanged and retry if it changed during the read).
-	// This subtask only reserves and (de)serializes the field; the actual
-	// CAS/atomic version-bump logic used by concurrent readers/writers is
-	// implemented by a later, concurrency-focused subtask.
+	// offVersion holds an on-disk copy of a node's version counter, written by
+	// LeafNode.Encode/InternalNode.Encode and round-tripped back out by
+	// decodeHeader. This on-disk field is NOT what in-process concurrency
+	// control actually reads: task-2a.4.1 (GitHub issue #9) deliberately built
+	// a separate, in-memory-only version counter instead -- nodeLatch.version
+	// in latch.go, keyed by node ID and bumped by NodeStore.WriteNode exactly
+	// once on every successful write (see latch.go's package-level doc
+	// comment for the full protocol). That in-memory counter, not this
+	// on-disk field, is what NodeStore.Version/readNodeOptimistic (lookup.go)
+	// and the latch-crabbing writers (insert.go/delete.go) read and compare.
+	// This on-disk field is written once at encode time purely so Encode/
+	// Decode round-trip a node's full on-disk layout; it is never re-read or
+	// compared by any concurrency-control logic, and is not kept in sync with
+	// the in-memory counter after a node is written.
 	offVersion = offKeyCount + 2 // uint64
 	offBody    = offVersion + 8
 )
@@ -58,10 +66,15 @@ type LeafNode struct {
 	// NextLeaf is the node index of the next leaf in sorted key order, or noSibling (0)
 	// if this is the rightmost leaf.
 	NextLeaf uint64
-	// Version is an optimistic-concurrency version counter (see docs/LLD/btree.md's
-	// "Reads" section). This subtask only stores/round-trips the field; the atomic
-	// bump-on-write / unchanged-check-on-read logic belongs to a later, concurrency-
-	// focused subtask.
+	// Version is the on-disk copy of this leaf's version counter, written by
+	// Encode and read back by DecodeLeafNode purely as part of the node's
+	// full on-disk layout round-trip. It is NOT consulted by in-process
+	// concurrency control: task-2a.4.1 (GitHub issue #9) built a separate,
+	// in-memory-only version counter instead (nodeLatch.version, keyed by
+	// node ID in latch.go's NodeStore.latches registry, bumped by
+	// NodeStore.WriteNode -- see latch.go's package-level doc comment).
+	// Readers/writers actually doing optimistic-read or latch-crabbing work
+	// call NodeStore.Version(nodeID), never this field.
 	Version uint64
 }
 
@@ -76,10 +89,15 @@ type InternalNode struct {
 	// Children holds the node index of each child. len(Children) must equal
 	// len(Keys)+1.
 	Children []uint64
-	// Version is an optimistic-concurrency version counter (see docs/LLD/btree.md's
-	// "Reads" section). This subtask only stores/round-trips the field; the atomic
-	// bump-on-write / unchanged-check-on-read logic belongs to a later, concurrency-
-	// focused subtask.
+	// Version is the on-disk copy of this internal node's version counter,
+	// written by Encode and read back by DecodeInternalNode purely as part
+	// of the node's full on-disk layout round-trip. It is NOT consulted by
+	// in-process concurrency control: task-2a.4.1 (GitHub issue #9) built a
+	// separate, in-memory-only version counter instead (nodeLatch.version,
+	// keyed by node ID in latch.go's NodeStore.latches registry, bumped by
+	// NodeStore.WriteNode -- see latch.go's package-level doc comment).
+	// Readers/writers actually doing optimistic-read or latch-crabbing work
+	// call NodeStore.Version(nodeID), never this field.
 	Version uint64
 	// NextSibling is the node index of this internal node's right sibling at the
 	// same tree level, or noSibling (0) if this is the rightmost node at its level.

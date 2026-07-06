@@ -1,0 +1,18 @@
+{
+  "files_touched": [
+    {"path": "engine/btree/node.go", "change": "doc-comment only (offVersion const, LeafNode.Version, InternalNode.Version)", "risk": "none — no code/logic touched"},
+    {"path": "engine/btree/lookup.go", "change": "doc-comment reword on Tree.Lookup + add restartFromRootCount.Add(1) in Tree.Lookup's retry loop", "risk": "low — single atomic Add, no control-flow change"},
+    {"path": "engine/btree/latch.go", "change": "add package-level restartFromRootCount atomic.Uint64 + exported RestartFromRootCount() accessor", "risk": "none — purely additive"},
+    {"path": "engine/btree/insert.go", "change": "add restartFromRootCount.Add(1) in crabInsert's retry loop", "risk": "low — single atomic Add, no control-flow change"},
+    {"path": "engine/btree/delete.go", "change": "add restartFromRootCount.Add(1) in crabDelete's retry loop", "risk": "low — single atomic Add, no control-flow change"},
+    {"path": "engine/btree/restart_count_test.go", "change": "new test file, reuses existing crabRetryHook forced-contention pattern from insert_test.go", "risk": "none — test-only, additive"}
+  ],
+  "not_touched": ["engine/split/ (explicitly out of scope, concurrent agent working there)"],
+  "downstream_consumers": {
+    "node.go Version fields": "encode/decode round-trip only; no callers rely on doc wording",
+    "Tree.Lookup doc": "no callers rely on doc wording; behavior unchanged",
+    "RestartFromRootCount": "new symbol, no existing callers; purely additive public API surface"
+  },
+  "behavioral_change": "none — doc-only for items 1-2; item 3 is additive instrumentation with zero effect on retry timing, backoff, or control flow",
+  "test_impact": "existing test suite must remain green with -race; new test added to assert counter increments on a forced restart"
+}
