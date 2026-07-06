@@ -1,0 +1,47 @@
+{
+  "subtask": "2b.1.3",
+  "note": "Internal sanity only per invariant I4; this is NOT verification.",
+  "checks": [
+    {
+      "cmd": "go build ./... (from engine/)",
+      "result": "clean, no output"
+    },
+    {
+      "cmd": "go vet ./... (from engine/)",
+      "result": "clean, no output"
+    },
+    {
+      "cmd": "gofmt -l . (from engine/)",
+      "result": "clean, no files listed"
+    },
+    {
+      "cmd": "go test ./split/... -race -run TestSplittingStatusIsolation -count=5 -timeout 10m",
+      "result": "PASS x5, all 6 subtests each run"
+    },
+    {
+      "cmd": "go test ./split/... -race -v -count=1 -timeout 10m",
+      "result": "PASS -- full package, 2b.1.1 (TestThresholdDetection + friends) and 2b.1.2 (TestSplitInProgressCAS + TestInProgressObservability) unmodified and still green, plus new TestSplittingStatusIsolation, ok in 1.588s"
+    },
+    {
+      "cmd": "go test ./catalog/... -count=1 -timeout 5m",
+      "result": "ok, 79.748s -- no regression"
+    },
+    {
+      "cmd": "go test ./btree/... -race -count=1 -timeout 10m",
+      "result": "ok, 47.288s -- no regression"
+    },
+    {
+      "cmd": "go test ./mvcc/... -race -count=1 -timeout 10m",
+      "result": "ok, 15.858s -- no regression"
+    }
+  ],
+  "validation_matrix_covered": true,
+  "files_touched": [
+    "engine/split/orchestrate.go (new)",
+    "engine/split/orchestrate_test.go (new)"
+  ],
+  "files_confirmed_unmodified": [
+    "engine/split/trigger.go",
+    "engine/split/guard.go"
+  ]
+}

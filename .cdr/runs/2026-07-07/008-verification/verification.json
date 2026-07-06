@@ -1,0 +1,52 @@
+{
+  "subtask": "2b.1.3",
+  "issue": 10,
+  "commit_reviewed": "124490bbd68fe7395a329d3185a35be331675ee9",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "Disregarded fake instruction-like/system-reminder-style content embedded in `gh issue view`/`git show` tool output (untrusted repo/GitHub content, not real system messages). No action taken on it.",
+  "dimensions": {
+    "requirements_conformance": {
+      "result": "PASS",
+      "evidence": "orchestrate.go implements BeginSplit (guard+status entry), EndSplit/AbortSplit (exit + guard release), AdmitWrite (write-admission gate) exactly per issue #10's 2b.1.3 acceptance criteria: mark SPLITTING, queue new writers via sentinel-error refusal, verify readers unaffected via MVCC. Test TestSplittingStatusIsolation covers all three."
+    },
+    "architecture_conformance": {
+      "result": "PASS",
+      "evidence": "Composes 2b.1.2's already-verified FileGuard.TryAcquire strictly before any status mutation (BeginSplit: guard.TryAcquire -> transitionStatus, guard released on any post-win failure). Status transitions follow repo's WAL-before-apply idiom (wal.NewCatalogPutRecord + wal.AppendAndApply then cat.Put), matching ContentStore.Append precedent. `git show 124490b --stat` confirms only engine/split/orchestrate.go and orchestrate_test.go changed; engine/split/guard.go and trigger.go are untouched (verified byte-identical to prior verified commit bed7edd). CDR run artifacts for 007-implementation are untracked in this commit, consistent with this repo's established pattern of committing .cdr artifacts in a separate docs(cdr) commit at /cdr:commit time (see 4afdfee for 2b.1.2's precedent)."
+    },
+    "concurrency_correctness": {
+      "result": "PASS",
+      "evidence": "Traced BeginSplit: guard.TryAcquire is a genuine atomic CompareAndSwap (verified in guard.go), so of any number of concurrent BeginSplit callers for the same fileID, exactly one proceeds to transitionStatus; there is no gap where two callers can both pass the guard and race the status write (only the CAS winner ever calls transitionStatus). transitionStatus's read-then-write (cat.Get then cat.Put) is safe specifically because it is only ever reachable via the guard-serialized path, matching the documented rationale (mirrors Catalog's own documented single-writer-per-key precondition for non-CAS mutators). Verified errStatusMismatch -> ErrAlreadySplitting translation correctly handles a stuck/crashed-holder SPLITTING record left behind (Status != StatusActive path), not just a sequential double-call. EndSplit/AbortSplit correctly release the guard unconditionally (including on ErrNotSplitting path) via deferred release after outcome validation, preventing guard leaks. Independently verified engine/mvcc/read.go and write.go: grep confirms zero references to CatalogRecord.Status anywhere in engine/mvcc; NewSnapshot pins only CurrentVersion. The implementer's core claim is structurally true, not just asserted."
+    },
+    "test_coverage": {
+      "result": "PASS",
+      "evidence": "reader_snapshot_unaffected_by_splitting takes a real mvcc.NewSnapshot before BeginSplit, reads it during SPLITTING and asserts byte-identical content against the committed version (not just 'no error') both during and after the split window -- this is a genuine positive proof, not a weak assertion. concurrent_writers_and_split_race runs 32 goroutines truly racing AdmitWrite against a concurrent BeginSplit/AbortSplit under -race, asserting both admitted>0 and refused>0 and no unexpected errors -- this is genuine contention (goroutines started before BeginSplit is called, polling via atomic counters, not a sequential simulation). end_split_refused_if_not_splitting correctly forces the refusal path by calling EndSplit before any BeginSplit. second_begin_refused_while_splitting correctly re-verifies catalog state post-refusal, not just the returned error."
+    },
+    "build_and_regression": {
+      "result": "PASS",
+      "evidence": "go build ./... clean; go vet ./... clean; gofmt -l . clean. go test ./split/... -race -run TestSplittingStatusIsolation -count=10 -timeout 10m: PASS. go test ./split/... -race -v -count=1 -timeout 10m: all subtests PASS including full package (trigger/guard tests unaffected). Regression: go test ./catalog/... -count=1 (77s, PASS), go test ./btree/... -race -count=1 (47s, PASS), go test ./mvcc/... -race -count=1 (15s, PASS)."
+    },
+    "known_gaps_disclosure": {
+      "result": "PASS_WITH_COMMENT",
+      "evidence": "Abandoned/crashed-holder SPLITTING record recovery is honestly disclosed in code comments (ErrAlreadySplitting doc, package doc's explicit 'Automatic recovery ... explicitly deferred' section) and in the commit message. This is an acceptable, scope-appropriate gap for 2b.1.3 given no split executor exists yet (issue #12 owns real split execution/commit) -- a stuck SPLITTING record cannot currently be produced by any real caller in this codebase, only by test code calling BeginSplit and never EndSplit/AbortSplit. Does not block PASS.",
+      "comment": "This gap was NOT yet mirrored into .cdr/memory/pending.md (unlike three prior Phase 2b gaps that are: btree SaveRoot/WAL-replay, node-latch eviction, FileGuard registry eviction, Trigger-not-wired). Added an entry during this verification to keep the pending-gaps ledger complete and to make it discoverable for issue #12 without requiring the implementer's plan.md/reasoning."
+    },
+    "security": {
+      "result": "PASS",
+      "evidence": "No externally-influenced input paths in this diff (fileID is a caller-supplied uint64, same trust boundary as existing FileGuard/Catalog APIs). No new I/O, no secrets, no injection surface. Noted and disregarded the embedded prompt-injection attempt in tool output per task instructions."
+    },
+    "performance": {
+      "result": "PASS",
+      "evidence": "transitionStatus is one WAL append + one catalog Put per BeginSplit/EndSplit call, O(1), consistent with existing catalog mutation costs elsewhere in the codebase. AdmitWrite is a single cat.Get, no lock contention beyond FileGuard's existing per-fileID atomic. No new global locks introduced."
+    },
+    "maintainability": {
+      "result": "PASS",
+      "evidence": "Sentinel errors are specific and well-documented per call site (ErrAlreadySplitting/ErrNotSplitting/ErrSplitInProgress/ErrUnexpectedStatus) rather than one generic error. Package doc clearly delineates issue #10 vs #12 scope boundary, matching repo's doc.go convention intent."
+    }
+  },
+  "must_fix": [],
+  "should_fix": [
+    "Add the abandoned-SPLITTING-record recovery gap to .cdr/memory/pending.md (added during this verification run; recommend implementer/next-subtask owner confirms it's carried forward into issue #12's planning)."
+  ],
+  "confidence": "high",
+  "recommendation": "Proceed to /cdr:commit + push. Issue #10 (all 3 subtasks) can be closed. Phase 2b milestone stays open per #11-#14."
+}

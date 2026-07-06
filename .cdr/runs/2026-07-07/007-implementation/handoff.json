@@ -1,0 +1,36 @@
+{
+  "run_id": "2026-07-07-007-implementation",
+  "subtask": "2b.1.3",
+  "status": "completed",
+  "commit_sha": "124490b",
+  "commit_message_summary": "feat(split): mark file SPLITTING in catalog, gate writers, verify MVCC read isolation (2b.1.3)",
+  "pushed": false,
+  "new_files": [
+    "engine/split/orchestrate.go",
+    "engine/split/orchestrate_test.go"
+  ],
+  "unmodified_read_only_dependencies_confirmed": [
+    "engine/split/trigger.go",
+    "engine/split/guard.go"
+  ],
+  "run_artifacts": {
+    "requirement": ".cdr/runs/2026-07-07/007-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-07/007-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-07/007-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-07/007-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-07/007-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-07/007-implementation/self-consistency.json"
+  },
+  "test_spec_result": "go test ./engine/split/... -race -run TestSplittingStatusIsolation: PASS (5x repeats + included in full package -v run)",
+  "next_step": "cdr:verify",
+  "verifier_focus_pointers": [
+    "engine/split/orchestrate.go: BeginSplit/EndSplit/AbortSplit/AdmitWrite and the private transitionStatus helper",
+    "engine/split/orchestrate_test.go: TestSplittingStatusIsolation, esp. reader_snapshot_unaffected_by_splitting and concurrent_writers_and_split_race subtests",
+    "architecture-discovery.md's 'Crash/stuck-SPLITTING gap' section -- confirm this is correctly scoped out (not silently missed)",
+    "architecture-discovery.md's scope-boundary section vs issue #12 -- confirm EndSplit(fileID, StatusSplit) is the correct minimal hook for #12 to call, without this subtask overreaching into #12's territory"
+  ],
+  "known_non_blocking_notes": [
+    "AdmitWrite is not yet wired into engine/catalog/content.go's ContentStore.Append (by design, out of scope per issue #10's impacted-modules list for 2b.1.3) -- flagged for a future subtask.",
+    "No automatic recovery for a SPLITTING status left behind by a crashed split holder (FileGuard state is process-lifetime-scoped, same class of gap as catalog.Catalog's own documented empty-index-on-restart limitation) -- recommend tracking in .cdr/memory/pending.md, likely to be addressed alongside issue #12's crash-injection test (TestSplitAtomicCommit)."
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "subtask": "2b.1.3",
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "text": "Once a split begins, the catalog record transitions to SPLITTING",
+      "covered_by": ["TestSplittingStatusIsolation/sequential_lifecycle"]
+    },
+    {
+      "id": "AC2",
+      "text": "New writer requests for the file are queued rather than applied while SPLITTING",
+      "covered_by": [
+        "TestSplittingStatusIsolation/sequential_lifecycle",
+        "TestSplittingStatusIsolation/concurrent_writers_and_split_race"
+      ]
+    },
+    {
+      "id": "AC3",
+      "text": "Readers holding a pre-split MVCC snapshot continue to see their pinned version unaffected",
+      "covered_by": ["TestSplittingStatusIsolation/reader_snapshot_unaffected_by_splitting"]
+    },
+    {
+      "id": "AC4",
+      "text": "Exactly one split wins per file (composes with 2b.1.2's guard, not reimplemented)",
+      "covered_by": [
+        "TestSplittingStatusIsolation/second_begin_refused_while_splitting",
+        "pre-existing TestSplitInProgressCAS (guard_test.go, unmodified, must still pass)"
+      ]
+    },
+    {
+      "id": "AC5",
+      "text": "Status transitions out of SPLITTING cleanly (no leaked/stuck guard state on the success/abort path this subtask owns)",
+      "covered_by": [
+        "TestSplittingStatusIsolation/abort_returns_to_active",
+        "TestSplittingStatusIsolation/end_split_refused_if_not_splitting"
+      ]
+    },
+    {
+      "id": "AC6",
+      "text": "No regression to trigger.go/guard.go/catalog/mvcc/btree",
+      "covered_by": [
+        "full split package test run (2b.1.1 + 2b.1.2 tests unmodified/still passing)",
+        "engine/catalog, engine/mvcc, engine/btree regression suites"
+      ]
+    }
+  ],
+  "explicitly_out_of_scope": [
+    "Populating RedirectTargetIDs / StatusRedirect transition (issue #12)",
+    "Wiring AdmitWrite into ContentStore.Append's live write path (future subtask)",
+    "Automatic recovery of a SPLITTING record abandoned by a crashed split holder (documented gap, see architecture-discovery.md)"
+  ]
+}
