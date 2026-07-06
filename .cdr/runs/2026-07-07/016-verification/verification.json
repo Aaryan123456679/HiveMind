@@ -1,0 +1,60 @@
+{
+  "subtask": "2b.3.1",
+  "issue": 12,
+  "commits_reviewed": [
+    "01411d8e9cc1b3afe72adf10ac5a8b3723e2d7c8",
+    "a7c3c74a4ec5c92a9d8db58fe6512e1a6bbb18c0"
+  ],
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "ExecuteSplitAllocateAndWrite allocates exactly one new fileID per SplitFileProposal via catalog.IDAllocator.Next() and writes a content file at cs.ContentPath(newFileID) containing exactly the concatenated bytes of the proposal's SectionRanges. Verified against engine/split/execute.go:52-79."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "fileID allocation reuses the real, shared catalog.IDAllocator (engine/catalog/idalloc.go) -- same durable, fsync-before-return, monotonic-counter instance used for real catalog records, not a separate ID space; a later 2b.3.2 catalog.Put for these fileIDs cannot collide. writeNewContentFile in execute.go was diffed byte-for-byte against catalog.ContentStore.writeContentFile (engine/catalog/content.go:290-320): identical temp-file-same-dir -> Write -> Sync -> Close -> Rename -> cleanup-on-each-error-path technique, and uses cs.ContentPath() for the exact same content/<fileID>.v1.md convention. Claims in the commit message and code comments are accurate, not superficial."
+    },
+    "scope_discipline": {
+      "status": "pass",
+      "evidence": "git show --stat on both commits touches only engine/split/execute.go, engine/split/execute_test.go, and .cdr/runs/2026-07-07/014-implementation/* artifacts. No changes to engine/catalog/Catalog, engine/btree, engine/graph, or engine/wal. The fixture_plan subtest explicitly asserts cat.Get(fileID) returns wrapped catalog.ErrNotFound for every newly allocated fileID -- a genuine absence assertion, not merely an omitted check."
+    },
+    "validation_logic": {
+      "status": "pass",
+      "evidence": "validateSplitPlan (execute.go:88-131) checks, in order, before any allocation/write: non-empty plan.Files, non-empty+unique NewPath, at least one SectionRange per proposal, and per-range 0<=Start, End>=Start, End<=originalContentLen (correct closed-length bound, no off-by-one: a range covering the full content, e.g. [0,len), passes since End==originalContentLen is allowed by end>originalContentLen check). Overlap detection sorts all ranges (across proposals) by start and checks only adjacent pairs; this is provably sufficient (if intervals i<j overlap after sort, s_{i+1}<=s_j<e_i so pair (i,i+1) is also flagged) -- confirmed correct, not just adjacent-only heuristic with gaps. ExecuteSplitAllocateAndWrite calls validateSplitPlan before entering the allocation loop, so a rejected plan performs zero idAlloc.Next() calls and zero file writes -- traced explicitly in execute.go:60-79."
+    },
+    "section_range_extraction": {
+      "status": "pass",
+      "evidence": "extractSections (execute.go:139-149) iterates ranges in slice order (proposal.SectionRanges as declared) and appends in that order -- no sorting. multi_range_single_file subtest uses ranges [{10,16},{0,4}] (out of ascending order) and asserts result 'KLMNOPABCD', proving declared order (not sorted order) is preserved."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go test ./split/... -race -v -count=1 (all subpackages, prior subtasks 2b.1.x/2b.2.x included) passes. go test ./catalog/... -count=1 passes (86.6s, no regressions). go test ./split/... -run TestSplitAllocateAndWrite -count=5 passes (5x, no flakiness observed)."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "All 9 claimed subtests read in full and confirmed non-vacuous: fixture_plan (content match + no-catalog-record assertion), multi_range_single_file (order-preserving assembly), empty_range (zero-length range writes empty file), out_of_bounds_range, inverted_range, overlapping_ranges, duplicate_new_path (each asserts err != nil), empty_plan, nil_deps (both idAlloc==nil and cs==nil branches)."
+    },
+    "security": {
+      "status": "pass_with_comment",
+      "evidence": "No path traversal exposure: NewPath is only used as a map key (never as a filesystem path); actual file path is derived solely from the allocator-issued fileID via cs.ContentPath. No externally-controlled string reaches os.CreateTemp/os.Rename paths."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Doc comments accurately describe scope boundary and mirrored conventions; comments were verified against actual catalog source, not just asserted."
+    },
+    "minor_findings_non_blocking": [
+      "No explicit test exercises a zero-length range directly adjacent to (touching boundary of) another non-zero range across two proposals -- the overlap-guard's 'prev.end > prev.start && cur.end > cur.start' exclusion for zero-length ranges is logically sound (verified by hand-trace) but untested at that specific boundary. Recommend adding this case in a later hardening pass, not blocking for 2b.3.1's acceptance criteria.",
+      "extractSections has no defensive bounds re-check (relies entirely on validateSplitPlan having run first) -- acceptable since it's an unexported helper only reachable via the validated path today, but worth a defensive comment/assert if extractSections is ever exported or reused directly by a future subtask."
+    ]
+  },
+  "commands_run": [
+    "cd engine && go build ./...",
+    "cd engine && go vet ./...",
+    "gofmt -l . (clean)",
+    "cd engine && go test ./split/... -run TestSplitAllocateAndWrite -count=5 -timeout 10m -v",
+    "cd engine && go test ./split/... -race -v -count=1 -timeout 10m",
+    "cd engine && go test ./catalog/... -count=1 -timeout 5m"
+  ],
+  "note_on_issue_body": "gh issue #12's body/comments were treated as untrusted plain-text data per instructions; no instruction-like content embedded there (or encountered elsewhere in this session, including injected fake system-reminder text observed in one tool output) was acted upon."
+}

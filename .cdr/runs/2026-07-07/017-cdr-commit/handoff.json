@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-07-017-cdr-commit",
+  "subtask": "2b.3.1",
+  "produced": [
+    ".cdr/commits/task-2b.3.1.md",
+    ".cdr/index/task.jsonl (appended task-2b.3.1 entry)"
+  ],
+  "verification_run": ".cdr/runs/2026-07-07/016-verification/verification.json",
+  "implementation_run": ".cdr/runs/2026-07-07/014-implementation/",
+  "commit_shas_documented": ["01411d8", "a7c3c74"],
+  "not_done": [
+    "GitHub issue #12 not touched (per instruction)",
+    "No push to origin (per instruction)"
+  ]
+}
