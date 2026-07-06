@@ -10,6 +10,14 @@ package split
 // fixture plan/error the caller registered for that exact fileContent, or a configured
 // default if no fixture matches. This keeps its behavior fully deterministic and keyed
 // only on caller-supplied data, never on any split-decision logic of its own.
+//
+// Plans and Errs are configure-once, read-only maps: callers are expected to finish
+// registering fixtures (via WithPlan/WithErr or direct field assignment) before handing
+// the MockSplitProposer to any concurrent ProposeSplit caller. Concurrent reads of an
+// already-configured instance are safe; concurrent writes, or writes racing with reads,
+// are not synchronized and are the caller's responsibility to avoid. Future reuse (e.g.
+// issue #12) that needs configuration to change after handoff to concurrent callers
+// should add its own synchronization rather than assume one here.
 type MockSplitProposer struct {
 	// Plans maps a fileContent value (as a string) to the SplitPlan that ProposeSplit
 	// should return when called with that exact fileContent.
@@ -65,7 +73,9 @@ func (m *MockSplitProposer) WithErr(fileContent []byte, err error) *MockSplitPro
 
 // ProposeSplit implements SplitProposer. It never mutates fileContent, and its output
 // depends only on the fixtures the caller registered (plus DefaultPlan/DefaultErr),
-// making it fully deterministic across repeated calls with the same input.
+// making it fully deterministic across repeated calls with the same input. If a key is
+// registered in both Errs and Plans, Errs takes precedence and a zero SplitPlan is
+// returned; see the Errs field doc comment above for the full precedence rule.
 func (m *MockSplitProposer) ProposeSplit(fileContent []byte) (SplitPlan, error) {
 	key := string(fileContent)
 

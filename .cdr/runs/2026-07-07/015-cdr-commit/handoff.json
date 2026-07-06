@@ -1,0 +1,22 @@
+{
+  "run_id": "2026-07-07-015-cdr-commit",
+  "subtask": "2b.2.2",
+  "issue": 11,
+  "status": "completed",
+  "artifacts": {
+    "commit_docs": [
+      ".cdr/commits/task-2b.2.2.md",
+      ".cdr/commits/task-2b.2-issue-11.md"
+    ],
+    "index_updates": [
+      ".cdr/index/task.jsonl:task-2b.2.2",
+      ".cdr/index/task.jsonl:task-2b.2"
+    ],
+    "doc_comment_fix": "engine/split/proposer_mock.go (ProposeSplit precedence cross-reference; Plans/Errs configure-once/read-only concurrency note)"
+  },
+  "verification_run": ".cdr/runs/2026-07-07/013-verification/verification.json",
+  "implementation_run": ".cdr/runs/2026-07-07/012-implementation/",
+  "local_commit_only": true,
+  "pushed": false,
+  "notes": "Issue #11 ready to close on GitHub once pushed; not closed in this run since pushes are paused pending explicit user confirmation."
+}

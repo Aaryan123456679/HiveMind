@@ -1,0 +1,53 @@
+{
+  "subtask": "2b.2.2",
+  "issue": 11,
+  "commits_reviewed": ["3c83d72", "f8abd00"],
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements": {
+      "status": "PASS",
+      "evidence": "MockSplitProposer (engine/split/proposer_mock.go) provides caller-configurable, deterministic fixed [{newPath, sectionRanges}] + redirect-summary plans via Plans/Errs maps keyed on exact fileContent bytes, with WithPlan/WithErr builders and DefaultPlan/DefaultErr fallback. FixtureSplitPlan/FixtureFileContent give a ready canned fixture. Matches acceptance criteria exactly."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "`var proposer SplitProposer = mock` in proposer_mock_test.go plus pre-existing TestSplitProposerInterface (proposer_test.go) confirm real interface assignability, not just structural similarity. proposer.go/trigger.go/guard.go/orchestrate.go byte-for-byte untouched (git diff c319168..3c83d72 on those 4 files = 0 lines)."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "Full `go test ./split/... -race -v -count=1 -timeout 10m` green: all pre-existing 2b.1.1/2b.1.2/2b.1.3/2b.2.1 tests (TestSplittingStatusIsolation, TestSplitProposerInterface, TestThresholdDetection, TestNewTriggerValidation, TestDefaultTrigger, TestCrossesThreshold) pass alongside new TestMockSplitProposer, zero regressions, no race flagged."
+    },
+    "edge_cases": {
+      "status": "PASS",
+      "evidence": "Traced ProposeSplit lookup order: exact match in Errs wins outright (checked first, returns SplitPlan{} + err even if a Plan is also registered for same key -- confirmed by 'error precedence' subtest); miss falls to Plans; miss in both falls to DefaultErr (if non-nil) else DefaultPlan. All three miss/hit paths covered by subtests and traced by hand against source; logic is correct and unambiguous (Errs-before-Plans is a sensible, if implicit, precedence -- see maintainability comment)."
+    },
+    "security": {
+      "status": "PASS",
+      "evidence": "Test-only fixture type, no external input, no injection surface. N/A beyond standard hygiene."
+    },
+    "performance": {
+      "status": "PASS",
+      "evidence": "Trivial map lookups, no I/O, no allocation beyond fixture construction. Not a concern for a test double."
+    },
+    "maintainability": {
+      "status": "PASS_WITH_COMMENTS",
+      "evidence": "Code is clean and well-commented. Two minor gaps: (1) Errs-takes-precedence-over-Plans rule is documented in the WithErr doc comment and struct field comment but not restated on ProposeSplit itself where a reader would look first; harmless but a one-line addition would help. (2) MockSplitProposer's Plans/Errs maps are not documented as configure-once-then-read-only; if a future caller mutates the maps concurrently with ProposeSplit calls from multiple goroutines it would race. Confirmed the actual test file only ever configures single-threaded then calls ProposeSplit sequentially within a t.Run, so this is not a live defect today, but the exported (non _test.go) type is explicitly intended for reuse by later subtasks/issue #12, so a doc comment ('safe for concurrent reads only after configuration is complete; not safe to mutate Plans/Errs concurrently with ProposeSplit calls') would preempt future misuse."
+    },
+    "test_coverage": {
+      "status": "PASS",
+      "evidence": "All 5 claimed subtests verified present and each tests exactly what it claims: (a) 'default plan for known fixture input' -- calls ProposeSplit twice with FixtureFileContent, asserts identical results both times (deterministic-repeat-call claim, no randomness/time dependency in source confirmed by reading ProposeSplit -- it is a pure map-lookup function), (b) 'caller-registered plan keyed by exact fileContent' -- exercises WithPlan hit + fallback-to-default miss, (c) 'caller-registered error ... takes precedence' -- registers both a Plan and an Err for the same key, asserts Err wins and returned plan is zero-value, (d) 'default error when no fixture matches' -- exercises DefaultErr-only path with no Plans/Errs configured, (e) SectionRange invariant subtest -- iterates FixtureSplitPlan.Files' ranges asserting 0<=Start<=End<=len(FixtureFileContent). Manually recomputed len(b'fixture file content!!!!')==24 and ranges [0,12)+[12,24) exactly tile it, confirming the summary's byte-count claim independently rather than trusting it."
+    },
+    "confidence": {
+      "status": "HIGH",
+      "evidence": "go build ./..., go vet ./..., gofmt -l . (clean), go test ./split/... -run TestMockSplitProposer -count=1 -timeout 5m (pass), go test ./split/... -race -v -count=1 -timeout 10m (pass, zero regressions) all independently re-run and confirmed, not taken from implementer's self-consistency.json claims alone."
+    },
+    "possible_improvements": [
+      "Add a one-line 'Errs takes precedence over Plans' note directly on the ProposeSplit doc comment for discoverability.",
+      "Add a doc comment on MockSplitProposer noting Plans/Errs are intended to be configured single-threaded before use and are not safe for concurrent mutation during ProposeSplit calls, since the type is exported for reuse by later subtasks/issue #12 where usage patterns are not yet known."
+    ]
+  },
+  "process_comment": "3c83d72 (implementation) + f8abd00 (handoff.json follow-up) should have been a single commit per the implementer's own note; not a correctness issue, no action required.",
+  "scope_check": {
+    "status": "PASS",
+    "evidence": "git show 3c83d72 --stat and f8abd00 --stat: only proposer_mock.go, proposer_mock_test.go, and .cdr run artifacts touched across both commits; diff of proposer.go/trigger.go/guard.go/orchestrate.go between c319168 (prior verified state) and 3c83d72 is empty."
+  }
+}
