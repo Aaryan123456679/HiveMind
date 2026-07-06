@@ -2,7 +2,7 @@
   "run_id": "2026-07-07-001-implementation",
   "status": "completed",
   "summary": "Resolved 3 of 5 pending.md items: node.go stale on-disk Version-field docs, lookup.go lock-free overclaim doc fix, and a new additive restart-from-root observability counter across crabInsert/crabDelete/Tree.Lookup.",
-  "commit": "PENDING_FILL_AFTER_COMMIT",
+  "commit": "3ef7cdec542e74df80b405e2297ca54633d9d90e",
   "files_changed": [
     "engine/btree/node.go",
     "engine/btree/lookup.go",

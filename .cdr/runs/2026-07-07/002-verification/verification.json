@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-07-002-verification",
+  "commit": "3ef7cdec542e74df80b405e2297ca54633d9d90e",
+  "verdict": "PASS",
+  "summary": "Doc-only fixes to node.go/lookup.go confirmed logic-free via line-by-line diff review; additive restartFromRootCount instrumentation confirmed safe by construction and placement (single .Add(1) at each restart-continue branch, no control-flow/critical-section change). New test forces a real restart via direct latch hold + existing crabRetryHook, asserting counter strictly increases -- not a false positive. Full suite green with -race, new test stable across 5 repeated runs. Scope matches exactly: engine/btree/*, .cdr/memory/pending.md, .cdr/runs/2026-07-07/001-implementation/* only; engine/split/ untouched. pending.md diff removes exactly the 3 claimed items; other 2 pre-existing items plus the newer split.Trigger wiring item (concurrent task) remain unmodified.",
+  "dimensions": {
+    "requirements": {"status": "pass", "evidence": "All 3 pending.md items addressed as specified: node.go doc reword, lookup.go doc reword + rootMu exception documented, restartFromRootCount counter + accessor wired at all 3 call sites with a test."},
+    "architecture_conformance": {"status": "pass", "evidence": "No new synchronization primitives; counter increments happen outside any latch/lock critical section (crabInsert/crabDelete/Tree.Lookup's restart-continue branches are already outside per-node latch hold, matching publish-last discipline from 2a.4.5 fix)."},
+    "regression_risk": {"status": "pass", "evidence": "go test ./btree/... -race -v -count=1 -timeout 10m: PASS, 59.97s, zero regressions, including TestCrabbingInsert, TestOptimisticRead, TestNodeLatchFields, TestPrefixScan* suites."},
+    "edge_cases": {"status": "pass", "evidence": "TestRestartFromRootCountIncrementsOnForcedRestart deterministically forces a restart via direct latch hold on the exact next-hop child, waits on existing crabRetryHook firing (bounded 2s), then asserts counter strictly increased -- rules out a vacuously-passing test."},
+    "security": {"status": "pass", "evidence": "No new attack surface; RestartFromRootCount() returns a value (uint64) via atomic.Load, no mutable state or pointer leak."},
+    "performance": {"status": "pass", "evidence": "Single atomic Add(1) per restart iteration; restarts are already the slow, rare path (root re-walk), so counter overhead is negligible and does not change retry timing/backoff."},
+    "maintainability": {"status": "pass", "evidence": "New doc comments are clear, cross-reference latch.go correctly, and the counter's own doc comment explains provenance (pending.md recommendation) and non-goals (not a cap)."},
+    "test_coverage": {"status": "pass", "evidence": "New test read in full; reuses established crabRetryHook forced-contention pattern from insert_test.go. Ran -race -count=5 for the new test specifically: 5/5 PASS, no flakiness, ~0.04-0.08s each."},
+    "confidence": {"status": "high", "evidence": "Diffs for node.go and lookup.go inspected line-by-line and confirmed comment-only outside the single counter line; insert.go/delete.go diffs are exactly one added line each at the correct branch; latch.go diff is purely additive (var + accessor)."}
+  },
+  "build_verification": {
+    "go_build": "clean, no output",
+    "go_vet": "clean, no output",
+    "gofmt_l": "clean, no output",
+    "go_test_btree_race_full": "PASS, 59.971s, zero regressions",
+    "go_test_restart_count_race_5x": "5/5 PASS, no flakiness"
+  },
+  "scope_check": {
+    "files_touched": ["engine/btree/node.go","engine/btree/lookup.go","engine/btree/latch.go","engine/btree/insert.go","engine/btree/delete.go","engine/btree/restart_count_test.go",".cdr/memory/pending.md","engine/btree runs under .cdr/runs/2026-07-07/001-implementation/*"],
+    "engine_split_untouched": true,
+    "pending_md_items_removed": 3,
+    "pending_md_items_remaining_unmodified": ["btree SaveRoot/WAL-replay gap", "node-latch registry eviction", "engine/split.Trigger wiring (concurrent task item)"]
+  },
+  "findings": [],
+  "recommendation": "proceed to commit/push"
+}

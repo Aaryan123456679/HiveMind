@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-07-002-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "verify btree pending.md cleanup commit 3ef7cdec",
+  "git_head": "3ef7cdec542e74df80b405e2297ca54633d9d90e",
+  "run_key": "verify-btree-pending-cleanup-3ef7cdec",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-06T19:22:40Z",
+  "ended_at": "2026-07-06T19:25:12Z"
+}

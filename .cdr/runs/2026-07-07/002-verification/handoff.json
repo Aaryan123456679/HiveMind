@@ -1,0 +1,14 @@
+{
+  "run_id": "2026-07-07-002-verification",
+  "status": "completed",
+  "verdict": "PASS",
+  "commit": "3ef7cdec542e74df80b405e2297ca54633d9d90e",
+  "verification_doc": ".cdr/runs/2026-07-07/002-verification/verification.json",
+  "pointers": {
+    "node_go_diff_reviewed": "engine/btree/node.go doc comments ~L31-44, ~L69-77, ~L92-100 (via git show 3ef7cdec)",
+    "lookup_go_diff_reviewed": "engine/btree/lookup.go Tree.Lookup doc + counter call site ~L388-391 (via git show 3ef7cdec)",
+    "counter_call_sites_reviewed": ["engine/btree/insert.go crabInsert ~L602-605", "engine/btree/delete.go crabDelete ~L463-466", "engine/btree/lookup.go Tree.Lookup ~L388-391"],
+    "new_test": "engine/btree/restart_count_test.go TestRestartFromRootCountIncrementsOnForcedRestart"
+  },
+  "next_step": "proceed to /cdr:commit + push per user's request"
+}
