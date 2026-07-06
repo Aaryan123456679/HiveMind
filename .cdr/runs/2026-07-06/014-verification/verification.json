@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "run_id": "014-verification",
+  "subtask": "task-2a.4.5",
+  "commits_reviewed": ["b31328f", "2644ac6", "9cd91f6"],
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements": {
+      "verdict": "pass",
+      "evidence": "Acceptance criteria (mixed insert/delete/lookup workload across disjoint/overlapping subtrees, oracle match, zero race reports) exercised by TestConcurrentMixedWorkload; ran exact spec `go test ./btree/... -race -run TestConcurrentMixedWorkload -count=5 -timeout 25m` independently: 5/5 clean, ~3s each."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "All three fixes independently re-derived from the diff (not taken on faith). Fix 1 (empty-NextLeaf move-right guard, insert.go/delete.go/lookup.go): condition change `len>0 && path<Keys[0]` -> `len==0 || path<Keys[0]` is a correct, symmetric, structural fix at all 3 call sites -- verified each site individually. Fix 2 (repairEmptyLeafAtParent race guard, delete.go): `left.NextLeaf != leafID` check before the borrow/merge splice correctly detects the concurrent-split race and retries via the existing errRestartFromRoot-adjacent idiom (retry=true,nil); traced all unlock call sequences in the function -- consistent double-unlock pattern (leftID then leafID then parentID) matches every other exit path in the function, not a bug. Fix 3 (write-order swap, insert.go leaf split + propagate internal split): new node now written (under its own latch) before the node that publishes a pointer to it, which is the correct 'publish-last' ordering required for 2a.4.4's lock-free optimistic Lookup; new-root creation path was already correct and untouched. No interaction found with 2a.4.2's TryLock+restart-from-root discipline (crabbing call sites unchanged) or 2a.4.4's version-bracket protocol (version bump still happens via WriteNode as before, now just in the new order)."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "Full engine/btree suite: `go test ./btree/... -race -v -count=1 -timeout 10m` -> 32/32 top-level PASS, 0 FAIL, 44.5s. Whole module: `go test ./... -timeout 15m` -> all packages pass (engine, btree, catalog, mvcc, wal; graph/loadtest/rpc/split have no tests). No regressions across Phase-1 through 2a.4.4."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comments",
+      "evidence": "Empty-sibling and concurrent-split-during-repair edge cases are exactly what was fixed and are now covered by TestConcurrentInsertDeleteDisjointRangesMinimalRepro (committed) plus the capstone test. Independently reran the minimal repro conceptually via code trace, did not re-run -count=200/100 myself (accepted validation-matrix.json's reported counts as sufficient given own -race -count=5 capstone success)."
+    },
+    "security": {"verdict": "pass", "evidence": "No new I/O, auth, or external-input surface; purely internal concurrency-control logic in an existing package."},
+    "performance": {
+      "verdict": "pass_with_comments",
+      "evidence": "Independently reproduced the scale-reduction claim: (1) bumped constants back to original 80k-key/200-goroutine config in a throwaway (uncommitted, restored afterward) local edit; `-race -timeout 22m` passed cleanly in 121s (matches implementer's claim of clean -race pass at original scale). (2) Plain (non-race) run at original scale: hit `-timeout 5m` panic-timeout with goroutines in runnable/semacquire states (not classic mutual blocking), and reconfirmed continuing to churn at 500%+ CPU for 5+ more minutes on an 18m-timeout rerun (killed early after re-confirming non-deadlocked, actively-spinning behavior, to save time) -- corroborates 'contention/retry-backoff throughput ceiling, not correctness regression' characterization, though this pattern (many goroutines burning CPU with no visible completion for 5-10+ min) is also consistent with a livelock under the existing uncapped TryLock-restart loop, a risk already flagged non-blocking in .cdr/memory/pending.md ('No retry cap on TryLock restart-from-root loop'). The reduced 8k/50 scale is judged adequate for this subtask's disjoint+overlapping-subtree acceptance criteria (insertOnly/deleteOnly/mutate/lookup goroutines still contend across shared parent nodes near range boundaries); the throughput ceiling itself remains an open, correctly out-of-scope, non-blocking item."
+    },
+    "maintainability": {"verdict": "pass", "evidence": "Each fix carries a detailed inline '2a.4.5 fix' comment explaining the before/after reasoning; gofmt/vet/build all clean."},
+    "test_coverage": {
+      "verdict": "pass_with_comments",
+      "evidence": "New committed regression test (bug 1) plus reused capstone test (bugs 2 and 3, discovered only at full scale) is reasonable, but bug 2 (orphaned-node-on-concurrent-split-during-repair) and bug 3 (write-order/EOF) have no small, fast, dedicated committed regression test of their own -- both are only exercised probabilistically via the multi-second capstone test, unlike bug 1's dedicated minimal repro. Non-blocking given the capstone test's demonstrated reliability (5/5 clean here), but a future follow-up could add targeted fast regression tests for bugs 2 and 3 analogous to bug 1's."
+    },
+    "confidence": {"verdict": "high", "evidence": "All three root causes were independently re-derived from the diff and judged structurally (not probabilistically) correct; all specified test commands were independently re-run (not taken on the implementer's word) and passed."},
+    "possible_improvements": [
+      "Add small dedicated committed regression tests for bugs 2 and 3 (currently only covered by the multi-second capstone test).",
+      "Consider whether the demonstrated plain-build livelock-like behavior at 80k/200 scale warrants revisiting the no-retry-cap TryLock/backoff design (already tracked in .cdr/memory/pending.md; this run adds fresh empirical evidence it can manifest as a multi-minute non-terminating condition, not just a theoretical risk)."
+    ],
+    "task_2a4_wholeness": {
+      "verdict": "closable",
+      "evidence": "This fix touches the shared insert.go/delete.go/lookup.go surface underlying all 5 subtasks of task-2a.4. All three root causes were genuine cross-subtask interaction bugs (2a.4.2 x 2a.4.3, 2a.4.3 x 2a.4.4) now fixed at their true call sites. No further residual gap found across the shared surface. Issue #9 closable once this subtask is marked verified."
+    },
+    "pending_md_relevance": {
+      "verdict": "reviewed",
+      "evidence": "Of the 4 pending.md items, only 'No retry cap on TryLock restart-from-root loop' is newly implicated by this run's own findings (see performance dimension above) -- not required to be resolved here, consistent with pending.md's own recommendation to revisit only if 2a.4.5 surfaces a real-world livelock signal, which it arguably now has (non-blocking, flagged). The other three (registry eviction, stale node.go doc comments, F1 rootMu/Lookup doc-scoping) are not touched or implicated by this fix's diff."
+    }
+  },
+  "build_checks": {"gofmt": "clean", "go_vet": "clean", "go_build": "clean"},
+  "commands_run": [
+    "gofmt -l . (engine/)",
+    "go vet ./... (engine/)",
+    "go build ./... (engine/)",
+    "go test ./btree/... -race -run TestConcurrentMixedWorkload -count=5 -timeout 25m -v",
+    "go test ./btree/... -race -v -count=1 -timeout 10m",
+    "go test ./... -timeout 15m",
+    "(throwaway, uncommitted, restored) go test ./btree/... -race -run TestConcurrentMixedWorkload -count=1 -timeout 22m -v @80k/200-goroutine scale",
+    "(throwaway, uncommitted, restored) go test ./btree/... -run TestConcurrentMixedWorkload -count=1 -timeout 5m -v @80k/200-goroutine scale (plain, timed out as claimed)",
+    "(throwaway, uncommitted, restored, killed early) go test ./btree/... -run TestConcurrentMixedWorkload -count=1 -timeout 18m -v @80k/200-goroutine scale (plain, still actively churning at kill time, not deadlocked)"
+  ],
+  "recommendation": "PROCEED to /cdr:commit. Fix cycle is structurally sound, zero regressions, acceptance criteria met. Non-blocking follow-ups recorded above (dedicated regression tests for bugs 2/3; fresh evidence for the pre-existing no-retry-cap TryLock livelock risk)."
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "task-2a.4.5",
+  "git_head": "9cd91f67aca1bf7b894204eff6d9ccce2f7baf3a",
+  "run_key": "task-2a.4.5|9cd91f6|acceptance-criteria-verification",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-06T00:00:00Z",
+  "ended_at": "2026-07-07T00:45:00Z",
+  "note": "The dispatched cdr-verification agent was cut off mid-task by an account session-limit error after only writing this metadata.json. The orchestrator (session driver) completed the verification directly: read the full test source, independently re-ran all validation commands, and wrote verification.json/handoff.json."
+}
