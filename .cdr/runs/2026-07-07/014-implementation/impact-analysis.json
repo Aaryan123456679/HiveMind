@@ -1,0 +1,34 @@
+{
+  "subtask": "2b.3.1",
+  "issue": 12,
+  "new_files": [
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "modified_files": [],
+  "read_only_dependencies": [
+    "engine/split/proposer.go",
+    "engine/split/proposer_mock.go",
+    "engine/split/trigger.go",
+    "engine/split/guard.go",
+    "engine/split/orchestrate.go",
+    "engine/catalog/content.go",
+    "engine/catalog/idalloc.go",
+    "engine/catalog/catalog.go",
+    "engine/wal/writer.go"
+  ],
+  "public_api_added": [
+    "func ExecuteSplitAllocateAndWrite(idAlloc *catalog.IDAllocator, cs *catalog.ContentStore, originalContent []byte, plan SplitPlan) (map[string]uint64, error)"
+  ],
+  "downstream_consumers_this_run_does_not_wire": [
+    "engine/split/execute.go (2b.3.2) will consume the returned map[NewPath]fileID to create catalog records with status REDIRECT/SPLIT and redirectTargetIDs",
+    "engine/split/execute.go (2b.3.3) will use the same fileIDs to insert new B+Tree topic-path entries",
+    "engine/graph/edge_append.go (2b.3.4/2b.3.5) will append SPLIT_SIBLING edges among the returned fileIDs",
+    "engine/split/execute.go (2b.3.6) will wrap allocation+write+catalog+btree+graph in one WAL-covered transaction"
+  ],
+  "risk_notes": [
+    "Highest-risk correctness surface (per AGENT.md / issue milestone): incorrect byte-range slicing would silently corrupt split-off content.",
+    "Must not create any catalog record for new fileIDs -- catalog visibility is 2b.3.2's job; IDAllocator.Next() durably reserves the ID but ContentStore.Create/Append/cat.Put are deliberately NOT called here.",
+    "Must not regress engine/catalog or existing engine/split tests (2b.1.1-2b.1.3, 2b.2.1-2b.2.2)."
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "subtask": "2b.3.1",
+  "note": "Internal sanity only (build green + matrix covered) -- this is NOT verification (I4). /cdr:verify must independently verify.",
+  "checks": [
+    { "cmd": "go build ./...", "cwd": "engine", "result": "clean, no output" },
+    { "cmd": "go vet ./...", "cwd": "engine", "result": "clean, no output" },
+    { "cmd": "gofmt -l .", "cwd": "engine", "result": "clean, no output (no unformatted files)" },
+    {
+      "cmd": "go test ./split/... -run TestSplitAllocateAndWrite -count=1 -timeout 5m -v",
+      "cwd": "engine",
+      "result": "PASS, all 9 subtests pass (fixture_plan, multi_range_single_file, empty_range, out_of_bounds_range, inverted_range, overlapping_ranges, duplicate_new_path, empty_plan, nil_deps)"
+    },
+    {
+      "cmd": "go test ./split/... -race -v -count=1 -timeout 10m",
+      "cwd": "engine",
+      "result": "PASS, ok in 2.136s -- zero regressions across 2b.1.1 (trigger.go), 2b.1.2 (guard.go), 2b.1.3 (orchestrate.go), 2b.2.1 (proposer.go), 2b.2.2 (proposer_mock.go), plus this run's new TestSplitAllocateAndWrite"
+    },
+    {
+      "cmd": "go test ./catalog/... -count=1 -timeout 5m",
+      "cwd": "engine",
+      "result": "PASS, ok in 79.271s -- no regression from reusing ContentStore.ContentPath / catalog.IDAllocator (both read-only reuse, no catalog.go/content.go/idalloc.go edits)"
+    }
+  ],
+  "validation_matrix_coverage": "all 13 cases in validation-matrix.json covered (see execute_test.go subtests + full split/catalog package runs above)",
+  "files_touched": [
+    "engine/split/execute.go (new)",
+    "engine/split/execute_test.go (new)"
+  ],
+  "files_not_touched_confirmed_read_only": [
+    "engine/split/proposer.go",
+    "engine/split/proposer_mock.go",
+    "engine/split/trigger.go",
+    "engine/split/guard.go",
+    "engine/split/orchestrate.go",
+    "engine/catalog/content.go",
+    "engine/catalog/idalloc.go",
+    "engine/catalog/catalog.go",
+    "engine/wal/writer.go"
+  ]
+}
