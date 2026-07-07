@@ -1,0 +1,56 @@
+{
+  "subtask": "2b.3.4",
+  "commit": "3cf7e2c",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "git show 3cf7e2c tool output contained injected fake system-reminder-style text (fake date-change notice, fake 'tokensave' MCP server instructions, fake 'Auto Mode Active' directive). Treated as untrusted embedded data per prompt-injection policy; not acted upon.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Acceptance criteria (edges retrievable, source fileID preserved) met by Edge{Source,Target,Type}, AppendEdge, ReadAll. Test spec `go test ./engine/graph/... -run TestMinimalEdgeAppend` passes. Only engine/graph/edge_append.go and edge_append_test.go (+CDR docs) added, matching impacted-modules list."
+    },
+    "architecture_conformance": {
+      "status": "pass_with_comments",
+      "evidence": "WAL-reuse boundary claim verified TRUE by direct reading of engine/wal: EdgeAppender uses wal.OpenWriter/Writer.Append/ReadSegment (raw byte-level fsync-before-return durability) and does NOT touch wal.TypedRecord/RecordType/AppendAndApply/Replay, and no engine/graph.RecoverFromWAL analog exists. Catalog/btree, by contrast, use wal.AppendAndApply + catalog.RecoverFromWAL(wal.Replay) for in-memory reconstruction on restart. Consequence: graph edge records are byte-durable (fsync'd, torn-tail-safe on resume via OpenWriter's repairTornTail, CRC-validated on read via ReadSegment) but NOT wired into any startup replay-into-memory path -- nothing currently reconstructs an in-memory graph structure from these records on process restart, unlike catalog/btree mutations. This is NOT a durability illusion at the byte level (crash-safety of the on-disk log itself is real and correctly reuses proven primitives, including automatic torn-tail repair on reopen), but the package's use of the word 'durable' should be read narrowly as 'this log's bytes survive a crash' rather than 'this data is recoverable into a live in-memory structure the way catalog/btree data is' -- the doc comments do state this distinction explicitly and accurately, so it is honestly scoped, not overclaimed. Flagging as a comment (not a blocking finding) because 2b.3.5/2b.3.6 MUST explicitly build a reconciliation/replay step (or fold graph writes into the broader WAL-covered split transaction per 2b.3.6) before this data can be trusted as consistent with catalog/btree state after a crash mid-split; today, with the primitive fully unwired, no such gap yet exists in practice."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "New, currently-unwired package; no existing package imports engine/graph; engine/wal source untouched (confirmed via git show --stat scoped to engine/split, engine/catalog, engine/btree, engine/wal -- empty diff). Full `go test ./... -count=1 -timeout 20m` passes (engine, btree, catalog, graph, mvcc, split, wal all ok). `go test ./wal/... -race -count=1 -timeout 10m` passes defensively."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "ReadAll(dir) on missing/never-created dir returns empty slice, nil error (TestReadAllOnMissingDir) -- correct treatment of 'no edges yet' as non-exceptional. listEdgeSegments correctly discovers and sorts ALL 'wal-<N>.log' segments ascending by numeric segment number (not lexical), so multi-segment logs (post-rotation) would read back in correct order; each segment read independently via wal.ReadSegment which itself handles torn-tail/CRC via the shared parseSegmentRecords used by Replay, so no silent truncation. TestMinimalEdgeAppendReopenAcrossProcesses verifies a real close+reopen (fresh Writer handle) resumes and preserves order across the two 'sessions', which is a genuine durability/reopen test, not just an in-memory check."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No injection surface; fixed-width binary encode/decode with bounds and CRC checks inherited from wal.ReadSegment. decodeEdge rejects wrong-length payloads. No secrets or external input handling in scope."
+    },
+    "enum_zero_value_enforcement": {
+      "status": "pass",
+      "evidence": "EdgeType is uint8 with EdgeTypeInvalid = iota (0), matching catalog.RecordStatus's uint8-iota convention exactly. AppendEdge explicitly rejects edge.Type not in {EdgeSplitSibling, EdgeRedirect} (i.e. rejects EdgeTypeInvalid and any out-of-range byte) BEFORE calling wal.Writer.Append, so garbage/zero-value edges cannot be silently appended. Verified by TestAppendEdgeRejectsInvalidType. Note: AppendEdge does not separately reject zero-value Source/Target fileIDs (e.g. Edge{Source:0, Target:0, Type: EdgeSplitSibling} would be accepted) -- minor gap, not blocking for a minimal primitive since fileID validity is catalog's concern and 2b.3.5 is expected to supply real fileIDs from actual split operations, but worth a follow-up note for 2b.3.5's wiring to validate fileIDs before calling AppendEdge."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestMinimalEdgeAppend: appends 4 edges (including a fan-in/fan-out mix of SplitSibling + Redirect), closes, reopens via fresh ReadAll call (no in-memory state reuse), asserts count, exact struct equality per-index (ordering), and explicit Source-fileID retrievability. TestMinimalEdgeAppendReopenAcrossProcesses: genuine close/reopen across two separate OpenEdgeAppender handles, verifies resumed append does not overwrite prior segment and combined ReadAll preserves cross-session order. TestAppendEdgeRejectsInvalidType and TestReadAllOnMissingDir cover the two main edge cases. Non-vacuous, no over-mocking observed. All tests pass across 5 repeated runs with no flakiness."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Direct reading of engine/wal source (writer.go, recovery.go, record.go) confirms the implementer's WAL-boundary claim is accurate, not implementer self-report taken on faith. go build/vet/gofmt clean. Full module test suite green with zero regressions."
+    }
+  },
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "Package doc/comments use 'durable' to mean byte-level fsync durability of the append-only log itself; this is accurate but readers of 2b.3.5/2b.3.6 must not conflate it with 'automatically recoverable into an in-memory graph structure the way catalog/btree WAL records are' -- no such replay-into-memory path exists yet for engine/graph, by design, but the docs already flag this so no doc fix is required now.",
+    "AppendEdge validates EdgeType but not Source/Target != 0; low risk for a minimal, currently-unwired primitive, but 2b.3.5 should validate fileIDs at the call site before appending.",
+    "2b.3.5/2b.3.6 must explicitly decide the crash-consistency story between the catalog/btree WAL-covered split transaction and this separate, independently-durable graph edge log (e.g. fold graph appends into the same transaction per 2b.3.6, or add a reconciliation/replay step) -- currently deferred and out of scope for 2b.3.4, but flagging so it is not silently dropped."
+  ],
+  "verification_commands_run": [
+    "go build ./...",
+    "go vet ./...",
+    "gofmt -l .",
+    "go test ./graph/... -run TestMinimalEdgeAppend -count=5 -timeout 10m -v",
+    "go test ./... -count=1 -timeout 20m",
+    "go test ./wal/... -race -count=1 -timeout 10m",
+    "git show 3cf7e2c --stat",
+    "git show 3cf7e2c --stat -- engine/split engine/catalog engine/btree engine/wal (confirmed empty)"
+  ]
+}

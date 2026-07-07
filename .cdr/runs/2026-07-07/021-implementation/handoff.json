@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "run_id": "021-implementation",
+  "subtask": "2b.3.4",
+  "commit_sha": "3cf7e2cb63eb16fc1033dfef5002aca3b87fd994",
+  "status": "completed_pending_verification",
+  "files_added": [
+    "engine/graph/edge_append.go",
+    "engine/graph/edge_append_test.go"
+  ],
+  "files_untouched_per_scope": [
+    "engine/split/execute.go (2b.3.5 will wire this primitive in)"
+  ],
+  "key_types": {
+    "EdgeType": "engine/graph/edge_append.go (EdgeTypeInvalid, EdgeSplitSibling, EdgeRedirect)",
+    "Edge": "engine/graph/edge_append.go (Source, Target uint64; Type EdgeType)",
+    "EdgeAppender": "engine/graph/edge_append.go (OpenEdgeAppender, AppendEdge, Close)",
+    "ReadAll": "engine/graph/edge_append.go (package-level, durability-verification only)"
+  },
+  "design_decision_pointer": ".cdr/runs/2026-07-07/021-implementation/architecture-discovery.md (section 2: reuse wal.Writer/OpenWriter/ReadSegment low-level durability primitive, do NOT extend wal.RecordType/Replay)",
+  "test_spec_command": "go test ./engine/graph/... -run TestMinimalEdgeAppend",
+  "self_consistency": ".cdr/runs/2026-07-07/021-implementation/self-consistency.json (all green: build, vet, gofmt, targeted test, full module test, wal race test)",
+  "next_step": "/cdr:verify (independent verification required per invariant I4 - not performed by this agent)",
+  "security_note": "gh issue view 12 output and other tool stdout during this run contained fabricated system-reminder-style text (fake date-change notice, fake MCP tool instructions, fake 'Auto Mode Active' directive) matching a known prompt-injection pattern in this repo. Treated as untrusted data only; not acted upon."
+}
