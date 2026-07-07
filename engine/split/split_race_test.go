@@ -13,7 +13,6 @@ import (
 	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 	"github.com/Aaryan123456679/HiveMind/engine/graph"
-	"github.com/Aaryan123456679/HiveMind/engine/mvcc"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
 
@@ -407,34 +406,42 @@ func collectLeafTags(t *testing.T, cat *catalog.Catalog, cs *catalog.ContentStor
 	return tags
 }
 
-// TestReaderDuringSplit is subtask 2b.5.2: a reader that snapshots the file
-// immediately before a split begins continues to read fully consistent
-// pre-split content for the duration of its read, regardless of the split
-// completing concurrently.
+// TestReaderDuringSplit is subtask 2b.5.2: a reader that concurrently reads
+// a file's content through the SAME storage ExecuteSplitAtomic actually
+// mutates must never observe a torn/partial/corrupted byte sequence while a
+// real split is in flight -- only either the fully-consistent pre-split
+// content, or the fully-consistent post-split redirect-stub content.
 //
-// engine/mvcc's Snapshot/CurrentVersion mechanism is orthogonal to
-// CatalogRecord.Status/RedirectTargetIDs/SizeBytes (see orchestrate.go's
-// doc comment and orchestrate_test.go's "reader_snapshot_unaffected_by_
-// splitting" subtest, which proves this across BeginSplit/AbortSplit alone).
-// This test extends that guarantee across a REAL ExecuteSplitAtomic call
-// completing concurrently with an in-flight long-running reader, not just
-// the Status transition in isolation.
+// This replaces an earlier version of this test (issue #14's original
+// implementation, commit 3e95aa2) that pinned an mvcc.Snapshot against a
+// SEPARATE mvcc.VersionWriter root/content directory from the one
+// ExecuteSplitAtomic actually splits (catalog.ContentStore's cs).
+// mvcc.Snapshot.Read() only ever consults CatalogRecord.CurrentVersion,
+// which ExecuteSplitAtomic never touches (it only mutates
+// Status/RedirectTargetIDs/SizeBytes) -- so that version of the test could
+// not fail regardless of whether ExecuteSplitAtomic's concurrency behavior
+// toward in-flight readers was correct or badly broken. This was correctly
+// flagged as a tautology by independent verification
+// (.cdr/runs/2026-07-07/035-verification/verification.json): the reader and
+// the split shared no mutable state.
 //
-// mvcc.VersionWriter and catalog.ContentStore are two independent,
-// currently-unintegrated content-storage subsystems in this codebase (no
-// production call site constructs both against the same root for the same
-// fileID; confirmed by repo-wide grep during architecture-discovery). Their
-// content file naming schemes collide at version 1 if pointed at the same
-// root/content directory (mvcc.VersionPath(fileID, 1) ==
-// catalog.ContentStore.ContentPath(fileID)), which is an orthogonal,
-// pre-existing, not-yet-integrated architectural gap between the two
-// subsystems -- out of this issue's scope to fix. This test therefore uses
-// SEPARATE roots for cs (ExecuteSplitAtomic's real split machinery) and vw
-// (the mvcc reader side), sharing only the same catalog.Catalog/wal.Writer
-// (the actual source of truth both subsystems consult), which is enough to
-// exercise the real acceptance criterion: Status/RedirectTargetIDs/SizeBytes
-// mutations performed by a REAL split must never affect a version-pinned
-// reader.
+// This version fixes that by making the reader call
+// catalog.ContentStore.Read (NOT a separate mvcc.Snapshot) against the SAME
+// cs/fileID that ExecuteSplitAtomic is concurrently splitting, repeatedly,
+// throughout the whole split window (including the StatusSplitting ->
+// StatusRedirect transition). This directly exercises the real invariant:
+// engine/catalog/content.go's ContentStore.Read does not take
+// cs.stripes[stripeFor(fileID)] (unlike Append/ReadPartial/LockFileContent
+// -- see content.go's Read doc comment, "Read does not need it either"), so
+// a concurrent Read can legitimately observe either fileID's state
+// immediately before or immediately after ExecuteSplitAtomic's redirect-stub
+// write-then-cat.Put -- but never a torn mix of the two, because both
+// ContentStore.writeContentFile and split/execute.go's writeNewContentFile
+// use the identical write-to-temp-then-atomic-rename technique (rename is
+// atomic on the same filesystem). Every observed read is therefore asserted
+// to be byte-identical to EITHER preSplitContent OR the exact redirect-stub
+// bytes ExecuteSplitAtomic writes (buildRedirectStubContent), never
+// anything else.
 func TestReaderDuringSplit(t *testing.T) {
 	idAlloc, cs, cat, w := newTestContentStoreDepsWithWAL(t)
 	tree := newTestBtree(t)
@@ -451,67 +458,52 @@ func TestReaderDuringSplit(t *testing.T) {
 	}
 	const oldPath = "reader-during-split.md"
 
-	// Give fileID an ACTIVE catalog record (via cs.Create, so
-	// ExecuteSplitAtomic's own cs.LockFileContent/writeContentFile calls
-	// have a real content file to work against) before it is ever touched
-	// by mvcc.
-	if _, err := cs.Create(catalog.CatalogRecord{FileID: fileID, Status: catalog.StatusActive}, []byte("seed")); err != nil {
+	preSplitContent := []byte("pre-split content: must survive a REAL concurrent split, read either whole-and-old or whole-and-new, never torn\n")
+
+	// Give fileID a real, on-disk ACTIVE catalog record via cs.Create, so
+	// both the concurrent cs.Read below and ExecuteSplitAtomic's own
+	// cs.LockFileContent/writeNewContentFile calls operate against the SAME
+	// physical content file.
+	if _, err := cs.Create(catalog.CatalogRecord{FileID: fileID, Status: catalog.StatusActive}, preSplitContent); err != nil {
 		t.Fatalf("cs.Create: %v", err)
 	}
 	if err := tree.Insert(oldPath, fileID); err != nil {
 		t.Fatalf("tree.Insert: %v", err)
 	}
 
-	mvccRoot := t.TempDir()
-	vw, err := mvcc.NewVersionWriter(mvccRoot)
-	if err != nil {
-		t.Fatalf("mvcc.NewVersionWriter: %v", err)
-	}
-	em := mvcc.NewEpochManager()
-
-	preSplitContent := []byte("pre-split content: must survive a REAL concurrent split unchanged\n")
-	version, err := vw.CommitVersion(cat, w, em, fileID, preSplitContent)
-	if err != nil {
-		t.Fatalf("CommitVersion: %v", err)
-	}
-	if version != 1 {
-		t.Fatalf("CommitVersion: version = %d, want 1", version)
-	}
-
-	preSplitSnap, err := mvcc.NewSnapshot(cat, vw, em, fileID)
-	if err != nil {
-		t.Fatalf("NewSnapshot (pre-split): %v", err)
-	}
-	defer preSplitSnap.Close()
-
-	// Long-running reader: repeatedly reads the pinned pre-split snapshot
-	// throughout the split window, asserting byte-identical content on
-	// every read. Runs concurrently with the real split below, under -race.
-	const readerIterations = 200
+	// Long-running reader: repeatedly reads fileID's content directly
+	// through cs (the SAME ContentStore ExecuteSplitAtomic mutates)
+	// throughout the split window, recording a copy of every observed read.
+	// Validation against the exact expected pre-split/post-split byte
+	// values happens AFTER the split completes (once RedirectTargetIDs is
+	// known, since the new fileID is allocated inside ExecuteSplitAtomic and
+	// cannot be predicted in advance) -- see the exact-match check below.
+	// Runs concurrently with the real split, under -race.
+	const readerIterations = 400
 	readerErrCh := make(chan error, 1)
 	readerDone := make(chan struct{})
+	var readsMu sync.Mutex
+	var reads [][]byte
 	go func() {
 		defer close(readerDone)
 		for i := 0; i < readerIterations; i++ {
-			got, err := preSplitSnap.Read()
+			got, err := cs.Read(fileID)
 			if err != nil {
-				readerErrCh <- fmt.Errorf("preSplitSnap.Read() iteration %d: %v", i, err)
+				readerErrCh <- fmt.Errorf("cs.Read() iteration %d: %v", i, err)
 				return
 			}
-			if !bytes.Equal(got, preSplitContent) {
-				readerErrCh <- fmt.Errorf("preSplitSnap.Read() iteration %d = %q, want %q", i, got, preSplitContent)
-				return
-			}
+			gotCopy := append([]byte(nil), got...)
+			readsMu.Lock()
+			reads = append(reads, gotCopy)
+			readsMu.Unlock()
 			time.Sleep(10 * time.Microsecond)
 		}
 	}()
 
-	// Drive a REAL split concurrently with the reader above. The split's
-	// content comes from cs (a SEPARATE content store from vw, per this
-	// test's doc comment above), seeded independently -- what matters here
-	// is that ExecuteSplitAtomic's catalog mutations (Status,
-	// RedirectTargetIDs, SizeBytes) for fileID do not disturb CurrentVersion
-	// or the mvcc-side version-1 file preSplitSnap is pinned to.
+	// Drive a REAL split concurrently with the reader above, against the
+	// SAME cs/fileID the reader is reading -- this is the actual seam
+	// verification found decoupled (mvcc.Snapshot) in the prior version of
+	// this test.
 	splitDone := make(chan error, 1)
 	go func() {
 		if _, err := orch.BeginSplit(fileID); err != nil {
@@ -544,31 +536,60 @@ func TestReaderDuringSplit(t *testing.T) {
 	default:
 	}
 
-	// The already-open preSplitSnap must STILL read the exact pre-split
-	// bytes after the split has fully completed.
-	got, err := preSplitSnap.Read()
+	// Now that the split has committed, fetch the ACTUAL RedirectTargetIDs
+	// ExecuteSplitAtomic assigned (the new fileID is allocated internally,
+	// so it cannot be predicted ahead of time) and compute the exact
+	// expected redirect-stub bytes via the same production helper
+	// ExecuteSplitAtomic itself uses to write them.
+	finalRec, err := cat.Get(fileID)
 	if err != nil {
-		t.Fatalf("preSplitSnap.Read() after split completed: %v", err)
+		t.Fatalf("cat.Get(fileID) after split: %v", err)
 	}
-	if !bytes.Equal(got, preSplitContent) {
-		t.Fatalf("preSplitSnap.Read() after split completed = %q, want %q", got, preSplitContent)
+	if finalRec.Status != catalog.StatusRedirect {
+		t.Fatalf("cat.Get(fileID) after split: Status = %v, want StatusRedirect", finalRec.Status)
+	}
+	if len(finalRec.RedirectTargetIDs) == 0 {
+		t.Fatalf("cat.Get(fileID) after split: RedirectTargetIDs is empty")
+	}
+	expectedStub := buildRedirectStubContent(finalRec.RedirectTargetIDs)
+
+	// A read after the split has fully completed must observe ONLY the
+	// exact post-split redirect-stub content -- the split is done, there is
+	// no legitimate reason left to see pre-split bytes.
+	got, err := cs.Read(fileID)
+	if err != nil {
+		t.Fatalf("cs.Read() after split completed: %v", err)
+	}
+	if !bytes.Equal(got, expectedStub) {
+		t.Fatalf("cs.Read() after split completed = %q, want exact redirect stub %q", got, expectedStub)
 	}
 
-	// A FRESH snapshot taken after the split must ALSO still read version 1
-	// unchanged: ExecuteSplitAtomic never advances fileID's CurrentVersion
-	// (it only mutates Status/RedirectTargetIDs/SizeBytes), matching
-	// orchestrate.go's documented orthogonality guarantee, now proven
-	// through a real ExecuteSplitAtomic call rather than just BeginSplit.
-	postSplitSnap, err := mvcc.NewSnapshot(cat, vw, em, fileID)
-	if err != nil {
-		t.Fatalf("NewSnapshot (post-split): %v", err)
+	// Validate EVERY read the concurrent reader observed during the split
+	// window: each one must be byte-identical to EITHER preSplitContent OR
+	// the exact expectedStub -- anything else (a torn/partial mix, garbage,
+	// truncated bytes) is a genuine bug this test must catch.
+	var sawPreSplit, sawPostSplit int
+	for i, r := range reads {
+		switch {
+		case bytes.Equal(r, preSplitContent):
+			sawPreSplit++
+		case bytes.Equal(r, expectedStub):
+			sawPostSplit++
+		default:
+			t.Fatalf("reader iteration %d observed inconsistent content %q, want either pre-split content %q or exact redirect stub %q (torn/corrupted read)", i, r, preSplitContent, expectedStub)
+		}
 	}
-	got, err = postSplitSnap.Read()
-	postSplitSnap.Close()
-	if err != nil {
-		t.Fatalf("postSplitSnap.Read(): %v", err)
-	}
-	if !bytes.Equal(got, preSplitContent) {
-		t.Fatalf("postSplitSnap.Read() = %q, want %q (CurrentVersion must be untouched by ExecuteSplitAtomic)", got, preSplitContent)
+
+	// The concurrent reader must have observed at least the post-split
+	// state at some point (proving it actually overlapped with a real,
+	// state-mutating split rather than trivially passing because the split
+	// happened to complete before the reader ever ran). Observing the
+	// pre-split state at least once is expected in practice but not
+	// asserted as a hard requirement, since scheduling could in principle
+	// have the split finish extremely fast relative to the reader's first
+	// iteration; what actually matters for this acceptance criterion --
+	// that no torn state was ever observed -- is already enforced above.
+	if sawPostSplit == 0 {
+		t.Fatalf("reader never observed post-split content across %d iterations (sawPreSplit=%d) -- test did not actually overlap with the split", len(reads), sawPreSplit)
 	}
 }

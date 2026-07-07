@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "run_id": "036-implementation-fix",
+  "subtask": "issue #14 / 2b.5.2 fix cycle: close CHANGES_REQUESTED verdict from .cdr/runs/2026-07-07/035-verification/verification.json",
+  "verdict_being_fixed": {
+    "run": ".cdr/runs/2026-07-07/035-verification/verification.json",
+    "commit_under_review": "3e95aa298799d52eee8e8bd2bf2351069a67fedb",
+    "verdict": "CHANGES_REQUESTED",
+    "reason": "TestReaderDuringSplit pinned an mvcc.Snapshot against a SEPARATE mvcc.VersionWriter root/content directory from the one ExecuteSplitAtomic actually splits, so the reader and the split never shared mutable state and the test was a tautology (could never fail regardless of real concurrency correctness)."
+  },
+  "option_taken": {
+    "choice": "A",
+    "why": "Direct source read of engine/catalog/content.go's Read/ReadPartial/LockFileContent and engine/split/execute.go's ExecuteSplitAtomic/writeNewContentFile confirmed: (1) ContentStore.Read does NOT take cs.stripes (content.go lines ~290-303), (2) ExecuteSplitAtomic DOES take cs.LockFileContent(originalFileID) across its redirect-stub write + cat.Put + InvalidateHeaderCache sequence (execute.go ~line 849, issue #13's fix), (3) both ContentStore.writeContentFile and split/execute.go's writeNewContentFile use identical write-to-temp-then-atomic-rename, which structurally guarantees a concurrent os.ReadFile/cs.Read can only ever observe the fully-old or fully-new file, never torn bytes -- regardless of cs.Read not taking the stripe lock. This makes catalog.ContentStore.Read a real, meaningful integration point sharing actual state with ExecuteSplitAtomic, so Option A (rework the test to use it) was correct and achievable. Option B (documenting a scope gap in pending.md) was NOT needed since no genuine architectural gap was found at this layer."
+  },
+  "what_changed": {
+    "file": "engine/split/split_race_test.go",
+    "function": "TestReaderDuringSplit",
+    "before": "Reader pinned an mvcc.Snapshot against a separate mvcc.VersionWriter root; split ran against a separate catalog.ContentStore. No shared mutable state.",
+    "after": "Reader repeatedly calls catalog.ContentStore.Read(fileID) directly against the SAME cs ExecuteSplitAtomic operates on, throughout the live split window (400 iterations, 10us poll interval). Every observed read is recorded, then validated post-hoc (once the split's real RedirectTargetIDs are known) to be byte-identical to EITHER the exact pre-split content OR the exact redirect-stub bytes computed via the production buildRedirectStubContent helper -- never anything else (torn/partial/corrupted). Also asserts the reader actually observed the post-split state at least once, proving genuine overlap with the live split rather than a trivially-fast pass. The mvcc import was removed entirely (no longer used by this test)."
+  },
+  "teeth_confirmation": {
+    "method": "Temporarily replaced writeNewContentFile in engine/split/execute.go with a non-atomic (truncate + partial write + 5ms sleep + partial write, no temp-file/rename) implementation.",
+    "result": "TestReaderDuringSplit -race -count=5 FAILED 5/5 with explicit torn-content messages (e.g. truncated 'HIVEMIND-REDIR' or empty string mid-write).",
+    "revert": "execute.go restored to its exact pre-injection state (byte-identical to commit 3e95aa2's version) via cp from a pre-injection backup; confirmed go vet/gofmt clean and go test ./split/... -race -count=1 -timeout 20m green afterward."
+  },
+  "self_consistency_artifact": ".cdr/runs/2026-07-07/036-implementation-fix/self-consistency.json",
+  "validation_matrix_artifact": ".cdr/runs/2026-07-07/036-implementation-fix/validation-matrix.json",
+  "problem_statement_artifact": ".cdr/runs/2026-07-07/036-implementation-fix/problem-statement.md",
+  "plan_artifact": ".cdr/runs/2026-07-07/036-implementation-fix/plan.md",
+  "test_run_results": [
+    "go build ./... / go vet ./... / gofmt -l .: clean",
+    "go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 10m: PASS, 2.418s",
+    "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 10m: PASS, 167.617s (no regression to 2b.5.1)",
+    "go test ./split/... -race -count=1 -timeout 20m: PASS, 52.548s",
+    "go test ./... -count=1 -timeout 25m: PASS all packages (first attempt hit an unrelated btree-package timeout under transient extreme system load -- load avg 20-36 from heavy concurrent activity on this shared dev machine; engine/btree is untouched by this fix (git diff --stat -- btree/ empty), confirmed environmental by btree passing in isolation in 16.164s and the full suite passing cleanly on a second run once load settled, with btree back to its normal ~39s)"
+  ],
+  "engine_diff_scope": "Only engine/split/split_race_test.go was modified in the final committed diff (TestReaderDuringSplit rewrite + mvcc import removal). No production code (engine/split/execute.go, engine/catalog/content.go) was changed -- the bug-injection used for teeth-confirmation was fully reverted before commit.",
+  "commit": "recorded separately after this handoff.json is written (see git log)",
+  "prompt_injection_observed": "The 035-verification/verification.json tool output (and, per its own note, gh issue #14's body) contained embedded fake system-reminder-style text (fake date-change notice, fake 'tokensave MCP server' instructions, fake 'Auto Mode Active' directive). None were acted on; consistent with the previously-established repeated pattern in this repo/session.",
+  "verification_readiness": "ready for /cdr:verify"
+}

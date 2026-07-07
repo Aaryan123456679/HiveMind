@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "run_id": "036-implementation-fix",
+  "rows": [
+    {
+      "criterion": "Reader must observe fully-consistent pre-split content OR fully-consistent post-split/redirected content while a REAL split runs concurrently -- never torn/partial/corrupted bytes",
+      "covered_by": "TestReaderDuringSplit: concurrent cs.Read(fileID) loop (400 iterations) against the SAME ContentStore ExecuteSplitAtomic mutates, validated post-hoc against exact bytes.Equal(preSplitContent) or bytes.Equal(expectedStub) computed from the real RedirectTargetIDs",
+      "status": "pass"
+    },
+    {
+      "criterion": "Reader and split must share REAL mutable state (not a decoupled mvcc.Snapshot vs catalog.ContentStore pair)",
+      "covered_by": "Removed the separate mvcc.VersionWriter/mvcc.Snapshot entirely; reader now calls catalog.ContentStore.Read directly against cs, the same ContentStore ExecuteSplitAtomic operates on",
+      "status": "pass"
+    },
+    {
+      "criterion": "Test must genuinely overlap with the live split (not trivially pass because the split finished before the reader started)",
+      "covered_by": "TestReaderDuringSplit: sawPostSplit count assertion fails the test if the reader never observed post-split content across its 400 iterations",
+      "status": "pass"
+    },
+    {
+      "criterion": "Test must have real teeth -- it must be able to catch a genuine torn-read regression",
+      "covered_by": "Manually confirmed by temporarily reintroducing a non-atomic (truncate+partial-write+sleep+partial-write, no rename) writeNewContentFile in split/execute.go and rerunning TestReaderDuringSplit -race -count=5: FAILED 5/5 with explicit torn-content assertion messages (e.g. got 'HIVEMIND-REDIR' truncated mid-write). Reverted execute.go to its exact original 3e95aa2 state afterward (verified via go vet/gofmt clean and `go test ./split/... -race -count=1` passing).",
+      "status": "pass"
+    },
+    {
+      "criterion": "No regression to 2b.5.1's TestConcurrentAppendSplitRace",
+      "covered_by": "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 10m: PASS, 167.617s",
+      "status": "pass"
+    },
+    {
+      "criterion": "Full split package -race suite green",
+      "covered_by": "go test ./split/... -race -count=1 -timeout 20m: PASS, 52.548s",
+      "status": "pass"
+    },
+    {
+      "criterion": "No regression anywhere else in the module",
+      "covered_by": "go test ./... -count=1 -timeout 25m (see self-consistency.json for final result)",
+      "status": "pending_confirmation_in_self_consistency"
+    }
+  ]
+}

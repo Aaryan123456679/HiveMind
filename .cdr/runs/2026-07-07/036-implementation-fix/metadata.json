@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "036-implementation-fix",
+  "macro": "cdr-implement-fix",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue #14 / 2b.5.2 fix cycle: rework TestReaderDuringSplit to close CHANGES_REQUESTED verdict in .cdr/runs/2026-07-07/035-verification/verification.json",
+  "git_head": "3e95aa298799d52eee8e8bd2bf2351069a67fedb",
+  "run_key": "99492dc0579d7f9e418ad9dc9522b6bd6722d1a4f33c69b1a5fe14d8e77cf8ee",
+  "status": "completed",
+  "last_completed_step": "commit",
+  "started_at": "2026-07-08T00:00:00Z",
+  "ended_at": "2026-07-08T01:20:00Z"
+}

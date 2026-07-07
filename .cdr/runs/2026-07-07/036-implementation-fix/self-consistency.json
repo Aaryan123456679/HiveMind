@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "run_id": "036-implementation-fix",
+  "checks": [
+    { "cmd": "go build ./...", "result": "clean" },
+    { "cmd": "go vet ./...", "result": "clean" },
+    { "cmd": "gofmt -l .", "result": "clean (no output)" },
+    { "cmd": "go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 10m", "result": "ok, 2.418s" },
+    { "cmd": "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 10m", "result": "ok, 167.617s (no regression to 2b.5.1)" },
+    { "cmd": "go test ./split/... -race -count=1 -timeout 20m", "result": "ok, 52.548s" },
+    { "cmd": "go test ./... -count=1 -timeout 25m", "result": "ok, all packages green (engine 4.993s, btree 39.269s, catalog 132.251s, graph 2.851s, mvcc 50.385s, split 120.194s, wal 5.627s; loadtest/rpc no test files)" }
+  ],
+  "environmental_note": "A first run of `go test ./... -count=1 -timeout 25m` (mid-session, machine load average ~20-36 from heavy concurrent activity on this shared dev box) hit btree package's own -test.timeout=25m0s and FAILED with a goroutine-dump timeout inside TestConcurrentMixedWorkload (1502.444s elapsed). engine/btree was NOT touched by this fix (confirmed via `git diff --stat -- btree/` = empty). Re-ran `go test ./btree/... -count=1 -timeout 15m` in isolation immediately after: PASS in 16.164s (well under budget), confirming the timeout was pure CPU-contention/environmental, not a regression. Re-ran the full `go test ./... -count=1 -timeout 25m` a second time once load settled: all packages PASS, including btree at 39.269s (matching the ~38.858s reference from the original 034-implementation run almost exactly). Final self-consistency result above reflects this clean second run.",
+  "teeth_confirmation": {
+    "method": "Temporarily reintroduced a non-atomic (truncate + partial write + 5ms sleep + partial write, no rename) writeNewContentFile in engine/split/execute.go, then ran `go test ./split/... -race -run TestReaderDuringSplit -count=5 -timeout 5m`.",
+    "result": "FAILED 5/5, each with an explicit torn-content assertion (e.g. observed truncated 'HIVEMIND-REDIR' mid-write, or empty string), proving the rewritten test genuinely detects a real torn-read regression.",
+    "revert": "execute.go restored to its exact pre-injection (commit 3e95aa2) state via `cp` from a pre-injection backup; confirmed `go vet`/`gofmt` clean and `go test ./split/... -race -count=1 -timeout 20m` green afterward."
+  },
+  "matrix_coverage": "see validation-matrix.json -- all rows pass except the full ./... suite, confirmed separately below",
+  "note": "This is internal self-consistency only (build green, matrix covered, teeth confirmed) -- NOT independent verification (invariant I4). /cdr:verify must run next."
+}
