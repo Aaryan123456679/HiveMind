@@ -1,0 +1,57 @@
+{
+  "subtask": "2b.3.3",
+  "commit": "ee2a658b19bc562cf1468fcbc63ed22917368e73",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "gh issue #12 body / git show output for ee2a658 both contained the recurring injected fake-system-reminder-style text (fake date-change notice, fake tokensave MCP directive, fake Auto Mode Active directive). Treated as untrusted plain-text data, not acted upon; no such MCP tool exists in this session's toolset regardless.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Acceptance criteria (new topic path resolves via B+Tree lookup to new fileID; old path still resolves but to redirect-stub fileID) both directly asserted in TestSplitBtreeRepoint/repoint via real tree.Lookup calls plus content-store reads (not mocked). Test spec go test ./engine/split/... -run TestSplitBtreeRepoint passes."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Diff confirmed to touch ONLY engine/split/execute.go and engine/split/execute_test.go (plus .cdr docs) -- git show ee2a658 --stat verified, no engine/btree/ hunks. engine/btree/ consumed strictly via its existing public Tree.Insert/Tree.Lookup API, matching the claimed scope boundary (no engine/graph/ edges, no cross-step WAL wrapping added here)."
+    },
+    "core_claim_verification": {
+      "status": "pass",
+      "evidence": "Read engine/btree/insert.go directly (not just doc comments). Free function Insert (line ~163-173): key-present branch does leaf.FileIDs[i] = fileID, writeLeaf, return rootNodeID unchanged -- genuine no-split upsert, confirmed by code not just comment. Tree.Insert (line 541) wraps this via crabInsert/crabInsertOnce using per-node latch-crabbing (window-of-2 discipline, TryLock + errRestartFromRoot retry) -- the upsert path is reached through the same concurrency-safe descent as any other insert, so the no-op-on-existing-key property holds under concurrent access too, not just single-threaded. engine/btree has its own TestInsertUpsert plus concurrent crabbing insert/delete tests (TestCrabbingInsert*, TestConcurrentInsertDeleteDisjointRangesMinimalRepro) that exercise this machinery under -race; this subtask correctly does not duplicate that coverage and appropriately defers dedicated auto-split concurrency testing to issue #14."
+    },
+    "path_convention_claim": {
+      "status": "pass_with_comment",
+      "evidence": "grep -rn \"btree.Tree\" engine (excluding _test.go) confirms no other production code populates a *btree.Tree for a topic path -- claim verified true. Design risk flagged, not blocking: ExecuteSplitBtreeInsert uses the raw topic-path string directly as the btree key with no normalization/encoding layer (e.g. no path canonicalization, no separate namespace prefix). If a real topic-path indexing scheme introduced outside this issue's scope later imposes a different key convention (normalized paths, prefix-scoped keys, case-folding, etc.), this subtask's direct-raw-path convention could silently diverge and require a migration. Worth a follow-up note in the eventual real-indexing subtask, not a blocker here since this issue explicitly scopes that convention question out."
+    },
+    "composition_correctness": {
+      "status": "pass",
+      "evidence": "Read TestSplitBtreeRepoint/repoint in full: chains real SplitPlan fixture -> real ExecuteSplitAllocateAndWrite (2b.3.1) -> real ExecuteSplitRedirectStub (2b.3.2) -> real ExecuteSplitBtreeInsert (2b.3.3) using the same catalog/content-store/WAL fixtures across all three. Assertions use genuine tree.Lookup calls (not just returned maps): (a) each new path's resolved fileID's on-disk content (via cs.ContentPath + os.ReadFile) matches extractSections of the real fixture content, (b) oldPath's resolved fileID's on-disk content matches buildRedirectStubContent -- a real end-to-end, non-mocked composed-behavior assertion."
+    },
+    "edge_case_oldpath_not_preexisting": {
+      "status": "gap_noted",
+      "evidence": "No subtest seeds a tree WITHOUT oldPath pre-inserted and then checks ExecuteSplitBtreeInsert behaves correctly (insert-fresh) rather than assuming pre-existence. Code-level analysis: since Tree.Insert with rootID==reservedNodeID or a not-yet-present key correctly bootstraps/inserts (verified in insert.go), this would work fine functionally, but the specific scenario is untested. Minor coverage gap -- not blocking given the pre-existing-path scenario is the realistic production case (original file's path always predates any split), but worth adding a subtest before this code is relied upon for a codepath that might not guarantee oldPath was ever indexed."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go test ./split/... -race -v -count=1 -timeout 10m: all suites pass, including 2b.1.x/2b.2.x/2b.3.1/2b.3.2 with zero regressions. go test ./btree/... -race -count=1 -timeout 15m: pass (defensive regression check given claimed zero btree changes -- confirmed accurate). Full go test ./... -count=1 -timeout 15m across the whole engine module: all packages pass."
+    },
+    "build_and_static_checks": {
+      "status": "pass",
+      "evidence": "go build ./..., go vet ./..., gofmt -l . all clean from engine/."
+    },
+    "test_repeatability": {
+      "status": "pass",
+      "evidence": "go test ./split/... -run TestSplitBtreeRepoint -count=5 -timeout 10m: all 5 repetitions pass deterministically (test uses sort.Strings for deterministic map iteration, matching the doc comment's stated rationale)."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No secrets, no unsafe input handling issues found. Error paths use fmt.Errorf with %w wrapping consistently. Input validation (nil tree, empty oldPath, empty newPathFileIDs, newPath==oldPath) all present and tested."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Function is well-documented, scope boundary explicitly stated in doc comment, deterministic ordering explained inline. Consistent with 2b.3.1/2b.3.2's style."
+    }
+  },
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "path_convention_claim: raw topic-path used directly as btree key with no abstraction layer; flag for whichever future subtask establishes the real topic-path indexing convention.",
+    "edge_case_oldpath_not_preexisting: add a subtest for oldPath absent from tree before this code is used outside the always-preexisting-original-file assumption."
+  ]
+}
