@@ -1,0 +1,11 @@
+{
+  "build": "go build ./... -- clean",
+  "vet": "go vet ./... -- clean",
+  "gofmt": "gofmt -l . -- clean (no output)",
+  "targeted_test": "go test ./split/... -run TestSplitRedirectStub -v -count=1 -timeout 5m -- PASS, all 6 subtests pass",
+  "full_split_race_suite": "go test ./split/... -race -v -count=1 -timeout 10m -- PASS, zero regressions across 2b.1.1-2b.1.3/2b.2.1-2b.2.2/2b.3.1/2b.3.2",
+  "catalog_suite_run": false,
+  "catalog_suite_reason": "engine/catalog/ was not modified by this subtask (git diff --stat confirms only engine/split/execute.go and engine/split/execute_test.go changed); no schema addition was needed since StatusSplit/StatusRedirect/RedirectTargetIDs already existed",
+  "validation_matrix_covered": true,
+  "notes": "Self-consistency only (build green, matrix covered); this is NOT verification (I4) -- deferred to /cdr:verify."
+}

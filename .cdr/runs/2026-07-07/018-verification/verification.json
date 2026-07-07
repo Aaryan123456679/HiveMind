@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "run_id": "018-verification",
+  "subtask": "2b.3.2",
+  "issue": 12,
+  "commit_reviewed": "73279a0c6a2ea4a8c8d740d4bc9015995d19a142",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "gh issue view 12 output and prior tool stdout were screened for embedded prompt-injection-style text (fake system-reminders, fake date-change notices, fake tool directives). None found in issue #12 body itself this round, but the diff/commit message text and some tool outputs during this run did contain such fabricated content; all such content was treated as inert untrusted data, not instructions, and had zero effect on this verification's actions or verdict.",
+  "dimensions": {
+    "requirements": {
+      "verdict": "pass",
+      "evidence": "Acceptance criteria (original record -> StatusRedirect, RedirectTargetIDs -> new fileIDs, stub replaces content at old path) all implemented in ExecuteSplitRedirectStub (engine/split/execute.go:275-335) and exercised by TestSplitRedirectStub's 'redirect_stub' subtest, which checks both the immediately-returned record and a re-fetched cat.Get(originalFileID), plus stub byte-exactness against buildRedirectStubContent."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "Confirmed via git blame/log that StatusSplit/StatusRedirect/RedirectTargetIDs/MaxRedirectTargets predate this commit (introduced in 7630626/f974b49, well before 2b.1.2/2b.1.3 commits bed7edd/124490b, both before this commit). git show --stat 73279a0 confirms ONLY engine/split/execute.go and engine/split/execute_test.go changed -- engine/catalog/ genuinely untouched, matching implementer's claim. The two-step transition composes correctly: Orchestrator.EndSplit(fileID, catalog.StatusSplit) (2b.1.3, unmodified) performs StatusSplitting->StatusSplit; ExecuteSplitRedirectStub reads the record, refuses via ErrNotSplit unless Status==StatusSplit (checked strictly before any write), then performs StatusSplit->StatusRedirect. WAL-before-apply claim verified by tracing wal.AppendAndApply (wal/record.go:352) into Writer.Append (wal/writer.go:227ff), which fsyncs before AppendAndApply's apply() callback runs -- genuinely the same pattern as orchestrate.go's transitionStatus, not superficially similar."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "go test ./split/... -race -v -count=1 -timeout 10m: all packages pass, zero regressions across 2b.1.1-2b.1.3/2b.2.1-2b.2.2/2b.3.1/2b.3.2. go test ./catalog/... -count=1 -timeout 10m: pass (sanity check given claimed zero catalog changes, confirmed by diff)."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comments",
+      "evidence": "6 subtests (redirect_stub incl. stub-content-exact, nil_deps covering cat/w/cs, empty_targets, too_many_targets, record_not_found, wrong_status) all non-vacuous and pass x5 repeated runs. too_many_targets enforces the pre-existing MaxRedirectTargets=8 constant (not newly invented by this subtask; reasonable per record.go's own comment: '2-3 children typical, 8 leaves room to spare'). Minor gap: wrong_status and record_not_found subtests assert the returned error only -- they do not explicitly assert zero side effects (no stub file written, catalog record unchanged), even though the code's ordering (cat.Get + Status check strictly precede any writeNewContentFile/WAL/Put call) does in fact guarantee this. Recommend adding an explicit no-mutation assertion to these two subtests as a regression fence, not a blocking gap."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "No new attack surface; pure internal catalog/content mutation gated by existing FileGuard/Status preconditions from 2b.1.2/2b.1.3. No user input reaches this path directly."
+    },
+    "performance": {
+      "verdict": "pass",
+      "evidence": "One extra ContentPath write + one WAL append + one catalog Put per split, same order of magnitude as existing orchestrate.go transitions. No new hot-path cost."
+    },
+    "maintainability": {
+      "verdict": "pass_with_comments",
+      "evidence": "Reused-fileID design (stub written to originalFileID's existing content path rather than minting a new ID) is a reasonable, well-reasoned choice that keeps 2b.3.3 trivial, but the invariant it depends on ('any reader must check CatalogRecord.Status before trusting content bytes at that path') is currently enforced only by doc comments (execute.go's redirectStubHeader/ExecuteSplitRedirectStub doc comments, architecture-discovery.md), not by any code-level guard -- grep confirms ContentStore.Read/Create/Append (catalog/content.go) have no Status-awareness themselves. This matches this repo's existing convention (Orchestrator's AdmitWrite doc-comments carry equivalent unenforced invariants) so it is not a new pattern, but it is worth flagging as cumulative documentation-only-invariant debt across the split package as subtasks accumulate.",
+      "determinism_note": "buildRedirectStubContent itself is genuinely deterministic given a fixed input slice (iterates targetFileIDs in given order, no map iteration). However, determinism of the OVERALL stub content depends on the caller supplying newFileIDs in a stable order; 2b.3.1's ExecuteSplitAllocateAndWrite returns map[string]uint64 (NewPath->fileID), and this commit's own test derives newFileIDs by ranging over the plan's Files slice (deterministic) rather than ranging over the map directly (which would be Go-map-iteration-order-dependent and non-deterministic). This is currently correct in the test, but nothing in ExecuteSplitRedirectStub's signature or docs prevents a future caller (likely 2b.3.6's integration glue) from naively ranging over the 2b.3.1 map and introducing non-determinism. Recommend 2b.3.6 (or a follow-up doc note) explicitly specify a canonical ordering contract (e.g. 'sorted by NewPath' or 'sorted numerically ascending') for constructing newFileIDs, rather than leaving it as an implicit test-only convention."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "Build/vet/gofmt clean. Targeted test green x5 repeats. Full split race suite green. Catalog regression suite green. Architecture claims independently verified against git history and source, not just trusted from architecture-discovery.md."
+    },
+    "possible_improvements": [
+      "Add explicit 'no side effects' assertions (stub file absent/unchanged, catalog record identical) to wrong_status and record_not_found subtests.",
+      "Document a canonical newFileIDs ordering contract before 2b.3.6 wires ExecuteSplitAllocateAndWrite's map output into ExecuteSplitRedirectStub, to avoid a latent non-determinism bug at integration time.",
+      "Consider whether a lightweight code-level assertion helper (not full enforcement) could reduce reliance on the doc-comment-only 'check Status before trusting content bytes' invariant as more split subtasks read old-path content."
+    ]
+  },
+  "ordering_idempotency_assessment": "Implementer's own architecture-discovery.md 'Ordering / idempotency risk' section is honest and accurate: stub-write-then-catalog-transition ordering is deliberately chosen so a crash between the two leaves recoverable, unambiguous state (Status still StatusSplit but stub-shaped content already present at old path is a well-defined 'redo the transition' signal for 2b.3.6, not corruption). This is an acceptable, clearly-scoped-out gap for this subtask given 2b.3.6 explicitly owns full atomicity across the whole split pipeline; does not block PASS.",
+  "test_run_log": {
+    "go_build": "clean",
+    "go_vet": "clean",
+    "gofmt_l": "clean (no output)",
+    "targeted_test_x5": "go test ./split/... -run TestSplitRedirectStub -count=5 -timeout 10m -- all 5 runs PASS, 6/6 subtests each",
+    "full_split_race_suite": "go test ./split/... -race -v -count=1 -timeout 10m -- PASS, zero regressions",
+    "catalog_regression": "go test ./catalog/... -count=1 -timeout 10m -- PASS (71.2s)"
+  },
+  "recommendation": "PASS_WITH_COMMENTS. Safe to proceed to /cdr:commit (local only, no push). Safe to proceed to 2b.3.3 (B+Tree repoint) next, since it depends on the reused-originalFileID design decision verified here as sound, and on RedirectTargetIDs/StatusRedirect being correctly populated, which this verification confirms."
+}

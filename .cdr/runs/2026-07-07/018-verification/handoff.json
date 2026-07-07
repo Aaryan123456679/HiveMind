@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "run_id": "018-verification",
+  "subtask": "2b.3.2",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit_reviewed": "73279a0c6a2ea4a8c8d740d4bc9015995d19a142",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-07/018-verification/verification.json",
+    "reviewed_source": [
+      "engine/split/execute.go:275-335 (ExecuteSplitRedirectStub)",
+      "engine/split/execute.go:217-231 (buildRedirectStubContent)",
+      "engine/split/execute_test.go:275-388 (TestSplitRedirectStub)",
+      "engine/catalog/record.go (Status enum, RedirectTargetIDs, Encode/Decode)",
+      "engine/split/orchestrate.go (transitionStatus, EndSplit)",
+      "wal/record.go:352 (AppendAndApply)",
+      "wal/writer.go:227 (Writer.Append fsync)"
+    ]
+  },
+  "next_subtask": "2b.3.3",
+  "no_regression_entry": true,
+  "note": "No regression.jsonl entry appended -- verdict is PASS_WITH_COMMENTS, not CHANGES_REQUESTED/FAIL."
+}

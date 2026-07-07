@@ -1,0 +1,26 @@
+{
+  "files_touched": [
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "files_not_touched_but_read": [
+    "engine/split/orchestrate.go",
+    "engine/catalog/record.go",
+    "engine/catalog/record_test.go",
+    "engine/catalog/content.go",
+    "engine/catalog/content_test.go",
+    "engine/catalog/catalog.go",
+    "engine/catalog/idalloc.go"
+  ],
+  "schema_changes": "none -- StatusSplit/StatusRedirect/RedirectTargetIDs already exist in catalog/record.go",
+  "downstream_consumers": [
+    "2b.3.3 (B+Tree repoint) will read RedirectTargetIDs and rely on originalFileID being reused for the stub",
+    "2b.3.4/2b.3.5 (graph edges) will read RedirectTargetIDs for REDIRECT/SPLIT_SIBLING edges",
+    "2b.3.6 (atomic WAL commit) will wrap this subtask's two writes (stub content, catalog transition) plus everything else into one crash-atomic unit"
+  ],
+  "risk_level": "medium",
+  "risk_reasons": [
+    "touches catalog record Status transitions (StatusSplit -> StatusRedirect), a shared enum also used by orchestrate.go",
+    "no schema change, so risk is confined to split package logic correctness"
+  ]
+}

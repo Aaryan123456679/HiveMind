@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "run_id": "017-implementation",
+  "subtask": "2b.3.2",
+  "status": "completed",
+  "commit_sha": "73279a0",
+  "git_head_before": "aa923c5",
+  "files_changed": [
+    "engine/split/execute.go (ExecuteSplitRedirectStub, buildRedirectStubContent, redirectStubHeader, ErrNotSplit -- appended, existing 2b.3.1 code untouched)",
+    "engine/split/execute_test.go (TestSplitRedirectStub + newTestContentStoreDepsWithWAL + putSplitRecord + uint64SlicesEqual helpers)"
+  ],
+  "catalog_schema_changed": false,
+  "pointers": {
+    "architecture_discovery": ".cdr/runs/2026-07-07/017-implementation/architecture-discovery.md",
+    "plan": ".cdr/runs/2026-07-07/017-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-07/017-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-07/017-implementation/self-consistency.json",
+    "new_function": "engine/split/execute.go:ExecuteSplitRedirectStub",
+    "new_test": "engine/split/execute_test.go:TestSplitRedirectStub"
+  },
+  "next_subtask": "2b.3.3 (B+Tree repoint) -- reuses originalFileID for the stub per this run's architecture-discovery.md decision",
+  "known_risk_for_2b_3_6": "non-atomic window between stub content write and catalog Status transition, documented in architecture-discovery.md's 'Ordering / idempotency risk' section",
+  "verify_next": true
+}

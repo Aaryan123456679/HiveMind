@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"id": "happy_path", "desc": "record StatusSplit -> StatusRedirect, RedirectTargetIDs set, stub content written", "covered_by": "TestSplitRedirectStub/redirect_stub"},
+    {"id": "stub_content_exact", "desc": "stub file bytes exactly match buildRedirectStubContent(newFileIDs)", "covered_by": "TestSplitRedirectStub/redirect_stub"},
+    {"id": "nil_cat", "desc": "nil *catalog.Catalog rejected", "covered_by": "TestSplitRedirectStub/nil_deps"},
+    {"id": "nil_wal", "desc": "nil *wal.Writer rejected", "covered_by": "TestSplitRedirectStub/nil_deps"},
+    {"id": "nil_cs", "desc": "nil *catalog.ContentStore rejected", "covered_by": "TestSplitRedirectStub/nil_deps"},
+    {"id": "empty_targets", "desc": "empty newFileIDs rejected", "covered_by": "TestSplitRedirectStub/empty_targets"},
+    {"id": "too_many_targets", "desc": "len(newFileIDs) > MaxRedirectTargets rejected", "covered_by": "TestSplitRedirectStub/too_many_targets"},
+    {"id": "record_not_found", "desc": "unknown originalFileID returns wrapped ErrNotFound, no writes", "covered_by": "TestSplitRedirectStub/record_not_found"},
+    {"id": "wrong_status", "desc": "record Status != StatusSplit (e.g. StatusActive) refused via ErrNotSplit, no writes", "covered_by": "TestSplitRedirectStub/wrong_status"},
+    {"id": "idempotency_note", "desc": "ordering risk documented in architecture-discovery.md for 2b.3.6, not itself tested here (2b.3.6's crash-injection test is out of scope)", "covered_by": "architecture-discovery.md"}
+  ]
+}
