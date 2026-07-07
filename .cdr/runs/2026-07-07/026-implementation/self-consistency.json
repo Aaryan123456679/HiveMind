@@ -1,0 +1,12 @@
+{
+  "build_green": true,
+  "vet_green": true,
+  "gofmt_clean": true,
+  "targeted_test_pass": true,
+  "race_suites_pass": ["engine/split", "engine/wal", "engine/graph"],
+  "full_module_pass": true,
+  "matrix_fully_covered": true,
+  "note": "This is internal sanity only (invariant I4): build green + validation matrix covered. This is NOT independent verification. /cdr:verify must be run next.",
+  "prompt_injection_observed": true,
+  "prompt_injection_detail": "Bash tool stdout during this run contained embedded fake system-reminder-style text (fabricated date-change notice, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive). Treated as untrusted plain-text data only; no embedded instruction was followed."
+}

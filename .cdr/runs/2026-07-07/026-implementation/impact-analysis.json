@@ -1,0 +1,21 @@
+{
+  "touched_files": [
+    {"path": "engine/wal/record.go", "change": "add RecordSplitCommit type, SplitCommitEntry/SplitCommitPayload, Encode/Decode, NewSplitCommitRecord, AsSplitCommit"},
+    {"path": "engine/wal/recovery.go", "change": "add RecordSplitCommit to isValidRecordType switch"},
+    {"path": "engine/wal/record_test.go", "change": "add SplitCommit round-trip + type-mismatch subtests"},
+    {"path": "engine/graph/edge_append.go", "change": "add dir field to EdgeAppender, add AppendEdgeIfAbsent for idempotent replay"},
+    {"path": "engine/split/execute.go", "change": "add atomicCommitHook test hook, ExecuteSplitAtomic, appendSplitGraphEdges helper, RecoverSplitCommits"},
+    {"path": "engine/split/execute_test.go", "change": "add TestSplitAtomicCommit with crash-injection subtests + helpers"}
+  ],
+  "downstream_consumers": [
+    "engine/split (Orchestrator.AdmitWrite reads catalog Status; unaffected signature-wise)",
+    "engine/catalog (RecoverFromWAL unaffected; new record type skipped by its switch already via existing skip-unowned convention)",
+    "engine/graph (ReadAll used internally by AppendEdgeIfAbsent; no external API removed)"
+  ],
+  "not_touched": [
+    "engine/btree (SaveRoot / WAL-replay gap explicitly out of scope, pre-existing)",
+    "GitHub issue #12 (not closed by this agent per invariant; verification/closeout is a later step)"
+  ],
+  "risk_level": "high",
+  "risk_rationale": "Capstone atomic-commit path for the entire split feature; correctness bugs here can corrupt catalog/btree/graph consistency. Mitigated via crash-point test coverage and idempotent replay design."
+}

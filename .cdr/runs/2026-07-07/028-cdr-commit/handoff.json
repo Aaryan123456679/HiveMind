@@ -1,0 +1,19 @@
+{
+  "run_id": "2026-07-07-028-cdr-commit",
+  "subtask": "2b.3.6",
+  "issue": 12,
+  "commit_sha": "be6523d571a6efec25387067ab73267377058d89",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_run": ".cdr/runs/2026-07-07/027-verification/verification.json",
+  "implementation_run": ".cdr/runs/2026-07-07/026-implementation/",
+  "commit_docs_written": [
+    ".cdr/commits/task-2b.3.6.md",
+    ".cdr/commits/task-2b.3-issue-12.md"
+  ],
+  "indexes_updated": [
+    ".cdr/index/task.jsonl (added task-2b.3.6 and aggregate task-2b.3 entries)",
+    ".cdr/memory/pending.md (narrowed-not-eliminated update to abandoned-SPLITTING item; resolved the engine/graph crash-recovery-replay item; added cosmetic doc-comment cleanup item; added crash-injection-replay-fidelity item)"
+  ],
+  "issue_12_state": "closable, not closed -- all 6 subtasks (2b.3.1-2b.3.6) verified locally; push and gh issue close deferred pending explicit user authorization, same pattern as issue #11",
+  "git_local_commit": "see git log -1 after this run; NOT pushed"
+}

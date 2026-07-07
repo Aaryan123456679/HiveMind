@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "027-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "2b.3.6",
+  "git_head": "be6523d571a6efec25387067ab73267377058d89",
+  "run_key": "verify-2b.3.6-be6523d-issue12-final",
+  "status": "completed",
+  "last_completed_step": "regression_suites_and_verdict_written",
+  "started_at": "2026-07-07T16:00:00+05:30",
+  "ended_at": "2026-07-07T16:10:30+05:30"
+}

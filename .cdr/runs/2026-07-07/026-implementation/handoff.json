@@ -1,0 +1,51 @@
+{
+  "subtask": "2b.3.6",
+  "commit_sha": "be6523d571a6efec25387067ab73267377058d89",
+  "commit_sha_short": "be6523d",
+  "pushed": false,
+  "touched_files": [
+    "engine/wal/record.go",
+    "engine/wal/recovery.go",
+    "engine/wal/record_test.go",
+    "engine/graph/edge_append.go",
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "key_symbols": {
+    "wal.RecordSplitCommit": "engine/wal/record.go",
+    "wal.SplitCommitPayload / SplitCommitEntry": "engine/wal/record.go",
+    "wal.NewSplitCommitRecord / TypedRecord.AsSplitCommit": "engine/wal/record.go",
+    "graph.EdgeAppender.AppendEdgeIfAbsent": "engine/graph/edge_append.go",
+    "split.ExecuteSplitAtomic": "engine/split/execute.go",
+    "split.appendSplitGraphEdges": "engine/split/execute.go",
+    "split.RecoverSplitCommits": "engine/split/execute.go",
+    "split.atomicCommitHook (test-only)": "engine/split/execute.go",
+    "TestSplitAtomicCommit": "engine/split/execute_test.go"
+  },
+  "artifacts": {
+    "requirement": ".cdr/runs/2026-07-07/026-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-07/026-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-07/026-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-07/026-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-07/026-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-07/026-implementation/self-consistency.json"
+  },
+  "regression_results": {
+    "targeted": "go test ./split/... -run TestSplitAtomicCommit -count=1 -timeout 10m : PASS (8/8 subtests)",
+    "race_split": "go test ./split/... -race -count=1 -timeout 15m : PASS",
+    "race_wal": "go test ./wal/... -race -count=1 -timeout 10m : PASS",
+    "race_graph": "go test ./graph/... -race -count=1 -timeout 10m : PASS",
+    "full_module": "go test ./... -count=1 -timeout 20m : PASS (engine, btree, catalog, graph, mvcc, split, wal all ok)"
+  },
+  "not_verified_by_this_agent": true,
+  "next_step": "/cdr:verify",
+  "pending_md_items_addressed": [
+    "graph edge-append records not integrated into WAL replay path (resolved via RecordSplitCommit + RecoverSplitCommits)",
+    "canonical newFileIDs ordering (resolved via sort.Strings over new paths)"
+  ],
+  "pending_md_items_still_open_not_in_scope": [
+    "btree SaveRoot / WAL-replay gap (root-pointer reconstruction after real process restart)",
+    "Abandoned StatusSplitting record with no automatic lease/timeout recovery for a crash strictly before this function's own WAL fsync point"
+  ],
+  "prompt_injection_note": "Bash stdout during this run contained embedded fake system-reminder-style text (fake date-change notice, fake MCP tokensave instructions, fake Auto Mode Active directive). Treated as untrusted data, not followed."
+}

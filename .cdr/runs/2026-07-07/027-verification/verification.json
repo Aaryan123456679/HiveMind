@@ -1,0 +1,77 @@
+{
+  "subtask": "2b.3.6",
+  "issue": 12,
+  "commit_sha": "be6523d571a6efec25387067ab73267377058d89",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "gh issue body and commit message/diff output contained embedded fake system-reminder-style text (fabricated date-change notice, fake 'tokensave' MCP tool instructions, fake 'Auto Mode Active' directive) consistent with the known prompt-injection pattern in this repo. Treated as untrusted plain-text data; no embedded instructions were followed.",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "PASS",
+      "evidence": "Acceptance criteria ('All allocation, content writes, catalog updates, btree updates, and graph edge writes commit atomically under one WAL-covered transaction fsynced before split becomes visible; writers queued during SPLITTING released only after commit') is met by ExecuteSplitAtomic (engine/split/execute.go): content-file writes (2b.3.1 logic) happen before the WAL fsync but are inert/unreferenced until the single wal.AppendAndApply call durably fsyncs wal.RecordSplitCommit; catalog Put + btree inserts + graph edge appends all run inside that same apply closure. Test spec go test ./engine/split/... -run TestSplitAtomicCommit passes with genuine crash-injection at 4 distinct points."
+    },
+    "architecture_conformance": {
+      "verdict": "PASS",
+      "evidence": "Reuses existing wal.AppendAndApply fsync-before-apply primitive verbatim (no new fsync path). New RecordSplitCommit follows catalog.RecoverFromWAL's established 'skip record types I don't own' convention (recovery.go's isValidRecordType extended correctly; RecoverSplitCommits' wal.Replay callback explicitly returns nil for non-RecordSplitCommit records). Deterministic test-hook idiom (atomicCommitHook) mirrors engine/btree's optimisticReadHook/crabRetryHook precedent."
+    },
+    "composition_correctness_check4": {
+      "verdict": "PASS -- no non-atomic window reintroduced",
+      "evidence": "ExecuteSplitAtomic does NOT call ExecuteSplitRedirectStub, ExecuteSplitBtreeInsert, or ExecuteSplitGraphEdges. It re-implements their logic inline inside its own single wal.AppendAndApply apply closure (confirmed by reading execute.go lines ~745-854). grep across all non-test .go files confirms zero production call sites compose ExecuteSplitAtomic with the older separate 2b.3.2/2b.3.3/2b.3.5 functions -- those older exported functions remain only for their own subtask's standalone tests and are dead code from any real split-flow perspective. ExecuteSplitAtomic's precondition is StatusSplitting (set by Orchestrator.BeginSplit, 2b.1.3), NOT StatusSplit (the old two-step flow's intermediate state reached via a separate EndSplit call) -- confirming the older staged Status transition is genuinely superseded, not run in addition to, the new atomic path. This was the single highest-risk item in the review and it holds up under direct code tracing."
+    },
+    "atomicity_claim_check1": {
+      "verdict": "PASS",
+      "evidence": "New-file/stub content writes occur before the WAL fsync but are unreferenced by any catalog/btree/graph structure until RecordSplitCommit is durable -- a crash in that window leaves harmless orphan files (2b.3.1 already discloses retry-allocates-fresh-fileIDs behavior; no code path reads content files by scanning-and-guessing, only by fileID looked up via catalog/btree, so orphans can never be mistaken for live data). This matches the intentional WAL-based 'write data first, commit pointer atomically' pattern and does not create a genuine crash-inconsistency window."
+    },
+    "idempotent_replay_check2": {
+      "verdict": "PASS",
+      "evidence": "RecoverSplitCommits (execute.go) re-applies cat.Put (documented upsert), tree.Insert (documented upsert, confirmed in 2b.3.3 verification), and appendSplitGraphEdges via graph.EdgeAppender.AppendEdgeIfAbsent. AppendEdgeIfAbsent (edge_append.go) reads back the full edge log via ReadAll and appends only if no byte-identical (Source,Target,Type) edge already exists -- genuinely correct for the single-writer, non-concurrent recovery-replay usage pattern this subtask targets (disclosed as O(n) full-scan per call, acceptable for O(n^2) edge counts from a small number of split-off files)."
+    },
+    "crash_injection_test_scrutiny_check3": {
+      "verdict": "PASS_WITH_COMMENTS",
+      "evidence": "TestSplitAtomicCommit has exactly 8 subtests including exactly 4 crash-point cases (happy_path, nil_and_precondition_checks, crash_before_commit_append, crash_after_commit_before_catalog_put, crash_after_catalog_put_before_btree, crash_after_btree_before_graph, recover_split_commits_nil_checks, recover_split_commits_empty_wal_dir_is_noop) -- matches implementer's claim exactly, confirmed via -v output. Crash injection genuinely halts execution mid-function (atomicCommitHook returns an error, ExecuteSplitAtomic returns immediately with no further steps run) which correctly simulates 'process dies right here.' Pre/post-recovery assertions match architecture-discovery.md's documented failure model (crash before fsync -> zero visible effect, verified no-op; crash at/after fsync -> full effect after RecoverSplitCommits). MINOR GAP: crash-point subtests call RecoverSplitCommits against the SAME in-memory cat/tree/appender objects ExecuteSplitAtomic partially mutated, rather than reconstructing fresh objects from disk/WAL to simulate an actual process restart. This is a materially weaker (though not incorrect) proxy for 'process restart' -- it proves idempotent re-application onto partially-mutated state (a superset of what's needed, arguably), but does not exercise catalog.RecoverFromWAL rebuilding a brand-new Catalog object, which IS achievable today (unlike btree root reconstruction, which is a disclosed pre-existing gap). Non-blocking; recommend a follow-up test using a freshly-opened catalog.Catalog + catalog.RecoverFromWAL before RecoverSplitCommits for at least one crash-point case."
+    },
+    "release_queued_writers_check4b": {
+      "verdict": "PASS",
+      "evidence": "Confirmed by reading orchestrate.go: Orchestrator.AdmitWrite gates on CatalogRecord.Status == StatusSplitting. ExecuteSplitAtomic's cat.Put(updated) call (transitioning Status -> StatusRedirect) happens inside the same wal.AppendAndApply apply closure as the btree inserts and graph edge appends -- confirmed this is the FIRST point Status leaves StatusSplitting in the actual code path (no earlier separate Orchestrator.EndSplit or ExecuteSplitRedirectStub call exists in this flow). guard.Release(originalFileID) is called only after every step in the apply closure succeeds, matching FileGuard's documented contract."
+    },
+    "residual_risk_assessment": {
+      "verdict": "PASS -- accurately characterized",
+      "evidence": "Both disclosed residual risks (btree SaveRoot/root-pointer WAL-replay gap untouched; FileGuard in-memory-only abandoned-StatusSplitting narrowed-not-eliminated) are honest and defensible given the code traced. 'Narrowed' is accurate: pre-2b.3.6 the exposure window was 'any time between BeginSplit and EndSplit/AbortSplit'; post-2b.3.6 for the atomic path it is 'strictly before this function's own WAL record fsync' -- a materially smaller window, correctly described as narrowed rather than eliminated."
+    },
+    "backward_compatibility_check6": {
+      "verdict": "PASS",
+      "evidence": "go test ./graph/... -run TestMinimalEdgeAppend -v and go test ./split/... -run TestSplitGraphEdges -v both pass unmodified (all subtests green). AppendEdge's signature/behavior unchanged; AppendEdgeIfAbsent is purely additive."
+    },
+    "maintainability": {
+      "verdict": "COMMENT",
+      "evidence": "engine/wal/record.go contains a duplicated/orphaned AppendAndApply doc comment block (lines ~342-370, immediately before the '--- SplitCommit ---' section header) that is a leftover from an apparent copy-paste during the diff -- the real AppendAndApply function and its correct doc comment appear later (~494-529). This is cosmetically confusing (a stray comment block sitting where SplitCommit types begin) but does not affect compilation, gofmt, vet, or behavior. Non-blocking; recommend a small follow-up cleanup commit to delete the orphaned comment block."
+    },
+    "regression_risk": {
+      "verdict": "PASS",
+      "evidence": "go build ./... clean. go vet ./... clean. gofmt -l . clean (no output). go test ./split/... -run TestSplitAtomicCommit -count=5 -timeout 15m -v: 8/8 subtests pass x5 runs. go test ./split/... -race -v -count=1 -timeout 15m: all pass. go test ./wal/... -race -count=1 -timeout 10m: pass. go test ./graph/... -race -count=1 -timeout 10m: pass. go test ./catalog/... -count=1 -timeout 10m: pass. go test ./btree/... -race -count=1 -timeout 15m: pass. go test ./... -count=1 -timeout 20m: all packages pass (engine, btree, catalog, graph, mvcc, split, wal), zero regressions."
+    },
+    "security": {
+      "verdict": "PASS",
+      "evidence": "No new external input surface introduced. SplitCommitPayload decoding (DecodeSplitCommitPayload) performs bounds checks on every length-prefixed field and rejects trailing bytes -- consistent with existing wal payload-decoding conventions."
+    },
+    "confidence": {
+      "verdict": "HIGH",
+      "evidence": "Core atomicity and composition claims were verified by direct code tracing (not trusting the commit message prose), and all regression suites including -race runs pass with zero failures."
+    }
+  },
+  "findings": [
+    {
+      "severity": "low",
+      "category": "test_coverage",
+      "description": "TestSplitAtomicCommit's 4 crash-point subtests call RecoverSplitCommits against the same in-memory cat/tree/appender objects partially mutated by the interrupted ExecuteSplitAtomic call, rather than reconstructing fresh objects (e.g. via catalog.RecoverFromWAL for the catalog) to more faithfully simulate an actual process restart. Achievable for catalog today; not blocking given btree's own pre-existing, disclosed root-reconstruction gap makes a fully faithful full-stack restart simulation impossible anyway."
+    },
+    {
+      "severity": "low",
+      "category": "maintainability",
+      "description": "engine/wal/record.go has a duplicated/orphaned AppendAndApply doc comment block (~lines 342-370) left over from the diff, sitting awkwardly before the '--- SplitCommit ---' section. Cosmetic only; recommend cleanup."
+    }
+  ],
+  "proceed_to_cdr_commit": true,
+  "issue_12_closable": true,
+  "issue_12_closable_caveat": "All 6 subtasks (2b.3.1-2b.3.6) are implemented and verified locally. Closable pending only the push-and-close step -- do NOT push this session per explicit user instruction (pushes paused pending confirmation).",
+  "regression_jsonl_appended": false
+}

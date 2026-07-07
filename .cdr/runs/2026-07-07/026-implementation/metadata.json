@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "026-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "2b.3.6",
+  "git_head": "6a045b634cf5b2baaa993faf2488c1520c86dc35",
+  "run_key": "sha256(macro=cdr:implement,version=1,subtask=2b.3.6,head=6a045b6,inputs=execute.go+record.go+edge_append.go)",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-07T10:29:00Z",
+  "ended_at": "2026-07-07T11:20:00Z"
+}

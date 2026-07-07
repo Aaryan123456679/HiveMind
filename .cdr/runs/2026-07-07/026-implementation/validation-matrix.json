@@ -1,0 +1,25 @@
+{
+  "requirements": [
+    {"id": "atomic-commit", "desc": "entire split committed as single WAL-covered fsynced txn", "test": "TestSplitAtomicCommit/happy_path_commits_atomically_and_releases_guard", "status": "covered"},
+    {"id": "release-writers-on-commit", "desc": "StatusSplitting->StatusRedirect happens in same atomic apply, not before", "test": "TestSplitAtomicCommit/happy_path_commits_atomically_and_releases_guard + crash-point Status assertions", "status": "covered"},
+    {"id": "crash-before-fsync", "desc": "crash before WAL append leaves no visible effect", "test": "TestSplitAtomicCommit/crash_before_commit_append_no_visible_effect", "status": "covered"},
+    {"id": "crash-after-fsync-before-catalog", "desc": "recovery reaches full state", "test": "TestSplitAtomicCommit/crash_after_commit_before_catalog_put_recovers_fully", "status": "covered"},
+    {"id": "crash-after-catalog-before-btree", "desc": "recovery reaches full state", "test": "TestSplitAtomicCommit/crash_after_catalog_put_before_btree_recovers_fully", "status": "covered"},
+    {"id": "crash-after-btree-before-graph", "desc": "recovery reaches full state, idempotent graph replay", "test": "TestSplitAtomicCommit/crash_after_btree_before_graph_recovers_fully", "status": "covered"},
+    {"id": "idempotent-replay", "desc": "calling RecoverSplitCommits twice doesn't duplicate edges", "test": "double-recovery edge-count assertion inside crashPointTest", "status": "covered"},
+    {"id": "nil-precondition-guards", "desc": "all pointer args + empty oldPath + wrong Status rejected", "test": "TestSplitAtomicCommit/nil_and_precondition_checks", "status": "covered"},
+    {"id": "recover-nil-guards", "desc": "RecoverSplitCommits nil-checks + empty-dir no-op", "test": "TestSplitAtomicCommit/recover_split_commits_nil_checks, recover_split_commits_empty_wal_dir_is_noop", "status": "covered"},
+    {"id": "canonical-ordering", "desc": "newFileIDs derived via sort.Strings over new paths", "test": "implicit in happy_path assertions of RedirectTargetIDs ordering", "status": "covered"},
+    {"id": "no-regressions", "desc": "zero regressions across engine module", "test": "go test ./... -count=1 -timeout 20m (all ok)", "status": "covered"}
+  ],
+  "build_checks": {
+    "go_build": "pass",
+    "go_vet": "pass",
+    "gofmt_l": "clean (no output)",
+    "targeted_test": "PASS (8/8 subtests)",
+    "race_split": "pass",
+    "race_wal": "pass",
+    "race_graph": "pass",
+    "full_module": "pass (engine, btree, catalog, graph, mvcc, split, wal all ok; loadtest/rpc no test files)"
+  }
+}
