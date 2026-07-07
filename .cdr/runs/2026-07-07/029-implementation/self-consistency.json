@@ -1,0 +1,13 @@
+{
+  "build": "go build ./... -> clean",
+  "vet": "go vet ./... -> clean",
+  "gofmt": "gofmt -l . -> no output (clean)",
+  "subtask_test_spec": "go test ./split/... -race -run TestSectionIndexInvalidation -> PASS",
+  "additional_targeted_tests": [
+    "go test ./catalog/... -race -run 'ReadPartial|InvalidatesHeaderCache' -> PASS (TestReadPartialComputesHeaderOffsets, TestReadPartialNotFound, TestAppendInvalidatesHeaderCache)"
+  ],
+  "race_suites": "go test ./catalog/... ./split/... -race -count=1 -timeout 20m -> ok (both packages)",
+  "full_suite": "go test ./... -count=1 -timeout 20m -> ok for engine, engine/btree, engine/catalog, engine/graph, engine/mvcc, engine/split, engine/wal; no test files in engine/loadtest, engine/rpc",
+  "validation_matrix_coverage": "AC1, AC2, TESTSPEC, NOREGRESSION all covered per validation-matrix.json",
+  "note": "self-consistency only (build/vet/fmt/tests green + matrix covered); this is NOT verification (delegated to /cdr:verify per invariant I4)"
+}

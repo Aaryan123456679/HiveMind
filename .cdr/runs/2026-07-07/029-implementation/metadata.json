@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "029-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "2b.4.1 (issue #13): invalidate markdown header-offset cache atomically within the same split/append transaction",
+  "git_head": "be6523d571a6efec25387067ab73267377058d89",
+  "run_key": "issue13-subtask2b.4.1-be6523d5",
+  "status": "in_progress",
+  "last_completed_step": "none",
+  "started_at": "2026-07-07T00:00:00Z",
+  "ended_at": null
+}

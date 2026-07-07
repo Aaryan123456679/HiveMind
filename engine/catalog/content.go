@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
@@ -81,6 +82,100 @@ type ContentStore struct {
 	// contending on each other's stripe, preserving this repo's "unrelated files
 	// never contend on the same lock" design goal.
 	stripes [numStripes]sync.Mutex
+
+	// headerCacheMu guards headerCache. It is a SINGLE dedicated mutex, deliberately
+	// NOT keyed/striped by fileID like cs.stripes: headerCache is one plain Go map
+	// shared across every fileID, and Go maps are never safe for concurrent access
+	// regardless of whether two callers happen to touch different keys, so a single
+	// lock protecting the whole map is required (striping by fileID would let two
+	// different fileIDs landing in different stripes race on the same map object).
+	// Kept as its own lock instance, independent from cs.stripes, specifically so it
+	// can be taken from WITHIN an already-held cs.stripes[stripe] critical section
+	// (as Append does) without risking a non-reentrant sync.Mutex deadlock — see the
+	// ContentStore doc comment's existing discussion of the analogous cs.stripes vs.
+	// cs.cat.stripes separation for the same underlying reason.
+	headerCacheMu sync.Mutex
+
+	// headerCache is an in-memory, per-fileID cache of ReadPartial's computed
+	// markdown header-offset index (see HeaderOffset), populated lazily on first
+	// ReadPartial call and evicted by InvalidateHeaderCache whenever a transaction
+	// changes that fileID's content boundaries (Append, or a split's redirect-stub
+	// rewrite). A missing entry simply means "not cached yet" — ReadPartial always
+	// recomputes from current on-disk content on a miss, so this cache can never
+	// itself be a source of a wrong answer, only of an avoidable recompute. See
+	// docs/LLD/catalog.md's and docs/LLD/split.md's "Section-index staleness" known
+	// risk, which this field and its invalidation call sites (in Append here, and in
+	// engine/split/execute.go's ExecuteSplitRedirectStub/ExecuteSplitAtomic) resolve.
+	headerCache map[uint64][]HeaderOffset
+}
+
+// HeaderOffset represents one markdown ATX header line (one to six leading '#'
+// characters followed by whitespace or end-of-line, per the CommonMark ATX heading
+// rule this repo's minimal parser implements) found in a topic file's content,
+// paired with its byte offset within that content. ReadPartial returns a fileID's
+// full set of HeaderOffsets, in the order they appear in the content, so a caller
+// can resolve a "read starting at this header" request to a byte offset without
+// re-scanning the whole file.
+type HeaderOffset struct {
+	// Header is the header line's text, including its leading '#' markers, with
+	// trailing whitespace/newline trimmed (e.g. "## Some Section").
+	Header string
+	// Offset is the byte offset, within the content ReadPartial computed this
+	// HeaderOffset from, of the header line's very first character.
+	Offset int
+}
+
+// computeHeaderOffsets scans content line-by-line and returns one HeaderOffset per
+// ATX markdown header line found (a line whose first non-header characters are one
+// to six '#' runes immediately followed by whitespace or end-of-line), in the order
+// the lines appear in content. It performs no caching itself; ReadPartial is the
+// only caller and owns the cache.
+func computeHeaderOffsets(content []byte) []HeaderOffset {
+	var headers []HeaderOffset
+
+	lineStart := 0
+	for lineStart <= len(content) {
+		lineEnd := lineStart
+		for lineEnd < len(content) && content[lineEnd] != '\n' {
+			lineEnd++
+		}
+		line := content[lineStart:lineEnd]
+
+		if isATXHeaderLine(line) {
+			headers = append(headers, HeaderOffset{
+				Header: strings.TrimRight(string(line), " \t\r"),
+				Offset: lineStart,
+			})
+		}
+
+		if lineEnd >= len(content) {
+			break
+		}
+		lineStart = lineEnd + 1
+	}
+
+	return headers
+}
+
+// isATXHeaderLine reports whether line (with no trailing newline) is an ATX
+// markdown header line: one to six '#' characters, then either end-of-line or a
+// whitespace character. Leading whitespace before the '#' run is NOT stripped
+// (matching the simplest possible reading of "header line" for this cache; a more
+// permissive CommonMark-compliant parser, e.g. tolerating up to three leading
+// spaces, is left to whichever future subtask needs it — see the doc comment on
+// HeaderOffset).
+func isATXHeaderLine(line []byte) bool {
+	i := 0
+	for i < len(line) && line[i] == '#' {
+		i++
+	}
+	if i == 0 || i > 6 {
+		return false
+	}
+	if i == len(line) {
+		return true
+	}
+	return line[i] == ' ' || line[i] == '\t'
 }
 
 // OpenContentStore creates (if necessary) a "content" directory under root and returns a
@@ -100,7 +195,13 @@ func OpenContentStore(root string, cat *Catalog, w *wal.Writer) (*ContentStore, 
 		return nil, fmt.Errorf("catalog: OpenContentStore: creating content dir %s: %w", dir, err)
 	}
 
-	return &ContentStore{dir: dir, cat: cat, w: w, splitThresholdBytes: defaultSplitThresholdBytes}, nil
+	return &ContentStore{
+		dir:                 dir,
+		cat:                 cat,
+		w:                   w,
+		splitThresholdBytes: defaultSplitThresholdBytes,
+		headerCache:         make(map[uint64][]HeaderOffset),
+	}, nil
 }
 
 // ContentPath returns the on-disk path of fileID's (single, pre-MVCC) content file:
@@ -273,6 +374,15 @@ func (cs *ContentStore) Append(fileID uint64, data []byte) (bool, error) {
 			return fmt.Errorf("committing catalog record for fileID %d: %w", fileID, err)
 		}
 
+		// Invalidate fileID's cached header-offset index (if any) as part of this
+		// same apply step, so no subsequent ReadPartial call can observe a cache
+		// entry computed against the content this Append just replaced. Safe to
+		// call while still holding cs.stripes[stripe] above: InvalidateHeaderCache
+		// only ever takes cs.headerCacheMu, a separate lock instance — see the
+		// ContentStore doc comment on headerCacheMu for why that can never deadlock
+		// here. See docs/LLD/catalog.md's "Section-index staleness" known risk.
+		cs.InvalidateHeaderCache(fileID)
+
 		return nil
 	}); err != nil {
 		return false, fmt.Errorf("catalog: content append: %w", err)
@@ -280,6 +390,98 @@ func (cs *ContentStore) Append(fileID uint64, data []byte) (bool, error) {
 
 	thresholdCrossed := oldSize <= cs.splitThresholdBytes && newSize > cs.splitThresholdBytes
 	return thresholdCrossed, nil
+}
+
+// InvalidateHeaderCache evicts fileID's cached markdown header-offset index (see
+// HeaderOffset and ReadPartial), if one is currently cached. It is a no-op if
+// fileID has no cached entry. Safe to call from any lock context, including from
+// another package (e.g. engine/split/execute.go's split-commit apply closures) or
+// from within an already-held cs.stripes[stripe] critical section (e.g. Append,
+// above): InvalidateHeaderCache only ever takes cs.headerCacheMu, never
+// cs.stripes, so it cannot deadlock against either caller.
+//
+// This is the mechanism by which "any transaction that changes file boundaries
+// (split or append) invalidates the affected file's header-offset cache in the
+// same atomic transaction" (issue #13, subtask 2b.4.1) is satisfied: every
+// call site that durably changes a fileID's content (Append here; and
+// ExecuteSplitRedirectStub/ExecuteSplitAtomic in engine/split/execute.go) calls
+// this from within its own WAL-covered apply closure, so the eviction only takes
+// effect if and when that transaction actually commits.
+func (cs *ContentStore) InvalidateHeaderCache(fileID uint64) {
+	cs.headerCacheMu.Lock()
+	delete(cs.headerCache, fileID)
+	cs.headerCacheMu.Unlock()
+}
+
+// ReadPartial returns fileID's markdown header-offset index: one HeaderOffset per
+// ATX header line found in fileID's CURRENT content, in the order the headers
+// appear. It resolves fileID through the catalog first, exactly like Read (a
+// fileID with no catalog record is reported as a wrapped ErrNotFound), then
+// serves from cs.headerCache if a valid (i.e. not since invalidated) entry
+// exists, computing and caching it on a miss.
+//
+// Concurrency: ReadPartial takes cs.stripes[stripeFor(fileID)] for its own
+// critical section — the SAME per-fileID lock Append's read-modify-write section
+// takes — so a ReadPartial call can never interleave with a concurrent Append (or
+// a split's redirect-stub rewrite, which also takes this stripe implicitly via
+// its own InvalidateHeaderCache call happening inside that transaction's own,
+// separately-serialized apply closure... see the note below) for the SAME
+// fileID. In practice this means: any ReadPartial call that starts after a
+// content-changing transaction for fileID has returned is guaranteed to observe
+// that transaction's invalidation and recompute from the new content, never a
+// stale cache entry — the exact guarantee issue #13's acceptance criteria
+// requires ("ReadPartial never serves offsets against stale content").
+//
+// Note on split: engine/split/execute.go's ExecuteSplitRedirectStub and
+// ExecuteSplitAtomic do NOT take cs.stripes for originalFileID at all (they call
+// the self-locking, cs.stripes-independent InvalidateHeaderCache instead, and
+// otherwise serialize their own critical section via FileGuard/Orchestrator, a
+// different mechanism entirely from cs.stripes). A ReadPartial call that races a
+// split's redirect-stub content write itself (i.e. calls os.ReadFile on
+// cs.ContentPath(originalFileID) at some arbitrary point during the split's
+// non-atomic content-write phase) could in principle observe partially-written
+// content if it landed mid-write — but writeNewContentFile's temp-file+rename
+// technique (the same one cs.writeContentFile uses) makes any single os.ReadFile
+// always observe either the fully-old or fully-new content, never a torn file,
+// so this is not a correctness gap for ReadPartial's cache: whichever
+// consistent snapshot it reads and caches is a valid answer for SOME instant in
+// time, and the next InvalidateHeaderCache call (from the split's own apply
+// closure, once its WAL commit has durably applied) still correctly evicts it.
+func (cs *ContentStore) ReadPartial(fileID uint64) ([]HeaderOffset, error) {
+	stripe := stripeFor(fileID)
+	cs.stripes[stripe].Lock()
+	defer cs.stripes[stripe].Unlock()
+
+	if _, err := cs.cat.Get(fileID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, fmt.Errorf("catalog: content read partial: %w: fileID %d", ErrNotFound, fileID)
+		}
+		return nil, fmt.Errorf("catalog: content read partial: looking up fileID %d: %w", fileID, err)
+	}
+
+	cs.headerCacheMu.Lock()
+	if cached, ok := cs.headerCache[fileID]; ok {
+		cs.headerCacheMu.Unlock()
+		result := make([]HeaderOffset, len(cached))
+		copy(result, cached)
+		return result, nil
+	}
+	cs.headerCacheMu.Unlock()
+
+	content, err := os.ReadFile(cs.ContentPath(fileID))
+	if err != nil {
+		return nil, fmt.Errorf("catalog: content read partial: reading content file for fileID %d: %w", fileID, err)
+	}
+
+	computed := computeHeaderOffsets(content)
+
+	cs.headerCacheMu.Lock()
+	cs.headerCache[fileID] = computed
+	cs.headerCacheMu.Unlock()
+
+	result := make([]HeaderOffset, len(computed))
+	copy(result, computed)
+	return result, nil
 }
 
 // writeContentFile durably writes data to fileID's content path. It writes to a temporary

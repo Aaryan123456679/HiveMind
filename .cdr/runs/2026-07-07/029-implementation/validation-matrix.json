@@ -1,0 +1,24 @@
+{
+  "requirements": [
+    {
+      "id": "AC1",
+      "text": "Any transaction that changes file boundaries (split or append) invalidates the affected file's header-offset cache in the same atomic transaction",
+      "covered_by": ["TestAppendInvalidatesHeaderCache", "TestSectionIndexInvalidation"]
+    },
+    {
+      "id": "AC2",
+      "text": "ReadPartial never serves offsets against stale content",
+      "covered_by": ["TestAppendInvalidatesHeaderCache", "TestSectionIndexInvalidation", "TestReadPartialComputesHeaderOffsets"]
+    },
+    {
+      "id": "TESTSPEC",
+      "text": "go test ./engine/split/... -race -run TestSectionIndexInvalidation: perform a split, then immediately issue a ReadPartial-style offset read against the old and new files, assert offsets reflect post-split content only",
+      "covered_by": ["TestSectionIndexInvalidation"]
+    },
+    {
+      "id": "NOREGRESSION",
+      "text": "No regressions to existing ContentStore/split/execute behavior",
+      "covered_by": ["full engine module go test suite"]
+    }
+  ]
+}

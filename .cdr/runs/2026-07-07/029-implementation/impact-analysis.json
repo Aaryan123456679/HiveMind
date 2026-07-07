@@ -1,0 +1,25 @@
+{
+  "subtask": "2b.4.1",
+  "issue": 13,
+  "files_to_change": [
+    {
+      "path": "engine/catalog/content.go",
+      "change": "Add HeaderOffset type, ContentStore.headerCache/headerCacheMu fields, computeHeaderOffsets helper, ReadPartial method, InvalidateHeaderCache exported method; call invalidation from Append's existing WAL apply closure."
+    },
+    {
+      "path": "engine/split/execute.go",
+      "change": "Call cs.InvalidateHeaderCache(originalFileID) inside ExecuteSplitRedirectStub's and ExecuteSplitAtomic's WAL apply closures, immediately after cat.Put succeeds."
+    }
+  ],
+  "new_test_files": [
+    "engine/catalog/content_test.go (extend, new cases for ReadPartial + Append invalidation)",
+    "engine/split/execute_test.go (extend, new TestSectionIndexInvalidation)"
+  ],
+  "downstream_consumers": [],
+  "risk": "Low-medium: new code path, no existing callers of ReadPartial to break. Main risk is lock ordering/deadlock between cs.stripes and the new headerCacheMu -- mitigated by using a dedicated, non-reentrant-conflicting mutex and never taking cs.stripes from within split/execute.go.",
+  "backward_compat": "Additive only: new exported type (HeaderOffset), two new exported methods (ReadPartial, InvalidateHeaderCache) on ContentStore. No existing signatures changed.",
+  "cross_references": [
+    "docs/LLD/catalog.md Known risks: Section-index staleness",
+    "docs/LLD/split.md Known risks: Section-index staleness"
+  ]
+}

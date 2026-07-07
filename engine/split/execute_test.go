@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -1122,4 +1123,125 @@ func TestSplitAtomicCommit(t *testing.T) {
 			t.Errorf("rec.Status = %v, want catalog.StatusSplitting (unchanged)", rec.Status)
 		}
 	})
+}
+
+// TestSectionIndexInvalidation is issue #13's subtask 2b.4.1 literal test spec: perform
+// a split (via ExecuteSplitAtomic, the production commit path), then immediately issue
+// a ReadPartial-style offset read against the old (now redirect-stub) fileID and each
+// new fileID, asserting the returned header offsets reflect post-split content only --
+// never a cache entry computed against the pre-split original content.
+func TestSectionIndexInvalidation(t *testing.T) {
+	const oldPath = "old/topic.md"
+
+	idAlloc, cs, cat, w := newTestContentStoreDepsWithWAL(t)
+	tree := newTestBtree(t)
+	appender := newTestEdgeAppenderTracked(t)
+
+	// Allocate originalFileID via idAlloc.Next() (not a hardcoded constant), matching
+	// TestSplitAtomicCommit's own established convention: this guarantees the new
+	// fileIDs ExecuteSplitAtomic allocates below can never collide with originalFileID.
+	originalFileID, err := idAlloc.Next()
+	if err != nil {
+		t.Fatalf("idAlloc.Next() (originalFileID): %v", err)
+	}
+
+	guard := NewFileGuard()
+	if !guard.TryAcquire(originalFileID) {
+		t.Fatalf("guard.TryAcquire: expected success")
+	}
+
+	part1 := []byte("# Part1 Header\nbody1\n") // 22 bytes
+	part2 := []byte("# Part2 Header\nbody2\n") // 22 bytes
+	originalContent := append(append([]byte{}, part1...), part2...)
+
+	rec := catalog.CatalogRecord{
+		FileID:    originalFileID,
+		Status:    catalog.StatusSplitting,
+		SizeBytes: uint64(len(originalContent)),
+	}
+	if _, err := cs.Create(rec, originalContent); err != nil {
+		t.Fatalf("cs.Create(original): %v", err)
+	}
+
+	// Populate the cache against the PRE-split original content, so this test actually
+	// exercises invalidation (not just "the cache happened to never be populated").
+	preSplit, err := cs.ReadPartial(originalFileID)
+	if err != nil {
+		t.Fatalf("ReadPartial (pre-split): %v", err)
+	}
+	wantPreSplit := []catalog.HeaderOffset{
+		{Header: "# Part1 Header", Offset: 0},
+		{Header: "# Part2 Header", Offset: len(part1)},
+	}
+	if !reflect.DeepEqual(preSplit, wantPreSplit) {
+		t.Fatalf("ReadPartial (pre-split) = %+v, want %+v", preSplit, wantPreSplit)
+	}
+
+	plan := SplitPlan{
+		Files: []SplitFileProposal{
+			{NewPath: "new/part-1.md", SectionRanges: []SectionRange{{Start: 0, End: len(part1)}}},
+			{NewPath: "new/part-2.md", SectionRanges: []SectionRange{{Start: len(part1), End: len(originalContent)}}},
+		},
+		RedirectSummary: "split into new/part-1.md and new/part-2.md",
+	}
+
+	updated, err := ExecuteSplitAtomic(idAlloc, cat, cs, tree, appender, w, guard, oldPath, originalFileID, originalContent, plan)
+	if err != nil {
+		t.Fatalf("ExecuteSplitAtomic: %v", err)
+	}
+	if len(updated.RedirectTargetIDs) != 2 {
+		t.Fatalf("updated.RedirectTargetIDs = %v, want 2 entries", updated.RedirectTargetIDs)
+	}
+
+	// ExecuteSplitAtomic returns the new fileIDs in updated.RedirectTargetIDs, in the
+	// same order as plan.Files (see ExecuteSplitRedirectStub's canonical-ordering
+	// contract) -- use that directly rather than re-deriving via tree.Lookup.
+	if len(updated.RedirectTargetIDs) != 2 {
+		t.Fatalf("len(updated.RedirectTargetIDs) = %d, want 2", len(updated.RedirectTargetIDs))
+	}
+	newFileID1 := updated.RedirectTargetIDs[0]
+	newFileID2 := updated.RedirectTargetIDs[1]
+
+	// ExecuteSplitAtomic deliberately does not create a CatalogRecord for either new
+	// fileID (see ExecuteSplitAllocateAndWrite's doc comment: catalog visibility for
+	// new fileIDs is a separate, not-yet-landed concern, pre-existing and out of scope
+	// for issue #13). ReadPartial, like Read, resolves fileID through the catalog
+	// first -- put minimal StatusActive records here purely so this test can exercise
+	// ReadPartial's cache-correctness behavior for the new fileIDs' actual on-disk
+	// content, independent of that separate, already-tracked gap.
+	if err := cat.Put(catalog.CatalogRecord{FileID: newFileID1, Status: catalog.StatusActive, SizeBytes: uint64(len(part1))}); err != nil {
+		t.Fatalf("cat.Put(newFileID1): %v", err)
+	}
+	if err := cat.Put(catalog.CatalogRecord{FileID: newFileID2, Status: catalog.StatusActive, SizeBytes: uint64(len(part2))}); err != nil {
+		t.Fatalf("cat.Put(newFileID2): %v", err)
+	}
+
+	// The old fileID's content is now the redirect stub, which contains no ATX header
+	// lines at all -- ReadPartial must reflect that, not the pre-split cache entry
+	// populated above.
+	postSplitOld, err := cs.ReadPartial(originalFileID)
+	if err != nil {
+		t.Fatalf("ReadPartial (old fileID, post-split): %v", err)
+	}
+	if len(postSplitOld) != 0 {
+		t.Fatalf("ReadPartial (old fileID, post-split) = %+v, want empty (redirect-stub content has no ATX headers; stale pre-split cache was not invalidated)", postSplitOld)
+	}
+
+	postSplitNew1, err := cs.ReadPartial(newFileID1)
+	if err != nil {
+		t.Fatalf("ReadPartial (new fileID 1): %v", err)
+	}
+	wantNew1 := []catalog.HeaderOffset{{Header: "# Part1 Header", Offset: 0}}
+	if !reflect.DeepEqual(postSplitNew1, wantNew1) {
+		t.Fatalf("ReadPartial (new fileID 1) = %+v, want %+v", postSplitNew1, wantNew1)
+	}
+
+	postSplitNew2, err := cs.ReadPartial(newFileID2)
+	if err != nil {
+		t.Fatalf("ReadPartial (new fileID 2): %v", err)
+	}
+	wantNew2 := []catalog.HeaderOffset{{Header: "# Part2 Header", Offset: 0}}
+	if !reflect.DeepEqual(postSplitNew2, wantNew2) {
+		t.Fatalf("ReadPartial (new fileID 2) = %+v, want %+v", postSplitNew2, wantNew2)
+	}
 }

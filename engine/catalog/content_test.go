@@ -490,3 +490,84 @@ func TestContentDurabilityRestart(t *testing.T) {
 		t.Fatalf("gen2 Read (after restart) = %q, want %q (byte-for-byte match with pre-restart content)", gotAfterRestart, want)
 	}
 }
+
+// TestReadPartialComputesHeaderOffsets covers issue #13's subtask 2b.4.1: ReadPartial
+// scans a fileID's content for ATX markdown headers and returns their byte offsets, in
+// order, computing it lazily on first call.
+func TestReadPartialComputesHeaderOffsets(t *testing.T) {
+	cs, _, _ := newTestContentStore(t)
+
+	const fileID = uint64(7)
+	content := []byte("intro text\n# Title\nbody\n## Sub\nmore body\n")
+	rec := testContentRecord(fileID)
+	rec.SizeBytes = uint64(len(content))
+	if _, err := cs.Create(rec, content); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := cs.ReadPartial(fileID)
+	if err != nil {
+		t.Fatalf("ReadPartial: %v", err)
+	}
+
+	want := []HeaderOffset{
+		{Header: "# Title", Offset: 11},
+		{Header: "## Sub", Offset: 24},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReadPartial = %+v, want %+v", got, want)
+	}
+}
+
+// TestReadPartialNotFound confirms ReadPartial reports a wrapped ErrNotFound for a
+// fileID that was never created, mirroring Read's and Append's behavior.
+func TestReadPartialNotFound(t *testing.T) {
+	cs, _, _ := newTestContentStore(t)
+
+	if _, err := cs.ReadPartial(999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ReadPartial(unknown fileID): err = %v, want wrapped ErrNotFound", err)
+	}
+}
+
+// TestAppendInvalidatesHeaderCache covers issue #13's subtask 2b.4.1's core acceptance
+// criteria: Append (a transaction that changes file boundaries) invalidates fileID's
+// header-offset cache atomically, so a ReadPartial call after Append never serves
+// offsets computed against the pre-Append content.
+func TestAppendInvalidatesHeaderCache(t *testing.T) {
+	cs, _, _ := newTestContentStore(t)
+
+	const fileID = uint64(42)
+	initial := []byte("# First\nbody\n")
+	rec := testContentRecord(fileID)
+	rec.SizeBytes = uint64(len(initial))
+	if _, err := cs.Create(rec, initial); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Populate the cache against the pre-Append content.
+	before, err := cs.ReadPartial(fileID)
+	if err != nil {
+		t.Fatalf("ReadPartial (before Append): %v", err)
+	}
+	wantBefore := []HeaderOffset{{Header: "# First", Offset: 0}}
+	if !reflect.DeepEqual(before, wantBefore) {
+		t.Fatalf("ReadPartial (before Append) = %+v, want %+v", before, wantBefore)
+	}
+
+	appended := []byte("## Second\nmore\n")
+	if _, err := cs.Append(fileID, appended); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	after, err := cs.ReadPartial(fileID)
+	if err != nil {
+		t.Fatalf("ReadPartial (after Append): %v", err)
+	}
+	wantAfter := []HeaderOffset{
+		{Header: "# First", Offset: 0},
+		{Header: "## Second", Offset: len(initial)},
+	}
+	if !reflect.DeepEqual(after, wantAfter) {
+		t.Fatalf("ReadPartial (after Append) = %+v, want %+v (stale cache from before Append was not invalidated)", after, wantAfter)
+	}
+}

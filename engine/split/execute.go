@@ -328,6 +328,14 @@ func ExecuteSplitRedirectStub(
 		if err := cat.Put(updated); err != nil {
 			return fmt.Errorf("committing catalog record fileID %d: %w", originalFileID, err)
 		}
+
+		// Invalidate originalFileID's cached header-offset index (see issue #13's
+		// subtask 2b.4.1): this stub rewrite just changed its content, so any
+		// cache entry computed against the pre-stub content must not survive
+		// past this commit. Called from inside the apply closure so eviction
+		// only takes effect once this transaction has actually committed.
+		cs.InvalidateHeaderCache(originalFileID)
+
 		return nil
 	}); err != nil {
 		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: redirect stub: %w", err)
@@ -820,6 +828,15 @@ func ExecuteSplitAtomic(
 		if err := cat.Put(updated); err != nil {
 			return fmt.Errorf("committing catalog record fileID %d: %w", originalFileID, err)
 		}
+
+		// Invalidate originalFileID's cached header-offset index (see issue #13's
+		// subtask 2b.4.1) in this same apply step, immediately alongside the
+		// catalog Status transition it pairs with: the redirect-stub content
+		// (already written to disk above, before this WAL commit) is what any
+		// subsequent ReadPartial(originalFileID) call must observe, never a
+		// pre-split cache entry. Newly allocated fileIDs never had a cache entry,
+		// so no invalidation is needed for them.
+		cs.InvalidateHeaderCache(originalFileID)
 
 		if err := runAtomicCommitHook("after_catalog_put_before_btree"); err != nil {
 			return err
