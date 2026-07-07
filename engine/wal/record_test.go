@@ -134,8 +134,8 @@ func TestRecordEncodeDecodeRoundTrip(t *testing.T) {
 			OldPath:              "/topics/original.md",
 			EncodedCatalogRecord: []byte{9, 8, 7, 6, 5},
 			Entries: []SplitCommitEntry{
-				{NewPath: "/topics/part-1.md", FileID: 2},
-				{NewPath: "/topics/part-2.md", FileID: 3},
+				{NewPath: "/topics/part-1.md", FileID: 2, SizeBytes: 100},
+				{NewPath: "/topics/part-2.md", FileID: 3, SizeBytes: 250},
 			},
 		}
 		rec := NewSplitCommitRecord(want)

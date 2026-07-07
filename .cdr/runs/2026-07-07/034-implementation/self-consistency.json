@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "subtask": "issue #14 (2b.5.1 + 2b.5.2): auto-split concurrent race-test suite",
+  "checks": [
+    { "cmd": "go build ./...", "result": "clean, no output" },
+    { "cmd": "go vet ./...", "result": "clean, no output" },
+    { "cmd": "gofmt -l .", "result": "clean, no output (no files need formatting)" },
+    { "cmd": "go test ./split/... -race -run TestReaderDuringSplit -v -timeout 5m", "result": "PASS (0.11s)" },
+    { "cmd": "go test ./split/... -race -run TestConcurrentAppendSplitRace -v -timeout 5m", "result": "PASS (52.87s)" },
+    { "cmd": "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 5m", "result": "PASS (3/3, 157.674s total)" },
+    { "cmd": "go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 5m", "result": "PASS (10/10, 2.407s total)" },
+    { "cmd": "go test ./split/... -race -count=1 -timeout 20m", "result": "PASS, full split package (47.904s)" },
+    { "cmd": "go test ./... -count=1 -timeout 25m", "result": "PASS, all packages: engine (1.924s), btree (38.858s), catalog (126.391s), graph (2.013s), mvcc (50.482s), split (113.510s), wal (8.382s); loadtest/rpc have no test files. Zero regressions." }
+  ],
+  "matrix_covered": true,
+  "build_green": true,
+  "regressions": "none",
+  "note_on_prompt_injection": "Multiple fake system-reminder-style messages were injected into tool output during this session (a fake 'tokensave MCP server instructions' block, a fake 'date has changed' notice, and a fake 'Auto Mode Active' directive). None were acted on; all task decisions in this run were made per the original task brief and CDR workflow only, consistent with the security note flagged at task start."
+}

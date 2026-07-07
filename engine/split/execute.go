@@ -804,12 +804,25 @@ func ExecuteSplitAtomic(
 	}
 	sort.Strings(newPaths)
 
+	// newPathSizes gives each new path's content length (in bytes), needed
+	// below both to populate wal.SplitCommitEntry.SizeBytes (so
+	// RecoverSplitCommits can reconstruct a fresh catalog.CatalogRecord for
+	// each new fileID without re-reading its content file) and to build that
+	// same live-path CatalogRecord directly. Recomputed here via
+	// extractSections rather than threading a return value out of
+	// ExecuteSplitAllocateAndWrite (2b.3.1's already-verified signature),
+	// which already computed the identical byte ranges once internally.
+	newPathSizes := make(map[string]uint64, len(plan.Files))
+	for _, proposal := range plan.Files {
+		newPathSizes[proposal.NewPath] = uint64(len(extractSections(originalContent, proposal.SectionRanges)))
+	}
+
 	newFileIDs := make([]uint64, len(newPaths))
 	entries := make([]wal.SplitCommitEntry, len(newPaths))
 	for i, newPath := range newPaths {
 		fileID := newFileIDsByPath[newPath]
 		newFileIDs[i] = fileID
-		entries[i] = wal.SplitCommitEntry{NewPath: newPath, FileID: fileID}
+		entries[i] = wal.SplitCommitEntry{NewPath: newPath, FileID: fileID, SizeBytes: newPathSizes[newPath]}
 	}
 
 	// Write the redirect stub at the old path (2b.3.2's stub-content logic).
@@ -881,6 +894,31 @@ func ExecuteSplitAtomic(
 		}
 		if err := cat.Put(updated); err != nil {
 			return fmt.Errorf("committing catalog record fileID %d: %w", originalFileID, err)
+		}
+
+		// BUGFIX (issue #14 / 2b.5's concurrent race-test implementation):
+		// every new fileID produced by this split needs its OWN
+		// catalog.CatalogRecord -- without one, cat.Get(newFileID) returns
+		// ErrNotFound forever, and since catalog.ContentStore.Read/Append both
+		// resolve fileID through the catalog first, every split-off file
+		// becomes permanently unreadable/unappendable even though its content
+		// file, B+Tree entry, and graph edges all exist. Status is
+		// StatusActive: these are ordinary, immediately-usable files, not
+		// stubs. This is part of the SAME WAL-covered apply closure as
+		// originalFileID's own cat.Put above, so it shares its atomicity and
+		// crash-durability; RecoverSplitCommits below mirrors this exact loop
+		// for the replay path, using entry.SizeBytes (see
+		// wal.SplitCommitEntry's doc comment).
+		for _, entry := range entries {
+			newRec := catalog.CatalogRecord{
+				FileID:         entry.FileID,
+				CurrentVersion: 0,
+				SizeBytes:      entry.SizeBytes,
+				Status:         catalog.StatusActive,
+			}
+			if err := cat.Put(newRec); err != nil {
+				return fmt.Errorf("committing catalog record for new fileID %d (%q): %w", entry.FileID, entry.NewPath, err)
+			}
 		}
 
 		// Test-only checkpoint (issue #13's 2b.4.1 fix cycle,
@@ -1054,6 +1092,22 @@ func RecoverSplitCommits(walDir string, cat *catalog.Catalog, tree *btree.Tree, 
 
 		newFileIDs := make([]uint64, 0, len(payload.Entries))
 		for _, entry := range payload.Entries {
+			// Mirrors ExecuteSplitAtomic's own new-fileID catalog.CatalogRecord
+			// creation (see its doc comment, "BUGFIX (issue #14 / 2b.5's
+			// concurrent race-test implementation)"): replay must produce the
+			// identical end state as the live path, so a crash-interrupted split
+			// resumed via RecoverSplitCommits does not leave new fileIDs
+			// catalog-orphaned either. cat.Put is a documented upsert, so this is
+			// safe to re-run on every replay of an already-applied record.
+			newRec := catalog.CatalogRecord{
+				FileID:         entry.FileID,
+				CurrentVersion: 0,
+				SizeBytes:      entry.SizeBytes,
+				Status:         catalog.StatusActive,
+			}
+			if err := cat.Put(newRec); err != nil {
+				return fmt.Errorf("replaying catalog Put for new fileID %d (%q): %w", entry.FileID, entry.NewPath, err)
+			}
 			if err := tree.Insert(entry.NewPath, entry.FileID); err != nil {
 				return fmt.Errorf("replaying B+Tree insert for %q (fileID %d): %w", entry.NewPath, entry.FileID, err)
 			}

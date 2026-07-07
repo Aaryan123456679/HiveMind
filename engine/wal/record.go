@@ -369,13 +369,25 @@ func (t TypedRecord) AsBTreeDelete() (BTreeDeletePayload, error) {
 //     also roll back or ignore the WAL record.
 // --- SplitCommit ---
 
-// SplitCommitEntry is one (NewPath, FileID) pair produced by an auto-split,
-// carried inside a SplitCommitPayload so that recovery can redo the B+Tree
-// insert (and, deterministically re-derive the graph edges) for that new
-// file without needing any other durable source of truth.
+// SplitCommitEntry is one (NewPath, FileID, SizeBytes) triple produced by an
+// auto-split, carried inside a SplitCommitPayload so that recovery can redo
+// the B+Tree insert (and, deterministically re-derive the graph edges) for
+// that new file, AND reconstruct a fresh catalog.CatalogRecord for it (see
+// engine/split/execute.go's ExecuteSplitAtomic/RecoverSplitCommits, which
+// both now cat.Put a StatusActive record per entry using SizeBytes) —
+// without needing any other durable source of truth.
+//
+// SizeBytes was added as a fix during issue #14's (2b.5) concurrent
+// race-test implementation: prior to this field's existence, a completed
+// split never created ANY catalog.CatalogRecord for its new fileIDs, making
+// every split-off file permanently unreadable/unappendable via
+// catalog.ContentStore.Read/Append (both require cat.Get to succeed first).
+// See .cdr/runs/2026-07-07/034-implementation/architecture-discovery.md for
+// the full writeup.
 type SplitCommitEntry struct {
-	NewPath string
-	FileID  uint64
+	NewPath   string
+	FileID    uint64
+	SizeBytes uint64
 }
 
 // SplitCommitPayload is the payload of a RecordSplitCommit record: everything
@@ -416,6 +428,9 @@ func (p SplitCommitPayload) Encode() []byte {
 		var fidBuf [8]byte
 		binary.LittleEndian.PutUint64(fidBuf[:], e.FileID)
 		buf = append(buf, fidBuf[:]...)
+		var sizeBuf [8]byte
+		binary.LittleEndian.PutUint64(sizeBuf[:], e.SizeBytes)
+		buf = append(buf, sizeBuf[:]...)
 	}
 	return buf
 }
@@ -458,7 +473,12 @@ func DecodeSplitCommitPayload(data []byte) (SplitCommitPayload, error) {
 		}
 		fileID := binary.LittleEndian.Uint64(data[off:])
 		off += 8
-		entries = append(entries, SplitCommitEntry{NewPath: string(pathBytes), FileID: fileID})
+		if off+8 > len(data) {
+			return SplitCommitPayload{}, fmt.Errorf("wal: SplitCommitPayload truncated Entries[%d].SizeBytes at offset %d", i, off)
+		}
+		sizeBytes := binary.LittleEndian.Uint64(data[off:])
+		off += 8
+		entries = append(entries, SplitCommitEntry{NewPath: string(pathBytes), FileID: fileID, SizeBytes: sizeBytes})
 	}
 
 	if off != len(data) {

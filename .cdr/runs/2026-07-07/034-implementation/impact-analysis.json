@@ -1,0 +1,41 @@
+{
+  "subtask": "issue #14 (2b.5.1 + 2b.5.2)",
+  "new_files": [
+    "engine/split/split_race_test.go"
+  ],
+  "modified_files": [
+    {
+      "path": "engine/wal/record.go",
+      "change": "Add SizeBytes uint64 to SplitCommitEntry; extend Encode/Decode for the new field.",
+      "reason": "bugfix: SplitCommitEntry had no way to carry new-file size for catalog-record reconstruction"
+    },
+    {
+      "path": "engine/wal/record_test.go",
+      "change": "Extend SplitCommit round-trip subtest to cover SizeBytes.",
+      "reason": "regression coverage for wire-format change"
+    },
+    {
+      "path": "engine/split/execute.go",
+      "change": "ExecuteSplitAtomic: compute per-new-path content length and cat.Put a fresh CatalogRecord (Status=StatusActive) for every new fileID inside the same WAL-covered apply closure. RecoverSplitCommits: mirror the same cat.Put loop from payload.Entries on replay.",
+      "reason": "bugfix: new fileIDs produced by a split had no catalog.CatalogRecord at all, making them permanently unreadable/unappendable via ContentStore.Read/Append (both require cat.Get to succeed first)"
+    },
+    {
+      "path": "engine/split/execute_test.go",
+      "change": "assertFullSplitApplied: add assertion that cat.Get(newFileID) succeeds with Status=StatusActive and expected SizeBytes.",
+      "reason": "regression coverage for the bugfix, exercised by both TestSplitAtomicCommit's live-path and its 4 crash-injection/recovery subtests"
+    }
+  ],
+  "dependency_graph_touched": [
+    "engine/wal (SplitCommitEntry wire format)",
+    "engine/split (execute.go: ExecuteSplitAtomic, RecoverSplitCommits)",
+    "engine/catalog (ContentStore.Append/Read/LockFileContent, Catalog.Get/Put -- consumed, not modified)",
+    "engine/graph (EdgeAppender.AppendEdgeIfAbsent, ReadAll -- consumed, not modified)",
+    "engine/btree (Tree.Insert/Lookup -- consumed, not modified)"
+  ],
+  "backward_compatibility": "SplitCommitEntry field addition is append-only in the wire format (new 8 bytes appended per entry after existing FileID field); no existing on-disk WAL records from prior runs need to be read back in this dev-only pre-release repo (no persisted state carried across commits in test/CI). No public API signatures change (ExecuteSplitAtomic, RecoverSplitCommits keep identical signatures).",
+  "risk": "Fix touches the already-verified issue #12 capstone (2b.3.6) and issue #13 (2b.4.1) commit paths; must re-run full split/wal/catalog test suites, not just the new race test, to confirm zero regression.",
+  "out_of_scope_explicitly_not_done": [
+    "Wiring engine/split.Trigger into catalog.ContentStore.Append (pre-existing, disclosed, deliberately deferred gap; not required by issue #14's acceptance criteria, which the test harness works around per architecture-discovery.md)",
+    "PathHash population for new catalog records (left 0, matching this repo's existing convention of not actively computing PathHash outside of explicit test fixtures)"
+  ]
+}

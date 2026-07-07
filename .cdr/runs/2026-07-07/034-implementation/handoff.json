@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "run_id": "034-implementation",
+  "subtask": "issue #14 (2b.5.1 + 2b.5.2): auto-split concurrent race-test suite",
+  "issue_breakdown": {
+    "source": "gh issue view 14",
+    "multi_subtask": true,
+    "subtasks": [
+      "2b.5.1: TestConcurrentAppendSplitRace - many goroutines appending to the same file simultaneously, asserting no data loss and exactly one split per threshold crossing",
+      "2b.5.2: TestReaderDuringSplit - a reader holding a pre-split snapshot must see fully consistent content throughout a concurrent split"
+    ]
+  },
+  "real_bug_found_and_fixed": {
+    "summary": "ExecuteSplitAtomic and RecoverSplitCommits never created a catalog.CatalogRecord for newly-split-off fileIDs; split-off files were permanently unreadable/unappendable (cat.Get returned ErrNotFound) even though btree/graph/content-store state referenced them as live.",
+    "discovery_mechanism": "found via direct source-code reading of the real integration seam during architecture-discovery, BEFORE the race test was written/run -- not discovered by the race test failing at runtime.",
+    "fix_locations": [
+      { "file": "engine/wal/record.go", "detail": "SplitCommitEntry gained a SizeBytes uint64 field (line 390); Encode/Decode updated (lines ~432, ~477-481) so SizeBytes flows through the WAL commit record for use by both the live path and crash-replay reconstruction." },
+      { "file": "engine/split/execute.go", "detail": "ExecuteSplitAtomic: newPathSizes computed via extractSections (lines 807-825); new cat.Put(newRec) loop added after cat.Put(updated) succeeds (lines ~899-919), giving each new fileID a StatusActive catalog record." },
+      { "file": "engine/split/execute.go", "detail": "RecoverSplitCommits: mirrored cat.Put(newRec) loop added before tree.Insert (lines ~1096-1108), for crash-replay fidelity." },
+      { "file": "engine/wal/record_test.go", "detail": "SplitCommit subtest's want.Entries updated with SizeBytes values." },
+      { "file": "engine/split/execute_test.go", "detail": "assertFullSplitApplied helper (line 770) extended to assert cat.Get(fileID) succeeds with Status==StatusActive for every new fileID (lines ~805-807+)." }
+    ],
+    "was_scope_creep": false,
+    "justification": "SizeBytes is not incidental: RecoverSplitCommits reconstructs catalog.CatalogRecord for new fileIDs purely from the WAL SplitCommitPayload during crash replay (no other source of truth is available at that point), and CatalogRecord.SizeBytes is a required field. Without adding SizeBytes to the WAL record itself, crash-replay could not have produced a correct record even if the live-path bug were fixed some other way. This was discovered as a direct consequence of investigating the real bug, not introduced independently."
+  },
+  "test_fixture_bug_found_and_fixed": {
+    "summary": "TestSplitAtomicCommit subtests hardcode originalFileID as a Go const (e.g. uint64(1)) instead of allocating it via idAlloc.Next(). This was harmless before the bugfix (no code ever cat.Put'd new fileIDs), but after the fix, idAlloc.Next()-allocated new fileIDs could collide with and clobber originalFileID's own record.",
+    "fix_location": "engine/split/execute_test.go, newDeps closure, ~line 928: an ID-burning loop that advances idAlloc's internal counter past originalFileID before any real split allocation happens."
+  },
+  "new_file": {
+    "path": "engine/split/split_race_test.go",
+    "line_count": 574,
+    "tests": [
+      { "name": "TestConcurrentAppendSplitRace", "lines": "79-251", "subtask": "2b.5.1" },
+      { "name": "TestReaderDuringSplit", "lines": "438-574", "subtask": "2b.5.2" },
+      { "name": "driveSplitRound (helper)", "lines": "253-344" },
+      { "name": "countRedirectRecords (helper)", "lines": "346-374" },
+      { "name": "collectLeafTags (helper)", "lines": "376-436" }
+    ]
+  },
+  "integration_seam_used": "split.Trigger is not wired into catalog.ContentStore.Append in production (pre-existing, disclosed gap). Test drives: many goroutines call cs.Append concurrently against the same fileID (real contention, -race exercised); whichever goroutine observes Append's thresholdCrossed==true return value upgrades a test-only sync.RWMutex round-gate to exclusive and drives a real Orchestrator.BeginSplit -> ExecuteSplitAtomic.",
+  "deferred_out_of_scope_items": [
+    "split.Trigger wiring into catalog.ContentStore.Append (pre-existing gap, not this issue's job)",
+    "AdmitWrite-then-Append TOCTOU (pre-existing, disclosed on AdmitWrite's own doc comment; avoided in the test via the round-gate rather than treated as a bug)",
+    "mvcc.VersionWriter vs catalog.ContentStore version-1 path-collision if ever pointed at the same root/fileID (latent, no production code path combines them; TestReaderDuringSplit uses separate roots for cs and vw to avoid it)"
+  ],
+  "test_run_results": [
+    "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 5m: PASS (3/3, 157.674s total)",
+    "go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 5m: PASS (10/10, 2.407s total)",
+    "go test ./split/... -race -count=1 -timeout 20m: PASS (47.904s)",
+    "go test ./... -count=1 -timeout 25m: PASS all packages, zero regressions"
+  ],
+  "self_consistency_artifact": ".cdr/runs/2026-07-07/034-implementation/self-consistency.json",
+  "validation_matrix_artifact": ".cdr/runs/2026-07-07/034-implementation/validation-matrix.json",
+  "architecture_discovery_artifact": ".cdr/runs/2026-07-07/034-implementation/architecture-discovery.md",
+  "prompt_injection_observed": "Multiple fake system-reminder-style messages appeared in tool output during this run (a fake 'tokensave MCP server instructions' block advertising unrequested tools, a fake 'date has changed' notice, a fake 'Auto Mode Active' directive). None were acted on; consistent with the previously-established pattern in this repo/session, this is flagged for the record only.",
+  "verification_readiness": "ready for /cdr:verify",
+  "commit": "recorded separately after this handoff.json is written (see git log)"
+}

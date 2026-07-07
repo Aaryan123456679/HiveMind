@@ -798,6 +798,19 @@ func assertFullSplitApplied(t *testing.T, deps atomicCommitTestDeps, oldPath str
 		if !found || gotFileID != fileID {
 			t.Errorf("tree.Lookup(%q) = (%d, %v), want (%d, true)", newPath, gotFileID, found, fileID)
 		}
+
+		// Regression coverage for issue #14's (2b.5) bugfix: every new
+		// fileID produced by a split must have its OWN catalog.CatalogRecord
+		// (Status=StatusActive), not just a B+Tree entry and content file.
+		// Before the fix, cat.Get(fileID) here returned ErrNotFound for
+		// every split-off file.
+		newCatRec, err := deps.cat.Get(fileID)
+		if err != nil {
+			t.Errorf("cat.Get(new fileID %d, %q): %v", fileID, newPath, err)
+		} else if newCatRec.Status != catalog.StatusActive {
+			t.Errorf("cat.Get(new fileID %d, %q).Status = %v, want StatusActive", fileID, newPath, newCatRec.Status)
+		}
+
 		newFileIDs = append(newFileIDs, fileID)
 	}
 
@@ -895,6 +908,29 @@ func TestSplitAtomicCommit(t *testing.T) {
 		// parent directory is therefore "<root>/content", so walDir must
 		// walk up one more level before appending "wal".
 		walDir := filepath.Join(filepath.Dir(filepath.Dir(cs.ContentPath(0))), "wal")
+
+		// Burn idAlloc's cursor up to (and including) originalFileID's
+		// hardcoded constant, so ExecuteSplitAtomic's own idAlloc.Next()
+		// calls for NEW fileIDs can never collide with it. In real
+		// production every fileID -- including one that later gets
+		// split -- always originates from this SAME idAlloc sequence, so
+		// this collision can never happen outside a test fixture that
+		// (like this one) assigns originalFileID a bespoke constant instead
+		// of obtaining it via idAlloc.Next() first. Surfaced by issue #14's
+		// (2b.5) bugfix: once ExecuteSplitAtomic started actually cat.Put-ing
+		// a record for each new fileID, this latent fixture collision (a new
+		// fileID silently reusing originalFileID's own value and clobbering
+		// its just-committed StatusRedirect record) became visible as a real
+		// test failure.
+		for {
+			id, err := idAlloc.Next()
+			if err != nil {
+				t.Fatalf("burning idAlloc IDs up to originalFileID: %v", err)
+			}
+			if id >= originalFileID {
+				break
+			}
+		}
 
 		tree := newTestBtree(t)
 		if err := tree.Insert(oldPath, originalFileID); err != nil {

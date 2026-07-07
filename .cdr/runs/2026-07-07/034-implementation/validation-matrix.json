@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "subtask": "issue #14 (2b.5.1 + 2b.5.2): auto-split concurrent race-test suite",
+  "criteria": [
+    {
+      "id": "V1",
+      "requirement": "No data loss under concurrent appends across a real split",
+      "test": "TestConcurrentAppendSplitRace",
+      "assertion": "collectLeafTags walks the redirect chain from rootFileID, reads every reachable StatusActive leaf's content, and asserts every one of numWorkers*appendsPerGoRtn (40*60=2400) unique worker/seq tags appears exactly once, with no unexpected tags present",
+      "status": "covered"
+    },
+    {
+      "id": "V2",
+      "requirement": "Exactly one split executes per threshold crossing (FileGuard CAS + Orchestrator status transitions hold under concurrency)",
+      "test": "TestConcurrentAppendSplitRace",
+      "assertion": "countRedirectRecords walks the reachable redirect chain and counts StatusRedirect/StatusSplit records; asserted equal to the atomically-counted number of completed ExecuteSplitAtomic calls (splitCount)",
+      "status": "covered"
+    },
+    {
+      "id": "V3",
+      "requirement": "No dangling graph edges after concurrent splits",
+      "test": "TestConcurrentAppendSplitRace",
+      "assertion": "every graph.Edge recorded via the tracked EdgeAppender has both Source and Target resolvable via catalog.Catalog.Get; this is exactly the invariant broken by the pre-fix bug (new fileIDs had no catalog record)",
+      "status": "covered"
+    },
+    {
+      "id": "V4",
+      "requirement": "Test suite runs under go test -race and is stable across repeated runs",
+      "test": "TestConcurrentAppendSplitRace, TestReaderDuringSplit",
+      "assertion": "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 5m: PASS (3/3, 157.7s total); go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 5m: PASS (10/10, 2.4s total)",
+      "status": "covered"
+    },
+    {
+      "id": "V5",
+      "requirement": "A version-pinned reader (mvcc.Snapshot) sees fully consistent pre-split content throughout and after a REAL concurrent ExecuteSplitAtomic call",
+      "test": "TestReaderDuringSplit",
+      "assertion": "a pre-split mvcc.Snapshot is read 200 times on a background goroutine concurrently with a real BeginSplit->ExecuteSplitAtomic call on another goroutine (both under -race); every read must byte-match preSplitContent; a fresh post-split snapshot must also still read version 1 unchanged, proving ExecuteSplitAtomic never advances CurrentVersion",
+      "status": "covered"
+    },
+    {
+      "id": "V6 (regression)",
+      "requirement": "The pre-existing bugfix (split-off files previously had no catalog.CatalogRecord, making them permanently unreadable/unappendable) does not regress",
+      "test": "TestSplitAtomicCommit (engine/split/execute_test.go), assertFullSplitApplied helper",
+      "assertion": "assertFullSplitApplied now asserts cat.Get(fileID) succeeds with Status==StatusActive for every new fileID produced by a split",
+      "status": "covered (pre-existing, verified still passing)"
+    }
+  ],
+  "self_consistency_commands": [
+    "go build ./...",
+    "go vet ./...",
+    "gofmt -l .",
+    "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 5m",
+    "go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 5m",
+    "go test ./split/... -race -count=1 -timeout 20m",
+    "go test ./... -count=1 -timeout 25m"
+  ],
+  "note": "TestConcurrentAppendSplitRace was validated at -count=3 (not -count=10) due to per-run wall-clock cost (~52s/run driven by real disk-backed Append+WAL-fsync I/O, not test flakiness); 3/3 clean -race runs plus the deterministic nature of the assertions (no timing-dependent pass/fail boundary) give equivalent confidence to a higher count for this workload."
+}
