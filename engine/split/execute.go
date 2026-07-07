@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
@@ -332,4 +333,87 @@ func ExecuteSplitRedirectStub(
 	}
 
 	return updated, nil
+}
+
+// ExecuteSplitBtreeInsert is subtask 2b.3.3's ("Insert new topic paths into
+// B+Tree; repoint old path's entry to redirect stub") execution primitive.
+// It consumes newPathFileIDs -- typically the map ExecuteSplitAllocateAndWrite
+// (2b.3.1) returned -- and, against the given *btree.Tree:
+//
+//  1. Inserts every (newPath, newFileID) pair from newPathFileIDs, so each new
+//     topic path resolves via btree.Tree.Lookup to its own new fileID.
+//  2. Repoints oldPath's B+Tree entry to originalFileID via an explicit
+//     tree.Insert(oldPath, originalFileID) call.
+//
+// See .cdr/runs/2026-07-07/019-implementation/architecture-discovery.md for
+// the full reasoning behind step 2. In short: btree.Tree.Insert (like the
+// free btree.Insert function it wraps) has upsert semantics -- inserting an
+// already-present key just updates its fileID in place, with no structural
+// change and no split possible. Because 2b.3.2 (ExecuteSplitRedirectStub)
+// REUSES originalFileID for the redirect-stub content (no new fileID is ever
+// allocated for the old path), oldPath's key->fileID mapping is, in the
+// strict sense, already correct with zero B+Tree mutation: oldPath already
+// maps to originalFileID, and originalFileID's CONTENT is what 2b.3.2 changed
+// (to the redirect stub), not its identity. The explicit repoint call here is
+// therefore a guaranteed-safe, single-field-write no-op when that invariant
+// already holds -- but it is included anyway so that this function is
+// self-contained and independently correct (idempotent insert-or-update)
+// rather than silently depending on some earlier, unrelated call having
+// already indexed oldPath in this tree. That matters because, as of this
+// subtask, no other code path in this repo populates a *btree.Tree for a
+// topic path at all (grepped the whole repo; the only path/fileID indexing
+// convention that exists anywhere today is btree.Tree's own API).
+//
+// Scope boundary: this function never touches engine/graph/ edges
+// (2b.3.4/2b.3.5's job) and adds no WAL/fsync transactional wrapping beyond
+// what btree.Tree's own node writes already durably provide individually
+// (cross-step atomicity spanning 2b.3.1/2b.3.2/2b.3.3/graph writes is
+// 2b.3.6's job).
+func ExecuteSplitBtreeInsert(
+	tree *btree.Tree,
+	oldPath string,
+	originalFileID uint64,
+	newPathFileIDs map[string]uint64,
+) error {
+	if tree == nil {
+		return fmt.Errorf("split: execute: btree insert: tree must not be nil")
+	}
+	if oldPath == "" {
+		return fmt.Errorf("split: execute: btree insert: oldPath must not be empty")
+	}
+	if len(newPathFileIDs) == 0 {
+		return fmt.Errorf("split: execute: btree insert: newPathFileIDs must not be empty")
+	}
+
+	// Iterate in a deterministic, sorted order rather than Go's randomized
+	// map iteration order, so any error returned (and the set of paths
+	// successfully inserted before a failure) is reproducible across runs.
+	newPaths := make([]string, 0, len(newPathFileIDs))
+	for newPath := range newPathFileIDs {
+		newPaths = append(newPaths, newPath)
+	}
+	sort.Strings(newPaths)
+
+	for _, newPath := range newPaths {
+		if newPath == "" {
+			return fmt.Errorf("split: execute: btree insert: newPathFileIDs contains an empty path")
+		}
+		if newPath == oldPath {
+			return fmt.Errorf("split: execute: btree insert: new path %q must not equal oldPath", newPath)
+		}
+
+		if err := tree.Insert(newPath, newPathFileIDs[newPath]); err != nil {
+			return fmt.Errorf("split: execute: btree insert: inserting new path %q (fileID %d): %w", newPath, newPathFileIDs[newPath], err)
+		}
+	}
+
+	// Repoint the old path's entry. See doc comment above: this is a
+	// guaranteed upsert no-op when oldPath already maps to originalFileID
+	// (the common case, since 2b.3.2 reuses the fileID), and idempotently
+	// establishes that mapping otherwise.
+	if err := tree.Insert(oldPath, originalFileID); err != nil {
+		return fmt.Errorf("split: execute: btree insert: repointing old path %q (fileID %d): %w", oldPath, originalFileID, err)
+	}
+
+	return nil
 }

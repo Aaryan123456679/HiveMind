@@ -1,0 +1,14 @@
+{
+  "subtask": "2b.3.3",
+  "rows": [
+    {"case": "new topic paths resolve to new fileIDs via tree.Lookup", "covered_by": "TestSplitBtreeRepoint/repoint"},
+    {"case": "old path still resolves via tree.Lookup, to originalFileID (unchanged)", "covered_by": "TestSplitBtreeRepoint/repoint"},
+    {"case": "composed with 2b.3.2: old path's resolved fileID's content is now the redirect stub", "covered_by": "TestSplitBtreeRepoint/repoint"},
+    {"case": "composed with 2b.3.1: new path's resolved fileID's content is the actual split-off section content", "covered_by": "TestSplitBtreeRepoint/repoint"},
+    {"case": "nil tree rejected", "covered_by": "TestSplitBtreeRepoint/nil_tree"},
+    {"case": "empty oldPath rejected", "covered_by": "TestSplitBtreeRepoint/empty_old_path"},
+    {"case": "empty/nil newPathFileIDs rejected", "covered_by": "TestSplitBtreeRepoint/empty_new_paths"},
+    {"case": "a newPath colliding with oldPath is rejected (defensive)", "covered_by": "TestSplitBtreeRepoint/new_path_equals_old_path"},
+    {"case": "no regression to 2b.3.1/2b.3.2/2b.1.x/2b.2.x", "covered_by": "full go test ./split/... -race -v -count=1"}
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "subtask": "2b.3.3",
+  "files_modified": [
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "files_read_only": [
+    "engine/btree/insert.go",
+    "engine/btree/lookup.go",
+    "engine/btree/node.go",
+    "engine/btree/persist.go",
+    "engine/catalog/record.go",
+    "engine/split/proposer_mock.go",
+    "engine/split/orchestrate_test.go"
+  ],
+  "new_exported_symbols": [
+    "ExecuteSplitBtreeInsert(tree *btree.Tree, oldPath string, originalFileID uint64, newPathFileIDs map[string]uint64) error"
+  ],
+  "new_import": "github.com/Aaryan123456679/HiveMind/engine/btree added to engine/split/execute.go and engine/split/execute_test.go",
+  "downstream_consumers": [
+    "2b.3.4/2b.3.5 (engine/graph edges) will compose with this function's post-condition but are NOT implemented here",
+    "2b.3.6 (atomic WAL wrapper) will wrap this function's call alongside 2b.3.1/2b.3.2's calls, not implemented here"
+  ],
+  "risk_areas": [
+    "Must not mutate btree package internals (out of scope per task instructions)",
+    "Must not touch engine/graph/ or add cross-step WAL wrapping",
+    "Must not create new files -- extend execute.go/execute_test.go only",
+    "Must not regress 2b.1.1-2b.1.3/2b.2.1-2b.2.2/2b.3.1/2b.3.2 tests"
+  ],
+  "excluded_files_confirmed_untouched": [
+    "engine/split/trigger.go",
+    "engine/split/guard.go",
+    "engine/split/proposer.go",
+    "engine/split/proposer_mock.go"
+  ]
+}

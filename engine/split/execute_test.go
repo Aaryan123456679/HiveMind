@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
@@ -399,4 +400,170 @@ func uint64SlicesEqual(a, b []uint64) bool {
 		}
 	}
 	return true
+}
+
+// newTestBtree opens a fresh, isolated (t.TempDir()) index file and wraps it
+// in a brand-new, empty *btree.Tree via the real production path
+// (btree.OpenIndexFile / btree.NewNodeStore / btree.NewNodeAllocator /
+// btree.NewTree), ready for ExecuteSplitBtreeInsert's tests (2b.3.3). The
+// initial root is passed as 0 (btree's reservedNodeID -- an empty tree),
+// matching the convention engine/btree's own tests use for a brand-new tree.
+func newTestBtree(t *testing.T) *btree.Tree {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "test.idx")
+	f, err := btree.OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("btree.OpenIndexFile: %v", err)
+	}
+	t.Cleanup(func() { f.Close() })
+
+	store := btree.NewNodeStore(f)
+	alloc, err := btree.NewNodeAllocator(store)
+	if err != nil {
+		t.Fatalf("btree.NewNodeAllocator: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := alloc.Close(); err != nil {
+			t.Errorf("NodeAllocator.Close: %v", err)
+		}
+	})
+
+	return btree.NewTree(store, alloc, 0)
+}
+
+func TestSplitBtreeRepoint(t *testing.T) {
+	const oldPath = "fixture-original.md"
+	const fallbackOriginalFileID = uint64(1)
+
+	t.Run("repoint", func(t *testing.T) {
+		idAlloc, cs, cat, w := newTestContentStoreDepsWithWAL(t)
+		tree := newTestBtree(t)
+
+		// Allocate originalFileID via idAlloc.Next() BEFORE allocating the
+		// new split-off fileIDs below, so originalFileID and the newly
+		// allocated fileIDs can never collide (idAlloc.Next() hands out a
+		// strictly increasing sequence starting at 1). This mirrors the
+		// realistic ordering: the original file's fileID was assigned long
+		// before any split ever runs.
+		originalFileID, err := idAlloc.Next()
+		if err != nil {
+			t.Fatalf("allocating originalFileID: %v", err)
+		}
+
+		// Simulate pre-split state: oldPath already resolves to
+		// originalFileID in the B+Tree, exactly as it would before any
+		// split ever ran (no code elsewhere in this repo populates this
+		// yet -- see architecture-discovery.md -- so the test seeds it
+		// directly).
+		if err := tree.Insert(oldPath, originalFileID); err != nil {
+			t.Fatalf("seeding oldPath in tree: %v", err)
+		}
+
+		putSplitRecord(t, cat, originalFileID, uint64(len(FixtureFileContent)))
+
+		newFileIDsByPath, err := ExecuteSplitAllocateAndWrite(idAlloc, cs, FixtureFileContent, FixtureSplitPlan)
+		if err != nil {
+			t.Fatalf("ExecuteSplitAllocateAndWrite: %v", err)
+		}
+
+		newFileIDs := make([]uint64, 0, len(newFileIDsByPath))
+		for _, proposal := range FixtureSplitPlan.Files {
+			newFileIDs = append(newFileIDs, newFileIDsByPath[proposal.NewPath])
+		}
+
+		if _, err := ExecuteSplitRedirectStub(cat, w, cs, originalFileID, newFileIDs); err != nil {
+			t.Fatalf("ExecuteSplitRedirectStub: %v", err)
+		}
+
+		if err := ExecuteSplitBtreeInsert(tree, oldPath, originalFileID, newFileIDsByPath); err != nil {
+			t.Fatalf("ExecuteSplitBtreeInsert: %v", err)
+		}
+
+		// Old path still resolves, unchanged, to originalFileID.
+		gotOldFileID, found, err := tree.Lookup(oldPath)
+		if err != nil {
+			t.Fatalf("tree.Lookup(oldPath): %v", err)
+		}
+		if !found {
+			t.Fatalf("tree.Lookup(oldPath): found = false, want true")
+		}
+		if gotOldFileID != originalFileID {
+			t.Errorf("tree.Lookup(oldPath) fileID = %d, want %d (originalFileID)", gotOldFileID, originalFileID)
+		}
+
+		// ...and that fileID's content is now the redirect stub (composing
+		// with 2b.3.2), not the original file content.
+		gotOldContent, err := os.ReadFile(cs.ContentPath(gotOldFileID))
+		if err != nil {
+			t.Fatalf("reading content at resolved old fileID: %v", err)
+		}
+		wantStub := buildRedirectStubContent(newFileIDs)
+		if !bytes.Equal(gotOldContent, wantStub) {
+			t.Errorf("content at resolved old fileID = %q, want redirect stub %q", gotOldContent, wantStub)
+		}
+
+		// Every new path resolves to its own new fileID, distinct from
+		// originalFileID and from each other, and its content is the actual
+		// split-off section content (composing with 2b.3.1).
+		seenNewFileIDs := make(map[uint64]bool, len(FixtureSplitPlan.Files))
+		for _, proposal := range FixtureSplitPlan.Files {
+			gotFileID, found, err := tree.Lookup(proposal.NewPath)
+			if err != nil {
+				t.Fatalf("tree.Lookup(%q): %v", proposal.NewPath, err)
+			}
+			if !found {
+				t.Fatalf("tree.Lookup(%q): found = false, want true", proposal.NewPath)
+			}
+			if gotFileID != newFileIDsByPath[proposal.NewPath] {
+				t.Errorf("tree.Lookup(%q) fileID = %d, want %d", proposal.NewPath, gotFileID, newFileIDsByPath[proposal.NewPath])
+			}
+			if gotFileID == originalFileID {
+				t.Errorf("tree.Lookup(%q) fileID = %d, must not equal originalFileID", proposal.NewPath, gotFileID)
+			}
+			if seenNewFileIDs[gotFileID] {
+				t.Errorf("fileID %d resolved for more than one new path", gotFileID)
+			}
+			seenNewFileIDs[gotFileID] = true
+
+			gotContent, err := os.ReadFile(cs.ContentPath(gotFileID))
+			if err != nil {
+				t.Fatalf("reading content at resolved new fileID for %q: %v", proposal.NewPath, err)
+			}
+			wantContent := extractSections(FixtureFileContent, proposal.SectionRanges)
+			if !bytes.Equal(gotContent, wantContent) {
+				t.Errorf("content at resolved new fileID for %q = %q, want %q", proposal.NewPath, gotContent, wantContent)
+			}
+		}
+	})
+
+	t.Run("nil_tree", func(t *testing.T) {
+		if err := ExecuteSplitBtreeInsert(nil, oldPath, fallbackOriginalFileID, map[string]uint64{"a.md": 2}); err == nil {
+			t.Fatal("expected error for nil tree, got nil")
+		}
+	})
+
+	t.Run("empty_old_path", func(t *testing.T) {
+		tree := newTestBtree(t)
+		if err := ExecuteSplitBtreeInsert(tree, "", fallbackOriginalFileID, map[string]uint64{"a.md": 2}); err == nil {
+			t.Fatal("expected error for empty oldPath, got nil")
+		}
+	})
+
+	t.Run("empty_new_paths", func(t *testing.T) {
+		tree := newTestBtree(t)
+		if err := ExecuteSplitBtreeInsert(tree, oldPath, fallbackOriginalFileID, nil); err == nil {
+			t.Fatal("expected error for nil newPathFileIDs, got nil")
+		}
+		if err := ExecuteSplitBtreeInsert(tree, oldPath, fallbackOriginalFileID, map[string]uint64{}); err == nil {
+			t.Fatal("expected error for empty newPathFileIDs, got nil")
+		}
+	})
+
+	t.Run("new_path_equals_old_path", func(t *testing.T) {
+		tree := newTestBtree(t)
+		if err := ExecuteSplitBtreeInsert(tree, oldPath, fallbackOriginalFileID, map[string]uint64{oldPath: 2}); err == nil {
+			t.Fatal("expected error when a new path equals oldPath, got nil")
+		}
+	})
 }

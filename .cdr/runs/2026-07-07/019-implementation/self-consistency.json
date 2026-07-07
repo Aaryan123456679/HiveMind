@@ -1,0 +1,13 @@
+{
+  "subtask": "2b.3.3",
+  "checks": [
+    {"cmd": "go build ./... (from engine/)", "result": "clean"},
+    {"cmd": "go vet ./... (from engine/)", "result": "clean"},
+    {"cmd": "gofmt -l . (from engine/)", "result": "clean (no files listed)"},
+    {"cmd": "go test ./split/... -run TestSplitBtreeRepoint -v -count=1 -timeout 5m", "result": "PASS, all 5 subtests"},
+    {"cmd": "go test ./split/... -race -v -count=1 -timeout 10m", "result": "PASS, full suite, zero regressions to 2b.1.1-2b.1.3/2b.2.1-2b.2.2/2b.3.1/2b.3.2"},
+    {"cmd": "go test ./btree/... -race -count=1 -timeout 15m", "result": "PASS (btree/ source untouched; run defensively since consumed via its public API)"}
+  ],
+  "validation_matrix_covered": true,
+  "note": "Self-consistency only (build green + matrix covered); NOT independent verification (invariant I4) -- /cdr:verify must run next."
+}
