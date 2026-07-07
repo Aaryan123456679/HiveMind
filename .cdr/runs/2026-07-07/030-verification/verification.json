@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "issue": 13,
+  "subtask": "2b.4.1",
+  "commit": "4b8fe670a852ad0bba2bdfa129dae46a054eff75",
+  "verdict": "CHANGES_REQUESTED",
+  "summary": "Append-path invalidation is genuinely atomic (protected end-to-end by cs.stripes[stripe]). Split-path invalidation (ExecuteSplitRedirectStub, ExecuteSplitAtomic) is NOT atomic with respect to concurrent ReadPartial callers: writeNewContentFile() runs BEFORE and OUTSIDE the WAL apply closure, and cat.Put()+InvalidateHeaderCache() inside the closure are not covered by any lock that excludes ReadPartial (split never takes cs.stripes; FileGuard only prevents concurrent splits, not concurrent reads). A ReadPartial caller that cached headers before the split started can observe the stale cached headers for a real (if narrow) window AFTER cat.Put has durably committed the new Status/RedirectTargetIDs and BEFORE InvalidateHeaderCache runs -- violating the acceptance criterion 'ReadPartial never serves stale offsets' for the split paths specifically. TestSectionIndexInvalidation additionally does not exercise this: it is a fully serial before/after check with zero goroutines, so passing under -race proves nothing about the actual concurrency claim; the acceptance criteria's '-race' requirement implies real concurrent exercise that is not present.",
+  "dimensions": {
+    "requirements": {
+      "status": "fail",
+      "evidence": "Acceptance criteria requires invalidation 'within the same...transaction' such that ReadPartial never serves stale offsets. True for Append (engine/catalog/content.go Append, stripe lock held for the full read-modify-write-invalidate critical section). False for split: engine/split/execute.go ExecuteSplitRedirectStub (line ~312 writeNewContentFile, then wal.AppendAndApply closure at ~327 doing cat.Put then InvalidateHeaderCache at ~337) and ExecuteSplitAtomic (writeNewContentFile at line 791, cat.Put at 828, InvalidateHeaderCache at 839) both leave a lock-free window between the durable cat.Put and the cache eviction during which a concurrently-running ReadPartial(originalFileID) that had already cached pre-split headers will return them, even though the transaction has already committed."
+    },
+    "architecture_conformance": {
+      "status": "fail",
+      "evidence": "docs/LLD/catalog.md and docs/LLD/split.md's Known-risks bullets require atomic invalidation 'within the same split/append transaction'. The design doc (architecture-discovery.md) itself asserts ReadPartial 'cannot overlap' Append or split's invalidation because both 'hold the same per-fileID stripe lock' -- this is true for Append but is factually incorrect for split: split's ExecuteSplitRedirectStub/ExecuteSplitAtomic never take cs.stripes at all, so the claimed mutual exclusion does not exist for the split code paths."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go build ./..., go vet ./..., gofmt -l . all clean. Full engine/catalog -race (94.7s) and engine/split -race (10.9s) suites pass with zero regressions. Full go test ./... -count=1 -timeout 20m passes across all packages (engine, btree, catalog, graph, mvcc, split, wal). No regression to 2b.1.x-2b.3.6 or 1.4.x behavior."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "ReadPartial's ATX header parser (isATXHeaderLine/computeHeaderOffsets) correctly handles no-header content (redirect stub, asserted empty in test), header-at-file-start, 1-6 '#' runs, end-of-line vs whitespace-terminated headers. Not the subtask's primary focus and reasonably covered for a minimal ATX parser; RecoverSplitCommits reasoning (in-memory cache always cold on fresh process, no ContentStore param, verified via OpenContentStore always constructing a fresh empty map) is correct and not a gap."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No security-relevant surface introduced; in-memory cache only, no persistence, no new external input parsing beyond existing content bytes."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Single dedicated mutex for a plain map is a reasonable and cheap design; no measured regression in test suite timings."
+    },
+    "maintainability": {
+      "status": "comment",
+      "evidence": "Code and doc comments are thorough, but the architecture-discovery.md's claim of guaranteed non-overlap for the split path is misleading/incorrect and should be corrected or the design fixed (e.g. by having the split closures hold cs.stripes[stripeFor(originalFileID)] for the whole write+commit+invalidate sequence, matching Append's pattern)."
+    },
+    "test_coverage": {
+      "status": "fail",
+      "evidence": "TestSectionIndexInvalidation (engine/split/execute_test.go) is entirely serial (no goroutines) despite the acceptance criteria's explicit '-race' requirement, which implies real concurrent exercise. It only checks before/after state, so it cannot and does not catch the atomicity gap described above. No test in the diff spawns concurrent ReadPartial vs. Append/split-commit goroutines."
+    },
+    "confidence": {
+      "status": "low",
+      "evidence": "The implementer's stated core claim ('genuinely synchronous within the same lock/closure such that no external caller can observe a stale cache after the mutation commits') is false for the split paths on inspection of the actual code, and the disclosed test spec does not exercise the race that would reveal it."
+    },
+    "possible_improvements": [
+      "Have ExecuteSplitRedirectStub/ExecuteSplitAtomic acquire cs.stripes[stripeFor(originalFileID)] (exported or via a new ContentStore method) for the full write+commit+invalidate sequence, mirroring Append's genuinely atomic pattern, instead of relying on InvalidateHeaderCache's self-locking alone.",
+      "Add a real concurrent test: one goroutine looping ReadPartial(originalFileID) while another executes the split commit, asserting no post-commit ReadPartial call ever returns pre-split headers (with -race and a channel/WaitGroup to bound the race window observation).",
+      "Correct architecture-discovery.md's claim of stripe-lock-based mutual exclusion for the split path, since it does not hold."
+    ]
+  },
+  "adversarial_checks": {
+    "1_atomicity_of_invalidation": "FAIL - real (narrow) race window found in both split commit paths; Append is genuinely atomic.",
+    "2_lock_ordering_deadlock": "PASS (no lock-order-inversion/deadlock found: headerCacheMu is always leaf-most, never held while acquiring cs.stripes; InvalidateHeaderCache is self-contained). The bug found is a missing-mutual-exclusion staleness bug, not a deadlock.",
+    "3_race_test_genuineness": "FAIL - TestSectionIndexInvalidation is serial, does not exercise real concurrency despite -race requirement implying it should.",
+    "4_test_seam_gaps": "Reviewed - manual cat.Put calls for new fileIDs are inert test plumbing only (pre-existing, tracked gap since 2b.3.1), do not mask an invalidation bug. RecoverSplitCommits reasoning verified correct.",
+    "5_readpartial_atx_parsing": "PASS - reasonable minimal ATX parser, adequately exercised."
+  }
+}

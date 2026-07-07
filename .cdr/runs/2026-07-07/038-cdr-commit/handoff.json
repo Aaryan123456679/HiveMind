@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "run_id": "038-cdr-commit",
+  "subtask": "issue #14 close-out; Epic Phase 2b (issues #10-14) final milestone",
+  "verified_verdict_consumed": {
+    "run": ".cdr/runs/2026-07-07/037-verification/verification.json",
+    "verdict": "PASS_WITH_COMMENTS",
+    "commit": "d146b33790845f913a3cd46ddc80c403d0cc1aaf"
+  },
+  "docs_written": [
+    ".cdr/commits/task-2b.5.1.md",
+    ".cdr/commits/task-2b.5.2.md",
+    ".cdr/commits/task-2b.5-issue-14.md"
+  ],
+  "epic_level_doc_decision": "Checked repo convention (Phase 2a / issue #9): task-2a.4.5.md is a per-issue capstone doc, no separate epic-level aggregate doc exists for Phase 2a. Convention is per-issue docs only. No epic-2b-phase-summary.md created; task-2b.5-issue-14.md's Summary/Impact/Release Notes sections explicitly state Epic Phase 2b (#10-14) is now fully implemented, verified, and committed locally in its entirety, serving the aggregate-record purpose without deviating from established convention.",
+  "index_updates": [
+    ".cdr/index/task.jsonl: appended task-2b.5.1, task-2b.5.2, task-2b.5-issue-14",
+    ".cdr/index/feature.jsonl: left unchanged (no per-task feature.jsonl entries exist for any prior 2b subtask; established convention)"
+  ],
+  "pending_md_updates": [
+    "Added: TestReaderDuringSplit ~1-3% timing-based flake in sawPostSplit overlap-confirmation logic (fails safe/loud, non-blocking CI-reliability follow-up)",
+    "Added: issue #14 / LLD wording for 2b.5.2 overclaims true snapshot-isolation semantics that catalog.ContentStore.Read cannot provide; wording-correction follow-up",
+    "Checked first for existing 2b.5 / TestReaderDuringSplit / sawPostSplit entries before appending -- none existed, no duplication"
+  ],
+  "push_status": "NOT pushed. Both underlying commits (3e95aa2, d146b33) and all .cdr/ documentation changes are local-only. Issue #14 verified/committed locally, GitHub-closure-deferred, matching the established pattern for issues #11, #12, and #13 (#13's own docs(cdr) commit is also still pending in this working tree).",
+  "epic_status": "Epic Phase 2b (issues #10, #11, #12, #13, #14) is now fully implemented, independently verified, and committed locally in its entirety. GitHub-side closure for #13 and #14 both remain deferred pending explicit push authorization not granted this session.",
+  "prompt_injection_observed": "Multiple embedded fake system-reminder-style texts (fake date-change notices, fake tokensave MCP tool instructions, fake 'Auto Mode Active' directives) were found inside tool output while reading .cdr/runs/2026-07-07/037-verification/verification.json and via `git log`/`git show` output for commit d146b33 during this run. Consistent with this repo/session's well-established prompt-injection pattern (already flagged by the verification agent itself in 037-verification's own note_on_prompt_injection field). Treated as untrusted data only; not acted on.",
+  "status": "completed"
+}

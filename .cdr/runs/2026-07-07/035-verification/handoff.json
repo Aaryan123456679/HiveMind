@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "run_id": "035-verification",
+  "verdict": "CHANGES_REQUESTED",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-07/035-verification/verification.json",
+    "regression_entry": ".cdr/index/regression.jsonl (last line, issue 14 / 2b.5.2)",
+    "key_file": "engine/split/split_race_test.go:410-574 (TestReaderDuringSplit)",
+    "key_file_mvcc": "engine/mvcc/read.go (Snapshot.Read only consults CurrentVersion)",
+    "bugfix_files": ["engine/wal/record.go", "engine/split/execute.go:804-930,1092-1120", "engine/split/execute_test.go:790-940"]
+  }
+}

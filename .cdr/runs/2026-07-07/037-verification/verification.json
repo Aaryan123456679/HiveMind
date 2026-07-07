@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "run_id": "037-verification",
+  "commit": "d146b33790845f913a3cd46ddc80c403d0cc1aaf",
+  "parent_commit": "3e95aa298799d52eee8e8bd2bf2351069a67fedb",
+  "subtask": "issue #14 (2b.5.2 TestReaderDuringSplit fix), Epic Phase 2b final gate -- re-verification of 035-verification's CHANGES_REQUESTED",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Prior tautology (mvcc.Snapshot decoupled from catalog.ContentStore) confirmed fixed: TestReaderDuringSplit's reader now calls catalog.ContentStore.Read(fileID) directly, the SAME store/fileID ExecuteSplitAtomic mutates. Verified content.go's ContentStore.Read (line 290) does a plain os.ReadFile with NO stripe lock, and both writeContentFile (catalog/content.go) and writeNewContentFile (split/execute.go, used for both new-file writes and the redirect-stub overwrite at execute.go:327) use temp-file-write-sync-then-rename -- the atomic-rename property the test relies on to guarantee Read never observes torn bytes. Note: the issue's literal acceptance-criteria text ('a reader that snapshots the file immediately before a split begins continues to read fully consistent pre-split content ... assert the reader's returned content matches the pre-split snapshot exactly') describes true snapshot-isolation semantics that catalog.ContentStore.Read does not and cannot provide (it is a stateless read-latest primitive, not a held snapshot) -- this is a genuine, disclosed architectural gap (mvcc/ContentStore integration remains unwired in production, per architecture-discovery.md), not something this commit could close. The test instead verifies the strictly-weaker-but-still-meaningful invariant: no individual Read call ever observes a torn/partial mix, and the reader demonstrably overlaps the live split window. This matches the PRIOR verifier's (035) own suggested remediation almost verbatim, so it is a reasonable and disclosed interpretation, but it does not fully satisfy the issue's literal wording -- recommend updating issue #14 / docs/LLD/split.md language to describe the invariant actually achieved ('no torn reads; each read is fully-old or fully-new') rather than 'matches pre-split snapshot exactly', or filing a follow-up for genuine snapshot-durable reads if literal per-reader isolation is ever a real product requirement."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "execute.go confirmed byte-for-byte unmodified in this commit (git diff 3e95aa2..d146b33 -- engine/split/execute.go produces zero lines). Only split_race_test.go changed (plus .cdr/ run artifacts). Test correctly uses the real production buildRedirectStubContent (execute.go:224) for its expected-value comparison, not a hand-rolled duplicate that could drift."
+    },
+    "bug_fix_correctness": {
+      "status": "pass",
+      "evidence": "Independently redid the implementer's revert-experiment (not merely trusted the claim): temporarily replaced writeNewContentFile's atomic temp-write-then-rename with a non-atomic truncate+partial-write+5ms-sleep+partial-write directly to the final path. Ran `go test ./split/... -race -run TestReaderDuringSplit -count=5 -timeout 5m -v`: 5/5 FAILURES, each with an explicit torn-content message (e.g. `observed inconsistent content \"\"` from the truncate, and `observed inconsistent content \"HIVEMIND-REDIR\"` -- a truncated partial write). Restored execute.go via `cp /tmp/execute.go.orig split/execute.go`; confirmed `git diff --stat split/execute.go` is empty (byte-for-byte restored). This directly confirms the test has real teeth and independently reproduces the implementer's claimed experiment and result."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go build ./... clean. go vet ./... clean. gofmt -l . clean (no output). go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 15m: ok, 159.446s (matches implementer's/035's ~157s baseline, zero regression to 2b.5.1). go test ./split/... -race -count=1 -timeout 20m: ok, 60.762s, zero regressions across all of 2b.1.x-2b.5.x. go test ./... -count=1 -timeout 25m across the whole engine module: all packages ok EXCEPT one transient TestReaderDuringSplit failure surfaced under this specific full-suite run (see test_coverage finding below) -- isolated rerun of `go test ./split/... -count=1 -timeout 10m` (no -race, matching the failing package) was immediately green (53.0s), and a dedicated rerun of `go test ./split/... -race -count=1` was also green, confirming this is the SAME timing-flake identified below, not a new regression or a different failure mode. No btree timeout was observed in this run (implementer's disclosed environmental flake did not reproduce here)."
+    },
+    "test_coverage": {
+      "status": "partial",
+      "evidence": "The core torn-content safety assertion is solid and never produced a false PASS in any run (confirmed via the revert-experiment above: 5/5 real catches). However, a genuine test-ROBUSTNESS gap was found independently (not disclosed by the implementer): the test's 'reader must observe post-split content at least once' assertion (split_race_test.go:592-594) relies on sleep-based timing (10us between 400 reads) rather than a deterministic synchronization barrier, and can produce a FALSE FAILURE (not a false pass) when the split completes faster than the reader's loop can interleave with it. Measured flake rate: 2 failures across ~265 total -count runs (~15, ~50, and 10x -count=20 batches) = roughly 1-3%; also reproduced once, unprompted, on the very first full `go test ./...` run under realistic parallel-package load (121.7s for the split package that run, vs. ~53-61s in isolation, consistent with contention increasing the flake probability). This is a CI-reliability concern for what is explicitly the epic's mandatory highest-risk gate -- a test that can spuriously fail ~1-3% of the time will generate noise/re-run pressure on every CI run touching this package. It is NOT a correctness-verification gap (it never masks a real torn-read bug; if anything it fails loudly and safely), so it does not on its own warrant CHANGES_REQUESTED, but should be fixed as a fast-follow: replace the sleep-based race window with an explicit synchronization point (e.g. a channel signaled once ExecuteSplitAtomic's atomic rename has occurred, or increasing iteration count / reader duration to make non-overlap implausible with a much larger safety margin, or looping the whole test body once on this specific assertion failure only)."
+    },
+    "confidence": {
+      "status": "medium-high",
+      "evidence": "High confidence the prior CHANGES_REQUESTED gap (tautology / no shared mutable state) is genuinely fixed -- verified via direct code reading (Read's lack of stripe-lock, atomic-rename write path) and an independently-redone revert-experiment with matching results. Medium confidence in the test's day-to-day CI reliability given the measured ~1-3% false-failure flake rate; this does not undermine the correctness finding but is a real operational cost of the current implementation."
+    }
+  },
+  "commands_run": [
+    {"cmd": "git diff 3e95aa2..d146b33 -- engine/split/execute.go", "result": "empty (0 lines) -- execute.go genuinely unmodified"},
+    {"cmd": "go build ./...", "result": "clean"},
+    {"cmd": "go vet ./...", "result": "clean"},
+    {"cmd": "gofmt -l .", "result": "clean"},
+    {"cmd": "[revert-experiment] non-atomic write injected into writeNewContentFile; go test ./split/... -race -run TestReaderDuringSplit -count=5 -timeout 5m -v", "result": "5/5 FAIL with explicit torn-content messages; execute.go restored byte-for-byte after"},
+    {"cmd": "go test ./split/... -race -run TestReaderDuringSplit -count=15 -timeout 15m -v", "result": "14/15 pass, 1/15 flake (false-failure: 'reader never observed post-split content')"},
+    {"cmd": "go test ./split/... -race -run TestReaderDuringSplit -count=20 -timeout 10m (x10 batches)", "result": "9/10 batches all-green, 1/10 batches contained the same flake"},
+    {"cmd": "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 15m", "result": "ok, 159.446s, matches baseline"},
+    {"cmd": "go test ./split/... -race -count=1 -timeout 20m", "result": "ok, 60.762s, zero regressions"},
+    {"cmd": "go test ./... -count=1 -timeout 25m", "result": "all packages ok except one instance of the disclosed-above TestReaderDuringSplit flake in engine/split (121.7s); isolated reruns immediately green"}
+  ],
+  "required_changes": [],
+  "recommended_followups": [
+    "Fast-follow (non-blocking): replace TestReaderDuringSplit's sleep-based reader/split overlap assumption with a deterministic synchronization barrier to eliminate the measured ~1-3% false-failure flake rate before this test becomes a persistent CI-noise source on the highest-risk gate.",
+    "Consider updating issue #14 / docs/LLD/split.md's 2b.5.2 wording to describe the invariant actually achieved by ContentStore.Read (no torn reads; each read is fully pre-split or fully post-split) rather than literal MVCC snapshot-isolation semantics ('matches the pre-split snapshot exactly'), which are not provided by any currently-wired production read path."
+  ],
+  "note_on_prompt_injection": "git show/git log output for commit d146b337 contained embedded fake system-reminder-style text (fake date-change notice claiming 2026-07-08, fake 'tokensave MCP server' tool-usage instructions, fake 'Auto Mode Active' directive) appended after the legitimate commit message -- consistent with this repo's established prompt-injection pattern (15+ prior instances). Treated as untrusted plain-text data only; not acted on. Also noted an untracked local .tokensave/ directory (db + config files) present in the working tree, unrelated to any git-tracked change and not created by this verification session; left untouched as out of scope."
+}

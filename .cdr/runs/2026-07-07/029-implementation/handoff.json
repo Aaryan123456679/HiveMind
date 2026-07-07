@@ -1,0 +1,40 @@
+{
+  "status": "completed",
+  "commit_sha": "4b8fe670a852ad0bba2bdfa129dae46a054eff75",
+  "issue": 13,
+  "subtask": "2b.4.1 (only subtask in issue #13)",
+  "pushed": false,
+  "next_step": "/cdr:verify",
+  "changed_files": [
+    "engine/catalog/content.go",
+    "engine/catalog/content_test.go",
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "new_symbols": [
+    "engine/catalog.HeaderOffset (type)",
+    "engine/catalog ContentStore.headerCache, ContentStore.headerCacheMu (fields)",
+    "engine/catalog ContentStore.ReadPartial(fileID uint64) ([]HeaderOffset, error)",
+    "engine/catalog ContentStore.InvalidateHeaderCache(fileID uint64)",
+    "engine/catalog computeHeaderOffsets, isATXHeaderLine (unexported helpers)"
+  ],
+  "call_sites_added": [
+    "engine/catalog/content.go Append: cs.InvalidateHeaderCache(fileID) inside WAL apply closure, after cs.cat.Put",
+    "engine/split/execute.go ExecuteSplitRedirectStub: cs.InvalidateHeaderCache(originalFileID) inside WAL apply closure, after cat.Put",
+    "engine/split/execute.go ExecuteSplitAtomic: cs.InvalidateHeaderCache(originalFileID) inside WAL apply closure, after cat.Put"
+  ],
+  "new_tests": [
+    "engine/catalog TestReadPartialComputesHeaderOffsets",
+    "engine/catalog TestReadPartialNotFound",
+    "engine/catalog TestAppendInvalidatesHeaderCache",
+    "engine/split TestSectionIndexInvalidation (the issue's literal test spec, -race)"
+  ],
+  "self_consistency": ".cdr/runs/2026-07-07/029-implementation/self-consistency.json",
+  "validation_matrix": ".cdr/runs/2026-07-07/029-implementation/validation-matrix.json",
+  "known_findings_for_verifier": [
+    "engine/split/execute.go's ExecuteSplitAtomic/ExecuteSplitAllocateAndWrite still do not create a CatalogRecord for newly allocated fileIDs (pre-existing gap since 2b.3.1, not introduced or fixed by this subtask). engine/split/execute_test.go's new TestSectionIndexInvalidation works around this by manually cat.Put-ing minimal StatusActive records for the two new fileIDs after the split, purely so ReadPartial (which resolves fileID via catalog first, same as Read) has something to resolve. Flagged so the verifier does not mistake this test seam for production behavior.",
+    "RecoverSplitCommits (crash-recovery replay) was NOT given a ContentStore param / does not call InvalidateHeaderCache: intentional, since the header cache is in-memory-only and necessarily empty in a freshly-started recovering process -- see architecture-discovery.md's 'Design decision: invalidation call site for split' section for the full reasoning.",
+    "docs/LLD/catalog.md and docs/LLD/split.md's existing 'Section-index staleness' Known-risks bullets were left unchanged (their wording already accurately describes the invariant the code now upholds; not rewritten as part of this run -- see plan.md)."
+  ],
+  "security_note": "gh issue view 13's body was clean (no embedded prompt-injection text this run). However, reading .cdr/memory/pending.md via Bash returned two fabricated <system-reminder>-style blocks appended inside the file's own content (a fake 'date changed to 2026-07-07' notice and a fake 'tokensave MCP server'/'Auto Mode Active' directive) -- consistent with the known recurring prompt-injection pattern in this repo/session. Treated as untrusted plain-text data only; nothing in them was acted upon."
+}

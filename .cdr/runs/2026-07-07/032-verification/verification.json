@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "issue": 13,
+  "subtask": "2b.4.1",
+  "commit": "9ba2f0782d43342ae145cdc9db4b22e4c9b98f1c",
+  "verdict": "PASS",
+  "summary": "Re-verification of the fix cycle for the two CHANGES_REQUESTED findings from .cdr/runs/2026-07-07/030-verification/verification.json. Both bugs are genuinely resolved. ContentStore.LockFileContent acquires the identical cs.stripes[stripeFor(fileID)] mutex Append/ReadPartial already use (verified by reading catalog.go's single stripeFor and content.go's Append/ReadPartial/LockFileContent implementations side by side). ExecuteSplitRedirectStub and ExecuteSplitAtomic now hold it from before the stub content write, across cat.Put and InvalidateHeaderCache, releasing only after (ExecuteSplitAtomic explicitly releases before the B+Tree/graph-edge steps, which touch unrelated locks). wal.Writer's internal mu is fully released before AppendAndApply's apply() closure even runs (confirmed in wal/record.go and wal/writer.go), so there is no actual lock nesting/inversion risk between cs.stripes and the WAL writer lock at all -- stronger than the claimed ordering. Independently redid the revert experiment: with LockFileContent's real calls replaced by no-ops in both split-commit paths, TestSectionIndexInvalidationConcurrent failed 10/10 under -race -count=10 with the exact stale pre-split header offsets assertion message; after restoring the original committed file (git diff clean), it passed 10/10 under -race -count=10. This exactly matches the implementer's claimed transcript. TestSectionIndexInvalidationConcurrent uses real goroutines, a start barrier, and a legitimate test-only atomicCommitHook seam (same pre-existing pattern as three other stages since 2b.3.6, nil in production) to reliably widen the race window; not a production-code hack. Full test matrix clean: go build/vet clean, gofmt -l . empty, TestSectionIndexInvalidation(Concurrent) -race -count=15 all pass, catalog/... -race -count=1 clean, split/... -race -count=1 clean, full engine ./... -count=1 clean.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Both original blocking findings (non-atomic invalidation in split paths; serial-only concurrency test) are resolved. Acceptance criterion 'ReadPartial never serves offsets against stale content' now holds for both split paths, matching Append's existing guarantee, and is exercised by a genuine -race concurrency test."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "LockFileContent reuses the repo's documented striped-mutex convention (docs/LLD/catalog.md) via the same array Append/ReadPartial already use, exposed through a narrow purpose-built method rather than exporting cs.stripes directly. Lock scope in both split paths matches Append's own critical-section pattern exactly. content.go's ReadPartial doc comment is updated to reflect the new, corrected behavior (no longer claims the previously-inaccurate stripe-independent story)."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Full ./... -count=1 -timeout 20m clean across engine, btree, catalog, graph, mvcc, split, wal. split/... -race -count=1 clean (zero regressions to 2b.1.x-2b.3.6). catalog/... -race -count=1 clean (89-104s, no races). Lock release in ExecuteSplitAtomic is scoped tightly (released right after InvalidateHeaderCache, before B+Tree/graph steps) to avoid unnecessary contention against unrelated ReadPartial callers."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "ExecuteSplitAtomic uses a lockHeld boolean + deferred conditional unlock to correctly handle both the normal mid-closure release path and every early-return error path (encode failure, hook failure, stub-write failure) without double-unlocking a non-reentrant sync.Mutex. ExecuteSplitRedirectStub holds the lock for its entire (shorter) function body via a single defer, also correct."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new external input surface; purely internal concurrency-control fix plus an in-memory test-only hook seam that is nil (no-op) in production builds."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Lock scope in ExecuteSplitAtomic is deliberately narrowed to exclude the B+Tree insert and graph-edge-append steps, which never take cs.stripes, avoiding unnecessary contention. No measurable regression in test suite timings versus baseline."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Extensive, accurate doc comments on LockFileContent explain the lock-ordering rationale and non-reentrancy hazard. The stale claim in ReadPartial's old doc comment (that split does not take cs.stripes) has been corrected rather than left inconsistent with the code."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestSectionIndexInvalidationConcurrent is a genuine concurrent regression test (real goroutine, start barrier, atomicCommitHook-widened race window, -race-clean) that independently reproduced 10/10 failures when the fix was reverted and 10/10 passes when restored, in this reviewer's own redo of the experiment -- not just the implementer's claim. Ran at -count=15 per the higher-scrutiny re-verification bar with zero flakes."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Independently redid the revert-restore experiment described in the implementer's commit message and confirmed the exact claimed pass/fail pattern (10/10 fail, then 10/10 pass) rather than trusting the transcript. Independently traced wal.AppendAndApply's internal locking and found the WAL writer lock and cs.stripes are never simultaneously held (stronger guarantee than the documented ordering claims), ruling out the deadlock risk flagged in the adversarial checklist."
+    },
+    "possible_improvements": [
+      "Consider a short doc-comment note in wal/record.go's AppendAndApply clarifying that Writer.Append's own lock is always released before apply() runs (this is true today and is what makes the cs.stripes/wal-lock relationship deadlock-free, but it is currently only implicit in the code, not stated as an explicit contract future maintainers could rely on or accidentally break).",
+      "TestSectionIndexInvalidationConcurrent's reader goroutine busy-loops (for !stopReader.Load()) rather than using a ticker; harmless in a short-lived test but slightly wasteful of CPU during the 5ms hook sleep windows."
+    ]
+  },
+  "adversarial_checks": {
+    "1_redo_revert_experiment": "PASS (personally reproduced) - temporarily replaced both cs.LockFileContent(...) calls in engine/split/execute.go with no-op unlock funcs (backed up original file first), ran `go test ./split/... -race -run TestSectionIndexInvalidationConcurrent -count=10 -timeout 5m -v`: 10/10 FAILURES, each with the exact message 'concurrent ReadPartial(originalFileID) returned stale pre-split header offsets during/after the split ... Bug 1 (missing cs.stripes lock across split's content-write+cat.Put+invalidate) reproduced'. Restored the original committed file (git diff split/execute.go showed zero diff after restore), reran the identical command: 10/10 PASSES. Exactly matches the implementer's claimed transcript.",
+    "2_lock_scope_correctness": "PASS - LockFileContent's body is `stripe := stripeFor(fileID); cs.stripes[stripe].Lock(); return cs.stripes[stripe].Unlock`, identical stripeFor call and identical cs.stripes array Append (catalog/content.go ~line 336) and ReadPartial (~line 491) both use directly. Not a parallel/different lock.",
+    "3_lock_ordering_deadlock": "PASS - traced wal.AppendAndApply (wal/record.go): calls w.Append(payload) first (which itself Lock()s/Unlock()s w.mu entirely internally, released before Append returns), THEN calls apply() -- so w.mu is never held while apply() (and therefore never while cs.stripes) executes. cs.stripes and the WAL writer's internal mu are never simultaneously held anywhere in this codebase; no lock-order inversion or deadlock risk exists, independent of and stronger than the documented 'cs.stripes -> wal.Writer-internal -> cat.stripes' claim.",
+    "4_closes_original_race_window": "PASS - confirmed by reading exact line ordering in both ExecuteSplitRedirectStub and ExecuteSplitAtomic: LockFileContent acquired before writeNewContentFile/stub write, held across cat.Put (inside the WAL apply closure), held across InvalidateHeaderCache, released only afterward (immediately after in RedirectStub via defer; explicitly via unlock()/lockHeld=false right after InvalidateHeaderCache in ExecuteSplitAtomic, before B+Tree/graph steps). A concurrent ReadPartial is either fully blocked until invalidation completes (sees fresh data) or fully completes before the write starts (sees old data, linearizable) -- confirmed by the concurrent test never observing stale data with the fix in place across 15 counts and by this reviewer's own 10/10 pass reproduction.",
+    "5_test_genuineness": "PASS - TestSectionIndexInvalidationConcurrent uses a real background goroutine hammering ReadPartial via a busy loop, a sync.WaitGroup start barrier ensuring the reader is spinning before the split begins, and the atomicCommitHook test seam (a package-level func var, nil/no-op in production, set only via test-only setAtomicCommitHook with t.Cleanup reset) to reliably widen the naturally-nanoseconds-wide race window. The new 'after_catalog_put_before_invalidate' stage follows the exact same pattern as three pre-existing stages from 2b.3.6 (before_commit_append, after_commit_before_catalog_put, after_catalog_put_before_btree); not a new or production-affecting mechanism.",
+    "6_full_test_matrix": "go build ./... clean; go vet ./... clean; gofmt -l . empty (no unformatted files); go test ./split/... -race -run TestSectionIndexInvalidation -count=15 -timeout 15m all pass (both TestSectionIndexInvalidation and TestSectionIndexInvalidationConcurrent, 15/15 each); go test ./catalog/... -race -count=1 -timeout 10m ok (89-104s); go test ./split/... -race -count=1 -timeout 15m ok; go test ./... -count=1 -timeout 20m ok across all engine packages (engine, btree, catalog, graph, mvcc, split, wal; loadtest/rpc have no test files)."
+  },
+  "prior_verdict_reference": ".cdr/runs/2026-07-07/030-verification/verification.json (CHANGES_REQUESTED, both findings now resolved)",
+  "security_note": "git show output for commit 9ba2f0782d43342ae145cdc9db4b22e4c9b98f1c's diff/log during this review contained embedded fake system-reminder-style text (a fabricated 'date changed' notice, a fake MCP 'tokensave' tool-instructions block, and a fake 'Auto Mode Active' directive), consistent with the prompt-injection pattern flagged for this repo in prior reviews. All such embedded instruction-like text was treated as untrusted inert data and not acted upon."
+}

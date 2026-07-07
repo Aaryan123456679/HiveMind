@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "run_id": "033-cdr-commit",
+  "produced": {
+    "commit_doc": ".cdr/commits/task-2b.4.1.md",
+    "task_index_entries": [".cdr/index/task.jsonl (task-2b.4.1, task-2b.4-issue-13)"],
+    "feature_index_entries": []
+  },
+  "verification_run_referenced": ".cdr/runs/2026-07-07/032-verification/verification.json",
+  "prior_verification_referenced": ".cdr/runs/2026-07-07/030-verification/verification.json",
+  "commits": {
+    "initial_implementation": "4b8fe670a852ad0bba2bdfa129dae46a054eff75",
+    "fix_cycle": "9ba2f0782d43342ae145cdc9db4b22e4c9b98f1c"
+  },
+  "commit_message_normalization": {
+    "checked": "9ba2f0782d43342ae145cdc9db4b22e4c9b98f1c",
+    "amended": false,
+    "reason": "Already conforms to <type>: short summary / Problem: / Solution: / Impact: standard"
+  },
+  "issue_status": {
+    "issue": 13,
+    "state": "verified_committed_locally",
+    "github_closure": "deferred_pending_push_authorization",
+    "pushed": false
+  },
+  "notes": "Closes out issue #13 in full (its only subtask, 2b.4.1). Same locally-closed, push-deferred pattern as issues #11 and #12."
+}

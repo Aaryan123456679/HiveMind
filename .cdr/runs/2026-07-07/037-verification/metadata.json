@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "037-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "issue #14 re-verification (2b.5.2 TestReaderDuringSplit fix), Epic Phase 2b final gate",
+  "git_head": "d146b33790845f913a3cd46ddc80c403d0cc1aaf",
+  "run_key": "issue14-2b552-d146b337-reverify",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-08T00:00:00Z",
+  "ended_at": "2026-07-08T01:00:00Z"
+}

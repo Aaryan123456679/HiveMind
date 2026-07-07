@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "038-cdr-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "commit",
+  "subtask": "issue #14 (2b.5.1 TestConcurrentAppendSplitRace + 2b.5.2 TestReaderDuringSplit) close-out; Epic Phase 2b (issues #10-14) final milestone",
+  "git_head": "d146b33790845f913a3cd46ddc80c403d0cc1aaf",
+  "run_key": "cdr-commit:issue-14:d146b33790845f913a3cd46ddc80c403d0cc1aaf:PASS_WITH_COMMENTS",
+  "status": "completed",
+  "last_completed_step": "docs_written_indexes_updated_pending_updated_handoff_written",
+  "started_at": "2026-07-08T00:00:00Z",
+  "ended_at": "2026-07-08T00:15:00Z"
+}

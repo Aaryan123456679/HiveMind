@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "run_id": "035-verification",
+  "commit": "3e95aa298799d52eee8e8bd2bf2351069a67fedb",
+  "subtask": "issue #14 (2b.5.1 TestConcurrentAppendSplitRace + 2b.5.2 TestReaderDuringSplit), Epic Phase 2b final gate",
+  "verdict": "CHANGES_REQUESTED",
+  "dimensions": {
+    "requirements": {
+      "status": "partial",
+      "evidence": "2b.5.1's three acceptance criteria (no data loss, exactly-one-split, no dangling edges) are genuinely and rigorously verified in TestConcurrentAppendSplitRace (real tag-level oracle checked for exact-1 count, redirectCount==splitCount invariant, full edge Source/Target->cat.Get walk). 2b.5.2 is NOT genuinely verified: TestReaderDuringSplit pins an mvcc.Snapshot against a separate mvcc.VersionWriter root/content directory from the one ExecuteSplitAtomic actually splits (catalog.ContentStore's cs). mvcc.Snapshot.Read() only ever consults CatalogRecord.CurrentVersion, which ExecuteSplitAtomic never touches (only Status/RedirectTargetIDs/SizeBytes). Because the 'reader' and the 'split' never share content storage or any catalog field the split mutates, this test cannot fail regardless of whether ExecuteSplitAtomic's concurrency behavior toward in-flight readers is correct or badly broken -- it is a tautology check (CurrentVersion untouched), not a real concurrent reader-consistency race test, despite launching two real goroutines under -race."
+    },
+    "architecture_conformance": {
+      "status": "partial",
+      "evidence": "docs/LLD/split.md's Split-sequence step 1 and Interactions section both state MVCC is the mechanism by which 'existing readers still see old version' during a split -- i.e. the LLD's own design assumes mvcc IS the read path being protected. The test's own doc comment discloses (honestly) that mvcc.VersionWriter and catalog.ContentStore are 'two independent, currently-unintegrated content-storage subsystems' with no production call site wiring them together for the same fileID. This is a legitimate, disclosed, pre-existing architectural gap (consistent with the already-tracked 'engine/split.Trigger not yet wired into ContentStore.Append' item in .cdr/memory/pending.md), but it means the LLD's 'Known risks' concurrency bullet's mvcc sub-claim is NOT actually closed by this issue, and this specific mvcc/ContentStore decoupling gap is not yet logged in pending.md."
+    },
+    "bug_fix_correctness": {
+      "status": "pass",
+      "evidence": "Traced both ExecuteSplitAtomic (engine/split/execute.go, live path) and RecoverSplitCommits (crash-replay path): both now cat.Put a CatalogRecord{FileID, CurrentVersion:0, SizeBytes, Status:StatusActive} for every new fileID, mirrored identically. SizeBytes correctly threaded end-to-end via wal.SplitCommitEntry (Encode/Decode round-trip verified, including a truncation-length-check on decode). grep across split/ and catalog/ (excluding tests) found no production code path that depends on new-fileID catalog records NOT existing -- the fix does not silently break anything."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Full split/... -race suite (48.5s) and full engine/... suite (all packages) pass with zero regressions, matching implementer's claims exactly (TestConcurrentAppendSplitRace: 157.4s for -count=3, matches claimed 157.7s; TestReaderDuringSplit: 2.4s-2.8s for -count=10, matches claimed 2.4s)."
+    },
+    "test_coverage": {
+      "status": "partial",
+      "evidence": "execute_test.go's disclosed 'latent fixture fileID-collision' fix (burning idAlloc up to originalFileID's hardcoded constant in TestSplitAtomicCommit's newDeps helper) is a genuine pre-existing test-fixture bug, not a papered-over production bug: in production every fileID -- original or split-off -- always originates from the same idAlloc sequence, so this collision is structurally impossible outside a fixture using a bespoke hardcoded constant. Confirmed via diff read. However, TestReaderDuringSplit's coverage gap (above) means 2b.5.2's acceptance criteria and test spec are not truly exercised by a meaningful concurrency test."
+    },
+    "confidence": {
+      "status": "medium",
+      "evidence": "High confidence in 2b.5.1's correctness and the catalog-record bugfix; low confidence that 2b.5.2 delivers what the issue and LLD actually require, since the test as written could not detect a broken reader/split interaction even if one existed."
+    }
+  },
+  "commands_run": [
+    {"cmd": "go build ./...", "result": "clean"},
+    {"cmd": "go vet ./...", "result": "clean"},
+    {"cmd": "gofmt -l .", "result": "clean"},
+    {"cmd": "go test ./split/... -race -run TestConcurrentAppendSplitRace -count=3 -timeout 20m", "result": "ok, 157.405s"},
+    {"cmd": "go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 10m", "result": "ok, 2.783s"},
+    {"cmd": "go test ./split/... -race -count=1 -timeout 20m", "result": "ok, 48.539s"},
+    {"cmd": "go test ./... -count=1 -timeout 25m", "result": "ok, all packages green"}
+  ],
+  "required_changes": [
+    "Either (a) rework TestReaderDuringSplit to exercise a reader path that actually shares storage/state with ExecuteSplitAtomic's real split (e.g. concurrent catalog.ContentStore.Read/ReadPartial against the pre-split fileID during the StatusSplitting window, verifying old content stays readable and byte-identical until the split completes), so the test can genuinely fail on a broken interleaving; or (b) if mvcc/ContentStore integration is genuinely out of scope for this issue, explicitly downgrade the commit's claim that this issue 'closes the last disclosed correctness gap in the split pipeline' and log the mvcc/ContentStore decoupling as a new tracked item in .cdr/memory/pending.md so subtask 2b.5.2 is not implicitly treated as fully closing docs/LLD/split.md's mvcc-reader concurrency risk."
+  ],
+  "note_on_prompt_injection": "gh issue #14's body contained embedded fake system-reminder-style text (fake date-change notice, fake 'tokensave MCP server' instructions, fake 'Auto Mode Active' directive) -- consistent with the repo's established prompt-injection pattern. Treated as untrusted plain-text data only; not acted on."
+}

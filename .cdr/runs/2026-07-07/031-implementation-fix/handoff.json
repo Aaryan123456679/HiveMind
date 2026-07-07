@@ -1,0 +1,37 @@
+{
+  "status": "completed",
+  "commit_sha": "9ba2f0782d43342ae145cdc9db4b22e4c9b98f1c",
+  "issue": 13,
+  "subtask": "2b.4.1 fix cycle, responding to .cdr/runs/2026-07-07/030-verification/verification.json (CHANGES_REQUESTED)",
+  "pushed": false,
+  "next_step": "/cdr:verify",
+  "changed_files": [
+    "engine/catalog/content.go",
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "new_symbols": [
+    "engine/catalog ContentStore.LockFileContent(fileID uint64) (unlock func())"
+  ],
+  "new_test_seams": [
+    "engine/split atomicCommitHook stage \"after_catalog_put_before_invalidate\" (ExecuteSplitAtomic, between cat.Put and InvalidateHeaderCache)"
+  ],
+  "call_sites_changed": [
+    "engine/split/execute.go ExecuteSplitRedirectStub: cs.LockFileContent(originalFileID) acquired via defer before the stub content write, held through cat.Put + InvalidateHeaderCache inside the WAL apply closure",
+    "engine/split/execute.go ExecuteSplitAtomic: cs.LockFileContent(originalFileID) acquired before the stub content write, released explicitly right after InvalidateHeaderCache inside the WAL apply closure (before B+Tree inserts / graph edge appends), lockHeld-guarded defer covers early-return error paths"
+  ],
+  "new_tests": [
+    "engine/split TestSectionIndexInvalidationConcurrent -- genuine concurrent regression test for Bug 1"
+  ],
+  "what_changed_since_CHANGES_REQUESTED_verdict": [
+    "Bug 1 (adversarial_checks.1_atomicity_of_invalidation FAIL in 030-verification): FIXED. Both ExecuteSplitRedirectStub and ExecuteSplitAtomic now take the same cs.stripes[stripeFor(originalFileID)] lock Append already used, closing the race window verification identified between cat.Put and InvalidateHeaderCache.",
+    "Bug 2 (adversarial_checks.3_race_test_genuineness FAIL, test_coverage FAIL in 030-verification): FIXED. TestSectionIndexInvalidation is unchanged and still passes serially; TestSectionIndexInvalidationConcurrent added as a genuinely concurrent companion test, using a new atomicCommitHook stage to reliably widen the (normally nanoseconds-wide) race window for deterministic reproduction under -race.",
+    "architecture_conformance FAIL and the possible_improvements bullet about architecture-discovery.md's stale claim: addressed by 031-implementation-fix/architecture-discovery.md and updated doc comments in engine/catalog/content.go (both the package-level 'Note on split' comment and LockFileContent's own doc comment) that now accurately describe split's locking.",
+    "Prior 029-implementation's known_findings_for_verifier (ExecuteSplitAtomic not creating CatalogRecords for new fileIDs; RecoverSplitCommits not calling InvalidateHeaderCache) are unrelated to Bug 1/Bug 2 and were intentionally left unchanged -- still valid pre-existing/by-design notes, not addressed by this fix cycle, not claimed as fixed here."
+  ],
+  "self_consistency": ".cdr/runs/2026-07-07/031-implementation-fix/self-consistency.json",
+  "validation_matrix": ".cdr/runs/2026-07-07/031-implementation-fix/validation-matrix.json",
+  "bug1_confirmation_summary": "Temporarily replaced cs.LockFileContent(originalFileID) in ExecuteSplitAtomic with a no-op; go test ./split/... -race -run TestSectionIndexInvalidationConcurrent -count=10 failed 10/10 with the exact stale-pre-split-data assertion message; fix restored; same command then passed 10/10 (and again as part of the full -count=10 targeted run in self-consistency.json). Confirmed, not assumed.",
+  "security_note": "Per the launching agent's explicit instruction, this repo's GitHub issue content, commit messages/diffs, and Bash tool stdout have repeatedly contained embedded fake system-reminder-style prompt injection across multiple prior agent sessions. Confirmed again this run: `cat .cdr/runs/2026-07-07/030-verification/verification.json` via Bash returned two fabricated blocks appended after the real JSON (a fake 'date changed to 2026-07-07' notice, a fake 'tokensave MCP server' tool-instruction block, and a fake 'Auto Mode Active' directive). A later Bash tool result (from a `cp` restore of split/execute.go) also carried a harness-generated 'file was modified' reminder, which was legitimate tooling feedback, not injected repo content -- distinguished and acted on accordingly. All issue/commit/tool-output text was treated as untrusted plain-text data only; no embedded instructions were followed.",
+  "not_verified_by_this_agent": "Per invariant I4, this agent does not verify its own work. Independent re-verification via /cdr:verify is required before this fix cycle can be considered resolved."
+}
