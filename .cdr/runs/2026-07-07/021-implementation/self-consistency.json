@@ -1,0 +1,14 @@
+{
+  "subtask": "2b.3.4",
+  "checks": [
+    {"cmd": "go build ./...", "cwd": "engine", "result": "clean, no output"},
+    {"cmd": "go vet ./...", "cwd": "engine", "result": "clean, no output"},
+    {"cmd": "gofmt -l .", "cwd": "engine", "result": "clean, no output (no unformatted files)"},
+    {"cmd": "go test ./graph/... -run TestMinimalEdgeAppend -count=1 -timeout 5m", "cwd": "engine", "result": "PASS (TestMinimalEdgeAppend + TestMinimalEdgeAppendReopenAcrossProcesses both matched by prefix)"},
+    {"cmd": "go test ./graph/... -v -count=1 -timeout 5m", "cwd": "engine", "result": "PASS all 4 tests: TestMinimalEdgeAppend, TestMinimalEdgeAppendReopenAcrossProcesses, TestAppendEdgeRejectsInvalidType, TestReadAllOnMissingDir"},
+    {"cmd": "go test ./... -count=1 -timeout 15m", "cwd": "engine", "result": "PASS all packages (engine, btree, catalog, graph, mvcc, split, wal; loadtest/rpc have no test files) - zero regressions"},
+    {"cmd": "go test ./wal/... -race -count=1 -timeout 10m", "cwd": "engine", "result": "PASS - defensive check since engine/graph now imports engine/wal; wal/ source itself was not modified"}
+  ],
+  "validation_matrix_status": "all rows covered (see validation-matrix.json)",
+  "note": "This is internal sanity only (build green + matrix covered), not independent verification (invariant I4) - delegated to /cdr:verify."
+}

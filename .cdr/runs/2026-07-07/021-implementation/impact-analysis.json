@@ -1,0 +1,38 @@
+{
+  "subtask": "2b.3.4",
+  "new_files": [
+    "engine/graph/edge_append.go",
+    "engine/graph/edge_append_test.go"
+  ],
+  "modified_files": [],
+  "deleted_files": [],
+  "existing_files_read_only": [
+    "engine/graph/doc.go",
+    "engine/wal/writer.go",
+    "engine/wal/record.go",
+    "engine/wal/recovery.go",
+    "engine/catalog/record.go",
+    "engine/go.mod"
+  ],
+  "packages_touched": [
+    "engine/graph"
+  ],
+  "packages_depended_on": [
+    "engine/wal"
+  ],
+  "packages_not_touched": [
+    "engine/split",
+    "engine/catalog",
+    "engine/btree",
+    "engine/mvcc",
+    "engine/rpc",
+    "engine/loadtest"
+  ],
+  "risk": {
+    "level": "low",
+    "reason": "Entirely additive new package; imports engine/wal read-only (no changes to wal's shared TypedRecord/RecordType/Replay recovery machinery used by catalog/btree). No existing package imports engine/graph yet, so this change cannot regress any other package's behavior."
+  },
+  "downstream_consumers_pending": [
+    "engine/split/execute.go (subtask 2b.3.5 - not implemented in this subtask)"
+  ]
+}

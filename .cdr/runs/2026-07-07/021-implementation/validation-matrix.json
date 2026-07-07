@@ -1,0 +1,42 @@
+{
+  "subtask": "2b.3.4",
+  "acceptance_criteria": [
+    {
+      "criterion": "Append-only edge writer exists for SPLIT_SIBLING/REDIRECT edge types",
+      "covered_by": ["EdgeType (EdgeSplitSibling, EdgeRedirect) + Edge struct in edge_append.go"],
+      "verified_by_test": ["TestMinimalEdgeAppend"]
+    },
+    {
+      "criterion": "Edges are retrievable, including source fileID",
+      "covered_by": ["ReadAll + decodeEdge"],
+      "verified_by_test": ["TestMinimalEdgeAppend (asserts got.Source == want.Source)"]
+    },
+    {
+      "criterion": "Durability (survives being re-read from disk, not just in-memory state)",
+      "covered_by": ["EdgeAppender backed by wal.Writer's fsync-before-return Append"],
+      "verified_by_test": ["TestMinimalEdgeAppend (ReadAll called independently of the appender)", "TestMinimalEdgeAppendReopenAcrossProcesses"]
+    },
+    {
+      "criterion": "Append-only ordering preserved",
+      "covered_by": ["ReadAll iterates segment files in ascending numeric order and records within a segment in on-disk order (wal.ReadSegment)"],
+      "verified_by_test": ["TestMinimalEdgeAppend (index-by-index comparison)", "TestMinimalEdgeAppendReopenAcrossProcesses"]
+    },
+    {
+      "criterion": "Genuinely minimal: no CSR storage/compaction/traversal API",
+      "covered_by": ["No traversal, no per-fileID index, no compaction logic anywhere in edge_append.go"],
+      "verified_by_test": ["N/A - structural/design review (see architecture-discovery.md section 4)"]
+    },
+    {
+      "criterion": "Fail closed on invalid edge type (matches wal.RecordTypeInvalid convention)",
+      "covered_by": ["AppendEdge rejects EdgeTypeInvalid; decodeEdge rejects unrecognized on-disk type byte"],
+      "verified_by_test": ["TestAppendEdgeRejectsInvalidType"]
+    },
+    {
+      "criterion": "No regression to engine/wal or rest of engine module",
+      "covered_by": ["engine/graph only imports engine/wal read-only; no other package imports engine/graph yet"],
+      "verified_by_test": ["go test ./... (full module)", "go test ./wal/... -race (defensive)"]
+    }
+  ],
+  "test_spec_command": "go test ./engine/graph/... -run TestMinimalEdgeAppend",
+  "notes": "Self-consistency only (internal sanity: build green + matrix covered). Independent verification is delegated to /cdr:verify per invariant I4."
+}
