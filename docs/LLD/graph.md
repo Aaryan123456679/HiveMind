@@ -17,6 +17,19 @@ API the query pipeline uses to expand a candidate topic set.
 - `graph.dat`: CSR-like compact adjacency arrays per source `fileID`, with periodic compaction.
 - Writes are append-only per-node edge logs, avoiding the need to lock a shared adjacency array.
 
+### `graph.dat` CSR format (subtask 3.1.1, `engine/graph/csr.go`)
+
+`graph.dat` is a single whole-snapshot binary file, atomically rewritten (temp file + fsync +
+rename, following `engine/catalog/content.go`'s `writeContentFile` convention) on every write —
+not an incrementally-appended log like `edge_append.go`'s `EdgeAppender`. Layout: a 28-byte header
+(`"GCS1"` magic, format version, node count, edge count, CRC32(IEEE) of the payload) followed by
+three contiguous arrays — sorted source `fileID`s, a CSR offsets array (length nodeCount+1), and a
+flat array of fixed-width edge records (`Target`, `Type`, `Weight`, `LastUpdated`). This is the
+persistence primitive only; the per-node edge-log writer (3.1.2) and the compaction step that
+merges the edge log into this array (3.1.3, including `ENTITY_COOCCUR` weight increments) are
+separate, later subtasks. See `engine/graph/csr.go`'s package doc comment for the full byte
+layout.
+
 ## Edge shape
 
 ```
