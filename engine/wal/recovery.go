@@ -144,7 +144,7 @@ func Replay(dir string, apply func(TypedRecord) error) error {
 // value) and any byte outside the known set are both invalid.
 func isValidRecordType(t RecordType) bool {
 	switch t {
-	case RecordCatalogPut, RecordCatalogDelete, RecordBTreeInsert, RecordBTreeDelete:
+	case RecordCatalogPut, RecordCatalogDelete, RecordBTreeInsert, RecordBTreeDelete, RecordSplitCommit:
 		return true
 	default:
 		return false

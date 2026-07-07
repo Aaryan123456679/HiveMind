@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/Aaryan123456679/HiveMind/engine/btree"
@@ -710,6 +711,415 @@ func TestSplitGraphEdges(t *testing.T) {
 		appender := newTestEdgeAppender(t)
 		if err := ExecuteSplitGraphEdges(appender, originalFileID, []uint64{42}); err != nil {
 			t.Fatalf("ExecuteSplitGraphEdges: %v", err)
+		}
+	})
+}
+
+// putSplittingRecord seeds a CatalogRecord for fileID directly via cat.Put
+// with Status = catalog.StatusSplitting, simulating the state a preceding,
+// successful Orchestrator.BeginSplit(fileID) call (2b.1.3) would have left
+// behind before ExecuteSplitAtomic (2b.3.6) is ever called -- deliberately
+// StatusSplitting, not StatusSplit (contrast putSplitRecord above): see
+// ExecuteSplitAtomic's doc comment for why this subtask's precondition is
+// StatusSplitting, not StatusSplit.
+func putSplittingRecord(t *testing.T, cat *catalog.Catalog, fileID uint64, sizeBytes uint64) {
+	t.Helper()
+	if err := cat.Put(catalog.CatalogRecord{
+		FileID:         fileID,
+		CurrentVersion: 0,
+		SizeBytes:      sizeBytes,
+		Status:         catalog.StatusSplitting,
+	}); err != nil {
+		t.Fatalf("seeding StatusSplitting record for fileID %d: %v", fileID, err)
+	}
+}
+
+// atomicCommitTestDeps bundles every dependency ExecuteSplitAtomic and
+// RecoverSplitCommits need, all rooted at isolated t.TempDir() locations, for
+// TestSplitAtomicCommit's use.
+type atomicCommitTestDeps struct {
+	idAlloc  *catalog.IDAllocator
+	cs       *catalog.ContentStore
+	cat      *catalog.Catalog
+	w        *wal.Writer
+	walDir   string
+	tree     *btree.Tree
+	appender *graph.EdgeAppender
+	guard    *FileGuard
+}
+
+// setAtomicCommitHook installs hook as atomicCommitHook for the duration of
+// the calling (sub)test, automatically restoring it to nil via t.Cleanup.
+// Centralizing this avoids any test accidentally leaking a hook into a
+// later, unrelated subtest.
+func setAtomicCommitHook(t *testing.T, hook func(stage string) error) {
+	t.Helper()
+	atomicCommitHook = hook
+	t.Cleanup(func() { atomicCommitHook = nil })
+}
+
+// assertFullSplitApplied asserts that deps reflects the FULLY-applied
+// end-state of a split from oldPath/originalFileID into newFileIDsByPath,
+// regardless of whether that state was reached via a single uninterrupted
+// ExecuteSplitAtomic call or via RecoverSplitCommits completing a
+// crash-interrupted one.
+func assertFullSplitApplied(t *testing.T, deps atomicCommitTestDeps, oldPath string, originalFileID uint64, newFileIDsByPath map[string]uint64) {
+	t.Helper()
+
+	rec, err := deps.cat.Get(originalFileID)
+	if err != nil {
+		t.Fatalf("cat.Get(originalFileID): %v", err)
+	}
+	if rec.Status != catalog.StatusRedirect {
+		t.Errorf("rec.Status = %v, want catalog.StatusRedirect", rec.Status)
+	}
+	if len(rec.RedirectTargetIDs) != len(newFileIDsByPath) {
+		t.Errorf("len(rec.RedirectTargetIDs) = %d, want %d", len(rec.RedirectTargetIDs), len(newFileIDsByPath))
+	}
+
+	gotOldFileID, found, err := deps.tree.Lookup(oldPath)
+	if err != nil {
+		t.Fatalf("tree.Lookup(oldPath): %v", err)
+	}
+	if !found || gotOldFileID != originalFileID {
+		t.Errorf("tree.Lookup(oldPath) = (%d, %v), want (%d, true)", gotOldFileID, found, originalFileID)
+	}
+
+	newFileIDs := make([]uint64, 0, len(newFileIDsByPath))
+	for newPath, fileID := range newFileIDsByPath {
+		gotFileID, found, err := deps.tree.Lookup(newPath)
+		if err != nil {
+			t.Fatalf("tree.Lookup(%q): %v", newPath, err)
+		}
+		if !found || gotFileID != fileID {
+			t.Errorf("tree.Lookup(%q) = (%d, %v), want (%d, true)", newPath, gotFileID, found, fileID)
+		}
+		newFileIDs = append(newFileIDs, fileID)
+	}
+
+	sort.Slice(newFileIDs, func(i, j int) bool { return newFileIDs[i] < newFileIDs[j] })
+	for i := range newFileIDs {
+		for j := range newFileIDs {
+			if i == j {
+				continue
+			}
+			if !edgeExists(t, deps.appender, graph.Edge{Source: newFileIDs[i], Target: newFileIDs[j], Type: graph.EdgeSplitSibling}) {
+				t.Errorf("missing SPLIT_SIBLING edge %d->%d", newFileIDs[i], newFileIDs[j])
+			}
+		}
+	}
+	for _, id := range newFileIDs {
+		if !edgeExists(t, deps.appender, graph.Edge{Source: originalFileID, Target: id, Type: graph.EdgeRedirect}) {
+			t.Errorf("missing REDIRECT edge %d->%d", originalFileID, id)
+		}
+	}
+}
+
+// edgeExists reads back appender's own directory (via graph.ReadAll) and
+// reports whether want is present exactly (at least once; duplicate-freedom
+// is asserted separately by edgeCount).
+func edgeExists(t *testing.T, appender *graph.EdgeAppender, want graph.Edge) bool {
+	t.Helper()
+	edges := readAppenderEdges(t, appender)
+	return hasEdge(edges, want)
+}
+
+// edgeCount reads back appender's own directory and returns how many times
+// want appears -- used to assert idempotent replay never duplicates edges.
+func edgeCount(t *testing.T, appender *graph.EdgeAppender, want graph.Edge) int {
+	t.Helper()
+	edges := readAppenderEdges(t, appender)
+	n := 0
+	for _, e := range edges {
+		if e == want {
+			n++
+		}
+	}
+	return n
+}
+
+// appenderDirs tracks each *graph.EdgeAppender's backing directory so
+// edgeExists/edgeCount can call graph.ReadAll without EdgeAppender exposing
+// its directory publicly.
+var appenderDirs = map[*graph.EdgeAppender]string{}
+
+func readAppenderEdges(t *testing.T, appender *graph.EdgeAppender) []graph.Edge {
+	t.Helper()
+	dir, ok := appenderDirs[appender]
+	if !ok {
+		t.Fatalf("no known directory for appender %p; use newTestEdgeAppenderTracked", appender)
+	}
+	edges, err := graph.ReadAll(dir)
+	if err != nil {
+		t.Fatalf("graph.ReadAll(%s): %v", dir, err)
+	}
+	return edges
+}
+
+// newTestEdgeAppenderTracked is newTestEdgeAppender, additionally recording
+// the appender's backing directory in appenderDirs so
+// edgeExists/edgeCount/readAppenderEdges can read it back.
+func newTestEdgeAppenderTracked(t *testing.T) *graph.EdgeAppender {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "edges")
+	appender, err := graph.OpenEdgeAppender(dir)
+	if err != nil {
+		t.Fatalf("graph.OpenEdgeAppender: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := appender.Close(); err != nil {
+			t.Errorf("EdgeAppender.Close: %v", err)
+		}
+		delete(appenderDirs, appender)
+	})
+	appenderDirs[appender] = dir
+	return appender
+}
+
+func TestSplitAtomicCommit(t *testing.T) {
+	const oldPath = "fixture-original.md"
+
+	// newDeps is a small local helper composing newAtomicCommitTestDeps with
+	// newTestEdgeAppenderTracked (rather than newTestEdgeAppender), so this
+	// test's own assertions can read back the appender's edges.
+	newDeps := func(t *testing.T, originalFileID uint64) atomicCommitTestDeps {
+		t.Helper()
+		idAlloc, cs, cat, w := newTestContentStoreDepsWithWAL(t)
+		// newTestContentStoreDepsWithWAL roots w at "<root>/wal" (a sibling
+		// of ContentStore's own "<root>/content" directory, NOT nested
+		// beneath it) -- see newTestWAL's own doc comment. ContentPath's
+		// parent directory is therefore "<root>/content", so walDir must
+		// walk up one more level before appending "wal".
+		walDir := filepath.Join(filepath.Dir(filepath.Dir(cs.ContentPath(0))), "wal")
+
+		tree := newTestBtree(t)
+		if err := tree.Insert(oldPath, originalFileID); err != nil {
+			t.Fatalf("seeding oldPath in tree: %v", err)
+		}
+
+		appender := newTestEdgeAppenderTracked(t)
+		guard := NewFileGuard()
+		guard.TryAcquire(originalFileID)
+
+		putSplittingRecord(t, cat, originalFileID, uint64(len(FixtureFileContent)))
+
+		return atomicCommitTestDeps{
+			idAlloc:  idAlloc,
+			cs:       cs,
+			cat:      cat,
+			w:        w,
+			walDir:   walDir,
+			tree:     tree,
+			appender: appender,
+			guard:    guard,
+		}
+	}
+
+	t.Run("happy_path_commits_atomically_and_releases_guard", func(t *testing.T) {
+		const originalFileID = uint64(1)
+		deps := newDeps(t, originalFileID)
+
+		updated, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, deps.tree, deps.appender, deps.w, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan)
+		if err != nil {
+			t.Fatalf("ExecuteSplitAtomic: %v", err)
+		}
+		if updated.Status != catalog.StatusRedirect {
+			t.Errorf("updated.Status = %v, want catalog.StatusRedirect", updated.Status)
+		}
+
+		newFileIDsByPath := make(map[string]uint64, len(FixtureSplitPlan.Files))
+		for i, proposal := range FixtureSplitPlan.Files {
+			newFileIDsByPath[proposal.NewPath] = updated.RedirectTargetIDs[i]
+		}
+		assertFullSplitApplied(t, deps, oldPath, originalFileID, newFileIDsByPath)
+
+		// "Release queued writers on commit": the guard must be released,
+		// and the catalog record's Status must no longer be StatusSplitting
+		// (the actual AdmitWrite gate), both once the transaction commits.
+		if deps.guard.InProgress(originalFileID) {
+			t.Error("guard.InProgress(originalFileID) = true after successful commit, want false (released on commit)")
+		}
+		if updated.Status == catalog.StatusSplitting {
+			t.Error("updated.Status is still StatusSplitting after successful commit; writers would remain incorrectly blocked")
+		}
+	})
+
+	t.Run("nil_and_precondition_checks", func(t *testing.T) {
+		const originalFileID = uint64(1)
+		deps := newDeps(t, originalFileID)
+
+		if _, err := ExecuteSplitAtomic(nil, deps.cat, deps.cs, deps.tree, deps.appender, deps.w, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for nil idAlloc, got nil")
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, nil, deps.cs, deps.tree, deps.appender, deps.w, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for nil cat, got nil")
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, nil, deps.tree, deps.appender, deps.w, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for nil cs, got nil")
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, nil, deps.appender, deps.w, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for nil tree, got nil")
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, deps.tree, nil, deps.w, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for nil appender, got nil")
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, deps.tree, deps.appender, nil, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for nil w, got nil")
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, deps.tree, deps.appender, deps.w, nil, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for nil guard, got nil")
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, deps.tree, deps.appender, deps.w, deps.guard, "", originalFileID, FixtureFileContent, FixtureSplitPlan); err == nil {
+			t.Error("expected error for empty oldPath, got nil")
+		}
+
+		// StatusActive (never SPLITTING at all) must be refused too.
+		const activeFileID = uint64(2)
+		if err := deps.cat.Put(catalog.CatalogRecord{FileID: activeFileID, Status: catalog.StatusActive}); err != nil {
+			t.Fatalf("seeding StatusActive record: %v", err)
+		}
+		if _, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, deps.tree, deps.appender, deps.w, deps.guard, oldPath, activeFileID, FixtureFileContent, FixtureSplitPlan); !errors.Is(err, ErrNotSplitting) {
+			t.Errorf("ExecuteSplitAtomic for StatusActive record = %v, want wrapped ErrNotSplitting", err)
+		}
+	})
+
+	// crashPointTest exercises one of ExecuteSplitAtomic's documented
+	// mid-transaction crash points (see atomicCommitHook's doc comment): it
+	// injects a deterministic simulated crash at hookStage, asserts the
+	// documented pre-recovery invariant for that stage (either "nothing
+	// durable happened" for the one point before the commit's fsync, or
+	// "durable but not yet applied" for every point after it), then calls
+	// RecoverSplitCommits and asserts the split's full, exact effect is
+	// present afterward -- proving recovery converges on the same
+	// fully-applied state regardless of exactly where the simulated crash
+	// landed.
+	crashPointTest := func(hookStage string, wantPreRecoveryStatus catalog.RecordStatus) func(t *testing.T) {
+		return func(t *testing.T) {
+			const originalFileID = uint64(1)
+			deps := newDeps(t, originalFileID)
+
+			simulatedCrash := errors.New("simulated crash")
+			setAtomicCommitHook(t, func(stage string) error {
+				if stage == hookStage {
+					return simulatedCrash
+				}
+				return nil
+			})
+
+			_, err := ExecuteSplitAtomic(deps.idAlloc, deps.cat, deps.cs, deps.tree, deps.appender, deps.w, deps.guard, oldPath, originalFileID, FixtureFileContent, FixtureSplitPlan)
+			if !errors.Is(err, simulatedCrash) {
+				t.Fatalf("ExecuteSplitAtomic with simulated crash at %q = %v, want wrapped simulatedCrash", hookStage, err)
+			}
+
+			// Pre-recovery: catalog status must match what this stage's
+			// documented guarantee promises (StatusSplitting/unchanged for
+			// the before-commit stage, since the transition to
+			// StatusRedirect only happens inside the same atomic apply the
+			// commit record's fsync gates).
+			rec, getErr := deps.cat.Get(originalFileID)
+			if getErr != nil {
+				t.Fatalf("cat.Get(originalFileID) pre-recovery: %v", getErr)
+			}
+			if rec.Status != wantPreRecoveryStatus {
+				t.Errorf("pre-recovery rec.Status = %v, want %v", rec.Status, wantPreRecoveryStatus)
+			}
+
+			// The guard must NOT have been released: the transaction did
+			// not fully apply, so a fresh split attempt must still be
+			// refused.
+			if !deps.guard.InProgress(originalFileID) {
+				t.Error("guard.InProgress(originalFileID) = false after an incomplete commit, want true (guard must not be released early)")
+			}
+
+			// Recovery must converge on the fully-applied state regardless
+			// of exactly where the simulated crash landed, EXCEPT for the
+			// one stage before the commit record was ever appended, where
+			// there is nothing to recover and the pre-split state must
+			// remain fully, exactly intact.
+			if err := RecoverSplitCommits(deps.walDir, deps.cat, deps.tree, deps.appender); err != nil {
+				t.Fatalf("RecoverSplitCommits: %v", err)
+			}
+
+			if hookStage == "before_commit_append" {
+				rec, err := deps.cat.Get(originalFileID)
+				if err != nil {
+					t.Fatalf("cat.Get(originalFileID) post-recovery: %v", err)
+				}
+				if rec.Status != catalog.StatusSplitting {
+					t.Errorf("post-recovery (no-op expected) rec.Status = %v, want catalog.StatusSplitting", rec.Status)
+				}
+				gotOldFileID, found, err := deps.tree.Lookup(oldPath)
+				if err != nil || !found || gotOldFileID != originalFileID {
+					t.Errorf("tree.Lookup(oldPath) post-recovery (no-op expected) = (%d, %v, %v), want (%d, true, nil)", gotOldFileID, found, err, originalFileID)
+				}
+				edges := readAppenderEdges(t, deps.appender)
+				if len(edges) != 0 {
+					t.Errorf("post-recovery (no-op expected) edges = %v, want none", edges)
+				}
+				return
+			}
+
+			// Every other stage: recovery must have completed the full
+			// split.
+			rec, err = deps.cat.Get(originalFileID)
+			if err != nil {
+				t.Fatalf("cat.Get(originalFileID) post-recovery: %v", err)
+			}
+			newFileIDsByPath := make(map[string]uint64, len(FixtureSplitPlan.Files))
+			for i, proposal := range FixtureSplitPlan.Files {
+				if i >= len(rec.RedirectTargetIDs) {
+					t.Fatalf("rec.RedirectTargetIDs too short: %v", rec.RedirectTargetIDs)
+				}
+				newFileIDsByPath[proposal.NewPath] = rec.RedirectTargetIDs[i]
+			}
+			assertFullSplitApplied(t, deps, oldPath, originalFileID, newFileIDsByPath)
+
+			// Idempotency: running recovery again must not duplicate
+			// anything (extra btree inserts are naturally upserts; graph
+			// edges specifically rely on AppendEdgeIfAbsent).
+			if err := RecoverSplitCommits(deps.walDir, deps.cat, deps.tree, deps.appender); err != nil {
+				t.Fatalf("second RecoverSplitCommits: %v", err)
+			}
+			for newPath, id := range newFileIDsByPath {
+				_ = newPath
+				if n := edgeCount(t, deps.appender, graph.Edge{Source: rec.FileID, Target: id, Type: graph.EdgeRedirect}); n != 1 {
+					t.Errorf("REDIRECT edge %d->%d appears %d times after two recoveries, want exactly 1", rec.FileID, id, n)
+				}
+			}
+		}
+	}
+
+	t.Run("crash_before_commit_append_no_visible_effect", crashPointTest("before_commit_append", catalog.StatusSplitting))
+	t.Run("crash_after_commit_before_catalog_put_recovers_fully", crashPointTest("after_commit_before_catalog_put", catalog.StatusSplitting))
+	t.Run("crash_after_catalog_put_before_btree_recovers_fully", crashPointTest("after_catalog_put_before_btree", catalog.StatusRedirect))
+	t.Run("crash_after_btree_before_graph_recovers_fully", crashPointTest("after_btree_before_graph", catalog.StatusRedirect))
+
+	t.Run("recover_split_commits_nil_checks", func(t *testing.T) {
+		const originalFileID = uint64(1)
+		deps := newDeps(t, originalFileID)
+		if err := RecoverSplitCommits(deps.walDir, nil, deps.tree, deps.appender); err == nil {
+			t.Error("expected error for nil cat, got nil")
+		}
+		if err := RecoverSplitCommits(deps.walDir, deps.cat, nil, deps.appender); err == nil {
+			t.Error("expected error for nil tree, got nil")
+		}
+		if err := RecoverSplitCommits(deps.walDir, deps.cat, deps.tree, nil); err == nil {
+			t.Error("expected error for nil appender, got nil")
+		}
+	})
+
+	t.Run("recover_split_commits_empty_wal_dir_is_noop", func(t *testing.T) {
+		const originalFileID = uint64(1)
+		deps := newDeps(t, originalFileID)
+		if err := RecoverSplitCommits(deps.walDir, deps.cat, deps.tree, deps.appender); err != nil {
+			t.Fatalf("RecoverSplitCommits on empty WAL dir: %v", err)
+		}
+		rec, err := deps.cat.Get(originalFileID)
+		if err != nil {
+			t.Fatalf("cat.Get: %v", err)
+		}
+		if rec.Status != catalog.StatusSplitting {
+			t.Errorf("rec.Status = %v, want catalog.StatusSplitting (unchanged)", rec.Status)
 		}
 	})
 }

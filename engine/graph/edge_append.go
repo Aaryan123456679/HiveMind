@@ -143,7 +143,8 @@ const defaultMaxSegmentBytes = 4 * 1024 * 1024
 // ReadAll function exists solely to support verifying append-only durability
 // (e.g. in tests), not as a general read API.
 type EdgeAppender struct {
-	w *wal.Writer
+	w   *wal.Writer
+	dir string
 }
 
 // OpenEdgeAppender opens (creating if necessary) an append-only edge log
@@ -155,7 +156,7 @@ func OpenEdgeAppender(dir string) (*EdgeAppender, error) {
 	if err != nil {
 		return nil, fmt.Errorf("graph: opening edge appender at %s: %w", dir, err)
 	}
-	return &EdgeAppender{w: w}, nil
+	return &EdgeAppender{w: w, dir: dir}, nil
 }
 
 // AppendEdge durably appends edge to the log, fsyncing before it returns.
@@ -167,6 +168,42 @@ func (a *EdgeAppender) AppendEdge(edge Edge) error {
 		return fmt.Errorf("graph: appending edge: %w", err)
 	}
 	return nil
+}
+
+// AppendEdgeIfAbsent durably appends edge to the log, exactly like AppendEdge,
+// UNLESS an edge exactly matching it (same Source, Target, and Type) has
+// already been durably appended to this appender's log, in which case it is a
+// no-op that returns nil without writing anything.
+//
+// This exists specifically to make replaying a subtask 2b.3.6
+// RecordSplitCommit record idempotent: split.RecoverSplitCommits may run
+// against a log that already contains some (but possibly not all) of a
+// split's edges — e.g. a crash occurred after the split's WAL commit record
+// was durably fsynced but partway through re-appending edges, and recovery
+// is then invoked one or more times before the process is restarted again.
+// Because engine/graph is deliberately append-only and offers no
+// edge-rewrite/dedup-on-read API (CSR storage/compaction is Epic 3's job),
+// naively calling AppendEdge again for every edge on every recovery attempt
+// would silently accumulate duplicate SPLIT_SIBLING/REDIRECT edges.
+// AppendEdgeIfAbsent's read-then-append check trades a full log scan (via
+// ReadAll) for that duplicate-avoidance guarantee — acceptable here because
+// a single split produces only O(n^2) edges for a small n (typically 2-3
+// new files), not a hot high-throughput path.
+//
+// This is NOT a general-purpose "upsert" primitive for arbitrary callers:
+// it is scoped to this narrow crash-recovery-replay use case, and still
+// provides no traversal/query API beyond what ReadAll already offers.
+func (a *EdgeAppender) AppendEdgeIfAbsent(edge Edge) error {
+	existing, err := ReadAll(a.dir)
+	if err != nil {
+		return fmt.Errorf("graph: append-if-absent: reading existing edges in %s: %w", a.dir, err)
+	}
+	for _, e := range existing {
+		if e == edge {
+			return nil
+		}
+	}
+	return a.AppendEdge(edge)
 }
 
 // Close closes the underlying writer's open segment file.

@@ -506,3 +506,474 @@ func ExecuteSplitGraphEdges(
 
 	return nil
 }
+
+// atomicCommitHook, if non-nil, is invoked synchronously by ExecuteSplitAtomic
+// at well-defined stages of its atomic commit sequence, letting tests
+// deterministically simulate a crash at exactly that point: a stage callback
+// that returns a non-nil error causes ExecuteSplitAtomic to propagate that
+// error immediately, executing no further steps -- indistinguishable, from
+// the caller's perspective, from the process having actually died at that
+// exact instant (no deferred/finalizer/graceful-shutdown code runs that a
+// real crash wouldn't also skip). nil (a no-op) in production. This mirrors
+// this repo's established test-only synchronous-hook idiom (see e.g.
+// engine/btree/lookup.go's optimisticReadHook/optimisticRetryHook, and
+// engine/btree/insert.go's crabRetryHook).
+//
+// Recognized stage names (see ExecuteSplitAtomic's doc comment for the full
+// failure-model writeup this test-only injection point is designed around):
+//   - "before_commit_append": immediately before the split's single WAL
+//     commit record (wal.RecordSplitCommit) is appended -- i.e. before the
+//     transaction's point of no return. A crash injected here must leave NO
+//     visible catalog/B+Tree/graph effect: only harmless, unreferenced
+//     orphan content files (the new split-off files and the not-yet-visible
+//     redirect stub) may already be on disk.
+//   - "after_commit_before_catalog_put": immediately after the WAL commit
+//     record has been durably fsynced (wal.AppendAndApply's Append call has
+//     already returned successfully), before cat.Put is even invoked. A
+//     crash injected here must be fully, deterministically recoverable via
+//     RecoverSplitCommits.
+//   - "after_catalog_put_before_btree": after cat.Put has applied the final
+//     (StatusRedirect) catalog record, before the B+Tree inserts run. Also
+//     must be fully recoverable.
+//   - "after_btree_before_graph": after the B+Tree inserts (new paths, plus
+//     the old path's repoint to the reused originalFileID) have run, before
+//     the graph edge appends run. Also must be fully recoverable.
+var atomicCommitHook func(stage string) error
+
+// runAtomicCommitHook invokes atomicCommitHook for stage if it is set,
+// returning its error (wrapped with stage context) if any, or nil if the
+// hook is unset or returns nil. Centralizing this here (rather than
+// repeating the nil-check at every call site) keeps ExecuteSplitAtomic's own
+// body focused on its real steps.
+func runAtomicCommitHook(stage string) error {
+	if atomicCommitHook == nil {
+		return nil
+	}
+	if err := atomicCommitHook(stage); err != nil {
+		return fmt.Errorf("split: execute: atomic commit: simulated crash at stage %q: %w", stage, err)
+	}
+	return nil
+}
+
+// ExecuteSplitAtomic is subtask 2b.3.6's ("Commit entire split as a single
+// WAL-covered, fsynced transaction; release queued writers on commit")
+// execution primitive: the capstone that composes 2b.3.1
+// (ExecuteSplitAllocateAndWrite), 2b.3.2's catalog-transition half
+// (ExecuteSplitRedirectStub's Split->Redirect logic, inlined here rather than
+// called directly -- see "Why not just call the four prior Execute* functions
+// in sequence" below), 2b.3.3 (ExecuteSplitBtreeInsert's logic), and 2b.3.5
+// (ExecuteSplitGraphEdges's logic, via the shared appendSplitGraphEdges
+// helper) under ONE atomic, crash-safe transaction discipline.
+//
+// # Precondition
+//
+// originalFileID's catalog record must already have Status ==
+// catalog.StatusSplitting (i.e. a prior, successful
+// Orchestrator.BeginSplit(originalFileID) call, per 2b.1.3) -- ExecuteSplitAtomic
+// refuses with ErrNotSplitting, mutating nothing, otherwise. Deliberately
+// StatusSplitting, not catalog.StatusSplit (contrast ExecuteSplitRedirectStub's
+// own precondition): see "release queued writers on commit" below for why.
+//
+// # Failure model and the atomicity guarantee actually achieved
+//
+// A crash (or any error) can occur at one of a small number of well-defined
+// points, each independently exercised by TestSplitAtomicCommit via
+// atomicCommitHook:
+//
+//  1. Before any content files are written, or after new-file/stub content
+//     files are written but before the WAL commit record is appended
+//     ("before_commit_append"): NOTHING durable and catalog/B+Tree/graph
+//     -visible has happened. The new-file and stub content files may already
+//     exist on disk, but they are unreferenced by any catalog record, B+Tree
+//     entry, or graph edge -- inert, harmless garbage, not a partial split.
+//     The old path continues to resolve exactly as it did before this call
+//     (Status remains StatusSplitting; a caller may retry the whole split,
+//     which will allocate fresh fileIDs and leave the previous attempt's
+//     orphan files behind, exactly as 2b.3.1's own documented scope boundary
+//     already discloses). This satisfies "no partial split, pre-split state
+//     fully intact."
+//
+//  2. After the WAL commit record (wal.RecordSplitCommit) is durably
+//     appended and fsynced -- Writer.Append inside wal.AppendAndApply has
+//     returned successfully -- but before, or partway through, applying its
+//     effects (cat.Put, the B+Tree inserts, the graph edge appends): the
+//     split's FULL intended effect is now durably described on disk, even
+//     though it may not yet be (fully) applied in memory/on-disk index
+//     structures. This is the transaction's single point of no return. A
+//     crash anywhere in this window is recovered by calling
+//     RecoverSplitCommits against the same WAL directory, which decodes the
+//     commit record and re-applies cat.Put, every B+Tree insert, and every
+//     graph edge append (idempotently, via graph.EdgeAppender.AppendEdgeIfAbsent)
+//     -- deterministically reaching the exact same fully-applied state
+//     regardless of exactly how much of the original apply had already run
+//     before the crash. This satisfies "full effect present after recovery,
+//     or reliably replayable to become fully present."
+//
+// Only ONE fsync (the WAL commit record's) defines the boundary between
+// these two cases; every step after it is designed to be safely re-run any
+// number of times (cat.Put is a documented upsert; *btree.Tree.Insert is a
+// documented upsert; AppendEdgeIfAbsent is check-then-append specifically to
+// make graph edge replay idempotent too).
+//
+// # What is honestly NOT covered by this guarantee (residual risk)
+//
+//   - engine/btree's own persistence model (NodeStore's direct, per-call
+//     durability plus a separate, manual, out-of-band SaveRoot checkpoint;
+//     see .cdr/memory/pending.md's "btree SaveRoot / WAL-replay gap" item,
+//     pre-existing since task-1.2, NOT introduced or fixed by this subtask)
+//     is unchanged by RecoverSplitCommits: RecoverSplitCommits replays
+//     directly against a live *btree.Tree object that the CALLER must have
+//     already correctly reconstructed (i.e. pointed at the right root) by
+//     whatever means engine/btree's own recovery story eventually provides.
+//     This subtask closes the crash-recovery gap for WHICH mutations a
+//     completed split needs redone (catalog + B+Tree + graph, all now
+//     described by one durable record), not the separate, pre-existing
+//     question of how the B+Tree's own root pointer survives a real process
+//     restart. This is an explicit, bounded scope decision: fixing btree's
+//     SaveRoot gap is a larger, separate concern that predates issue #12.
+//   - FileGuard's in-memory splitInProgress flag does not survive a real
+//     process restart (documented already in guard.go/orchestrate.go). A
+//     crash before this fileID's guard is released via this function leaves
+//     it logically "still splitting" from a fresh process's point of view
+//     only if a fresh FileGuard is reused across the restart; in the much
+//     more common case of a genuine process restart, a brand-new (empty)
+//     FileGuard is constructed, and BeginSplit would need the CATALOG
+//     record's Status (not the guard) to decide whether a fresh split attempt
+//     is safe -- which RecoverSplitCommits makes correct, since it restores
+//     Status to StatusRedirect (no longer StatusSplitting) once replayed.
+//     The general "abandoned StatusSplitting record with no split ever
+//     attempted at all" case (tracked in pending.md) is narrowed, but not
+//     eliminated, by this subtask: specifically, it is narrowed down to
+//     "crash occurred before THIS function's own WAL commit point", a much
+//     smaller window than "any time between BeginSplit and completion." A
+//     general lease/heartbeat/timeout-based reversion of a genuinely stuck
+//     StatusSplitting record (with no split executor having ever reached its
+//     own commit point) remains explicitly out of scope for this subtask, as
+//     it was for 2b.1.3.
+//
+// # "Release queued writers on commit"
+//
+// Orchestrator.AdmitWrite (2b.1.3) already refuses writers with
+// ErrSplitInProgress precisely when, and only when, a fileID's catalog
+// record Status == catalog.StatusSplitting. That existing mechanism IS the
+// "queued writers" gate; no new queue/channel/condvar primitive is added or
+// needed here (2b.1.3's Orchestrator doc comment already anticipates this:
+// "superseded once issue #12's single atomic WAL-covered commit lands, which
+// is what actually releases queued writers on commit"). What THIS subtask
+// resolves is exactly WHEN Status stops being StatusSplitting: it happens
+// atomically, as part of this function's single WAL-covered apply step (the
+// cat.Put call inside wal.AppendAndApply's apply closure), together with the
+// B+Tree and graph updates -- not one WAL-covered step earlier and
+// separately, the way calling Orchestrator.EndSplit(fileID, catalog.StatusSplit)
+// before the redirect-stub/B+Tree/graph work (as 2b.3.2's own doc comments,
+// written before this subtask existed, describe) would do. That earlier
+// design would flip Status away from StatusSplitting -- and thus let
+// AdmitWrite start admitting writers again -- BEFORE the redirect stub,
+// B+Tree repoint, and graph edges were actually in place: exactly the
+// "released before commit" bug this subtask's acceptance criteria warn
+// against. ExecuteSplitAtomic therefore does NOT call Orchestrator.EndSplit
+// at all; it performs its own single Splitting->Redirect catalog transition,
+// batched into the same atomic apply as the B+Tree/graph updates, so
+// Status leaves StatusSplitting at the exact same instant the rest of the
+// split's effect becomes visible.
+//
+// Separately, guard.Release(originalFileID) (the FileGuard CAS flag
+// TryAcquire originally won) is called only once the ENTIRE atomic commit
+// has fully applied (all of cat.Put, every B+Tree insert, and every graph
+// edge append succeeded) -- matching FileGuard's own documented "release
+// once the split completes" contract, and ensuring a fresh split attempt for
+// this fileID (or whatever it becomes) cannot be admitted mid-transaction.
+//
+// # Scope boundary
+//
+// ExecuteSplitAtomic does not call Orchestrator.BeginSplit itself (the
+// caller is expected to have already done so); it also does not call
+// ExecuteSplitRedirectStub or ExecuteSplitGraphEdges directly, since both of
+// those functions perform their OWN independent WAL-covered or unwrapped
+// mutation outside this function's single commit record -- reusing them
+// as-is here would reintroduce exactly the multiple-separately-durable-steps
+// problem this subtask exists to eliminate. Their stub-content-building
+// (buildRedirectStubContent) and graph-edge-set (via the shared
+// appendSplitGraphEdges helper) LOGIC is reused; their own WAL-transaction
+// wrapping is not.
+func ExecuteSplitAtomic(
+	idAlloc *catalog.IDAllocator,
+	cat *catalog.Catalog,
+	cs *catalog.ContentStore,
+	tree *btree.Tree,
+	appender *graph.EdgeAppender,
+	w *wal.Writer,
+	guard *FileGuard,
+	oldPath string,
+	originalFileID uint64,
+	originalContent []byte,
+	plan SplitPlan,
+) (catalog.CatalogRecord, error) {
+	if idAlloc == nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: idAlloc must not be nil")
+	}
+	if cat == nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: cat must not be nil")
+	}
+	if cs == nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: cs must not be nil")
+	}
+	if tree == nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: tree must not be nil")
+	}
+	if appender == nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: appender must not be nil")
+	}
+	if w == nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: w must not be nil")
+	}
+	if guard == nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: guard must not be nil")
+	}
+	if oldPath == "" {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: oldPath must not be empty")
+	}
+
+	rec, err := cat.Get(originalFileID)
+	if err != nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: reading fileID %d: %w", originalFileID, err)
+	}
+	if rec.Status != catalog.StatusSplitting {
+		return catalog.CatalogRecord{}, fmt.Errorf("%w: fileID %d has Status %v", ErrNotSplitting, originalFileID, rec.Status)
+	}
+
+	// Allocate + write new split-off content files (2b.3.1's logic). Not yet
+	// visible via catalog/B+Tree/graph: harmless if this is as far as we get
+	// before a crash.
+	newFileIDsByPath, err := ExecuteSplitAllocateAndWrite(idAlloc, cs, originalContent, plan)
+	if err != nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: %w", err)
+	}
+
+	if len(newFileIDsByPath) == 0 {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: split plan produced no new files")
+	}
+	if len(newFileIDsByPath) > catalog.MaxRedirectTargets {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: got %d redirect targets, max %d", len(newFileIDsByPath), catalog.MaxRedirectTargets)
+	}
+
+	// Canonical ordering contract (see .cdr/memory/pending.md's "Canonical
+	// newFileIDs ordering contract needed before 2b.3.6"): sort by NewPath,
+	// matching ExecuteSplitBtreeInsert's own established convention, so
+	// RedirectTargetIDs/stub content/entry order never silently depends on
+	// Go's unspecified map iteration order.
+	newPaths := make([]string, 0, len(newFileIDsByPath))
+	for newPath := range newFileIDsByPath {
+		newPaths = append(newPaths, newPath)
+	}
+	sort.Strings(newPaths)
+
+	newFileIDs := make([]uint64, len(newPaths))
+	entries := make([]wal.SplitCommitEntry, len(newPaths))
+	for i, newPath := range newPaths {
+		fileID := newFileIDsByPath[newPath]
+		newFileIDs[i] = fileID
+		entries[i] = wal.SplitCommitEntry{NewPath: newPath, FileID: fileID}
+	}
+
+	// Write the redirect stub at the old path (2b.3.2's stub-content logic).
+	// Still not visible: the catalog record's Status/RedirectTargetIDs have
+	// not changed yet.
+	stubContent := buildRedirectStubContent(newFileIDs)
+	if err := writeNewContentFile(cs.ContentPath(originalFileID), stubContent); err != nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: writing stub content for fileID %d: %w", originalFileID, err)
+	}
+
+	updated := rec
+	updated.Status = catalog.StatusRedirect
+	updated.RedirectTargetIDs = newFileIDs
+	updated.SizeBytes = uint64(len(stubContent))
+
+	encoded, err := updated.Encode()
+	if err != nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: encoding fileID %d: %w", originalFileID, err)
+	}
+
+	if err := runAtomicCommitHook("before_commit_append"); err != nil {
+		return catalog.CatalogRecord{}, err
+	}
+
+	commitRec := wal.NewSplitCommitRecord(wal.SplitCommitPayload{
+		OriginalFileID:       originalFileID,
+		OldPath:              oldPath,
+		EncodedCatalogRecord: encoded,
+		Entries:              entries,
+	})
+
+	// This wal.AppendAndApply call IS the transaction's single point of no
+	// return: Writer.Append (durably fsyncing commitRec) happens first and
+	// unconditionally; only once it has succeeded does the apply closure
+	// below run cat.Put, the B+Tree inserts, and the graph edge appends, in
+	// that order, with a hook checkpoint between each so
+	// TestSplitAtomicCommit can deterministically simulate a crash at any of
+	// those points and prove RecoverSplitCommits completes the transaction
+	// regardless of exactly where it stopped.
+	if _, err := wal.AppendAndApply(w, commitRec, func() error {
+		if err := runAtomicCommitHook("after_commit_before_catalog_put"); err != nil {
+			return err
+		}
+		if err := cat.Put(updated); err != nil {
+			return fmt.Errorf("committing catalog record fileID %d: %w", originalFileID, err)
+		}
+
+		if err := runAtomicCommitHook("after_catalog_put_before_btree"); err != nil {
+			return err
+		}
+		for _, newPath := range newPaths {
+			if err := tree.Insert(newPath, newFileIDsByPath[newPath]); err != nil {
+				return fmt.Errorf("repointing new path %q (fileID %d): %w", newPath, newFileIDsByPath[newPath], err)
+			}
+		}
+		if err := tree.Insert(oldPath, originalFileID); err != nil {
+			return fmt.Errorf("repointing old path %q (fileID %d): %w", oldPath, originalFileID, err)
+		}
+
+		if err := runAtomicCommitHook("after_btree_before_graph"); err != nil {
+			return err
+		}
+		if err := appendSplitGraphEdges(appender, originalFileID, newFileIDs); err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: %w", err)
+	}
+
+	// Every step above succeeded: the split is fully applied. Only now do we
+	// release the guard, matching "release queued writers on commit" (see
+	// this function's doc comment).
+	guard.Release(originalFileID)
+
+	return updated, nil
+}
+
+// appendSplitGraphEdges appends the full deterministic edge set a split
+// between originalFileID and newFileIDs produces -- the same SPLIT_SIBLING
+// all-pairs-complete-graph plus REDIRECT edge set ExecuteSplitGraphEdges
+// (2b.3.5) appends -- using graph.EdgeAppender.AppendEdgeIfAbsent rather than
+// AppendEdge, so that calling this helper more than once for the same
+// (originalFileID, newFileIDs) pair (as RecoverSplitCommits may do, e.g. if
+// invoked more than once, or after a crash left some but not all of these
+// edges already durably appended) never produces duplicate edges.
+func appendSplitGraphEdges(appender *graph.EdgeAppender, originalFileID uint64, newFileIDs []uint64) error {
+	ids := make([]uint64, len(newFileIDs))
+	copy(ids, newFileIDs)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	for i := range ids {
+		for j := range ids {
+			if i == j {
+				continue
+			}
+			edge := graph.Edge{Source: ids[i], Target: ids[j], Type: graph.EdgeSplitSibling}
+			if err := appender.AppendEdgeIfAbsent(edge); err != nil {
+				return fmt.Errorf("split: execute: graph edges: appending SPLIT_SIBLING edge %d->%d: %w", ids[i], ids[j], err)
+			}
+		}
+	}
+
+	for _, id := range ids {
+		edge := graph.Edge{Source: originalFileID, Target: id, Type: graph.EdgeRedirect}
+		if err := appender.AppendEdgeIfAbsent(edge); err != nil {
+			return fmt.Errorf("split: execute: graph edges: appending REDIRECT edge %d->%d: %w", originalFileID, id, err)
+		}
+	}
+
+	return nil
+}
+
+// RecoverSplitCommits is subtask 2b.3.6's crash-recovery replay pass: it
+// scans the WAL rooted at walDir (the SAME WAL directory ExecuteSplitAtomic's
+// w *wal.Writer is rooted at) for wal.RecordSplitCommit records via
+// wal.Replay, and for each one found, re-applies its full effect --
+// cat.Put(the final catalog record), every B+Tree insert (new paths, plus the
+// old path's repoint), and every graph edge append -- via the exact same
+// logic ExecuteSplitAtomic's own apply closure uses (catalog.Decode +
+// cat.Put, tree.Insert, and the shared appendSplitGraphEdges helper).
+//
+// This directly closes the crash-recovery gap tracked in .cdr/memory/pending.md
+// since 2b.3.4/2b.3.5 ("engine/graph edge-append records have no
+// crash-recovery replay path"): graph edges produced by a split are now
+// deterministically re-derivable from, and replayed as part of, this single
+// WAL record type's recovery pass, going through engine/wal's Replay
+// machinery exactly the way catalog/B+Tree WAL records already do -- not
+// merely durable at the byte level as 2b.3.4/2b.3.5 left them.
+//
+// Every step RecoverSplitCommits performs is idempotent (cat.Put is a
+// documented upsert; *btree.Tree.Insert is a documented upsert;
+// appendSplitGraphEdges uses AppendEdgeIfAbsent), so calling
+// RecoverSplitCommits more than once, or over a WAL directory where some
+// commit records were already fully applied before a later crash, is always
+// safe and converges on the same fully-applied state.
+//
+// wal.Replay itself dispatches on every record type it finds in walDir, not
+// just wal.RecordSplitCommit; records of other types (e.g. RecordCatalogPut
+// entries unrelated to a split) are simply skipped here, mirroring
+// catalog.RecoverFromWAL's own documented "skip record types this function
+// isn't responsible for" behavior. Consequently, full recovery of a WAL
+// directory shared by engine/catalog and engine/split requires running BOTH
+// catalog.RecoverFromWAL(cat, walDir) AND RecoverSplitCommits(walDir, cat,
+// tree, appender) -- each owns its own record type(s) and neither asserts
+// exclusive ownership of the directory.
+//
+// RecoverSplitCommits does not itself reconstruct *btree.Tree's root pointer
+// or FileGuard's in-memory state; see ExecuteSplitAtomic's doc comment
+// ("What is honestly NOT covered by this guarantee") for why those remain
+// separate, pre-existing concerns.
+func RecoverSplitCommits(walDir string, cat *catalog.Catalog, tree *btree.Tree, appender *graph.EdgeAppender) error {
+	if cat == nil {
+		return fmt.Errorf("split: recover: cat must not be nil")
+	}
+	if tree == nil {
+		return fmt.Errorf("split: recover: tree must not be nil")
+	}
+	if appender == nil {
+		return fmt.Errorf("split: recover: appender must not be nil")
+	}
+
+	err := wal.Replay(walDir, func(rec wal.TypedRecord) error {
+		if rec.Type != wal.RecordSplitCommit {
+			return nil
+		}
+
+		payload, err := rec.AsSplitCommit()
+		if err != nil {
+			return fmt.Errorf("decoding split commit payload: %w", err)
+		}
+
+		updated, err := catalog.Decode(payload.EncodedCatalogRecord)
+		if err != nil {
+			return fmt.Errorf("decoding catalog record for fileID %d: %w", payload.OriginalFileID, err)
+		}
+		if err := cat.Put(updated); err != nil {
+			return fmt.Errorf("replaying catalog Put for fileID %d: %w", payload.OriginalFileID, err)
+		}
+
+		newFileIDs := make([]uint64, 0, len(payload.Entries))
+		for _, entry := range payload.Entries {
+			if err := tree.Insert(entry.NewPath, entry.FileID); err != nil {
+				return fmt.Errorf("replaying B+Tree insert for %q (fileID %d): %w", entry.NewPath, entry.FileID, err)
+			}
+			newFileIDs = append(newFileIDs, entry.FileID)
+		}
+		if err := tree.Insert(payload.OldPath, payload.OriginalFileID); err != nil {
+			return fmt.Errorf("replaying B+Tree repoint of old path %q (fileID %d): %w", payload.OldPath, payload.OriginalFileID, err)
+		}
+
+		if err := appendSplitGraphEdges(appender, payload.OriginalFileID, newFileIDs); err != nil {
+			return fmt.Errorf("replaying graph edges for fileID %d: %w", payload.OriginalFileID, err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("split: recover: replaying split commits in %s: %w", walDir, err)
+	}
+	return nil
+}

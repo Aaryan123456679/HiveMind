@@ -127,6 +127,73 @@ func TestRecordEncodeDecodeRoundTrip(t *testing.T) {
 			t.Errorf("Record = %v, want empty", gotPut.Record)
 		}
 	})
+
+	t.Run("SplitCommit", func(t *testing.T) {
+		want := SplitCommitPayload{
+			OriginalFileID:       1,
+			OldPath:              "/topics/original.md",
+			EncodedCatalogRecord: []byte{9, 8, 7, 6, 5},
+			Entries: []SplitCommitEntry{
+				{NewPath: "/topics/part-1.md", FileID: 2},
+				{NewPath: "/topics/part-2.md", FileID: 3},
+			},
+		}
+		rec := NewSplitCommitRecord(want)
+		if rec.Type != RecordSplitCommit {
+			t.Fatalf("Type = %v, want RecordSplitCommit", rec.Type)
+		}
+
+		decodedTR, err := DecodeTypedRecord(rec.Encode())
+		if err != nil {
+			t.Fatalf("DecodeTypedRecord: %v", err)
+		}
+		if decodedTR.Type != RecordSplitCommit {
+			t.Fatalf("decoded Type = %v, want RecordSplitCommit", decodedTR.Type)
+		}
+
+		got, err := decodedTR.AsSplitCommit()
+		if err != nil {
+			t.Fatalf("AsSplitCommit: %v", err)
+		}
+		if got.OriginalFileID != want.OriginalFileID {
+			t.Errorf("OriginalFileID = %d, want %d", got.OriginalFileID, want.OriginalFileID)
+		}
+		if got.OldPath != want.OldPath {
+			t.Errorf("OldPath = %q, want %q", got.OldPath, want.OldPath)
+		}
+		if string(got.EncodedCatalogRecord) != string(want.EncodedCatalogRecord) {
+			t.Errorf("EncodedCatalogRecord = %v, want %v", got.EncodedCatalogRecord, want.EncodedCatalogRecord)
+		}
+		if len(got.Entries) != len(want.Entries) {
+			t.Fatalf("len(Entries) = %d, want %d", len(got.Entries), len(want.Entries))
+		}
+		for i := range want.Entries {
+			if got.Entries[i] != want.Entries[i] {
+				t.Errorf("Entries[%d] = %+v, want %+v", i, got.Entries[i], want.Entries[i])
+			}
+		}
+	})
+
+	t.Run("SplitCommit with no entries and empty old path", func(t *testing.T) {
+		rec := NewSplitCommitRecord(SplitCommitPayload{OriginalFileID: 42})
+		decodedTR, err := DecodeTypedRecord(rec.Encode())
+		if err != nil {
+			t.Fatalf("DecodeTypedRecord: %v", err)
+		}
+		got, err := decodedTR.AsSplitCommit()
+		if err != nil {
+			t.Fatalf("AsSplitCommit: %v", err)
+		}
+		if got.OriginalFileID != 42 {
+			t.Errorf("OriginalFileID = %d, want 42", got.OriginalFileID)
+		}
+		if got.OldPath != "" {
+			t.Errorf("OldPath = %q, want empty", got.OldPath)
+		}
+		if len(got.Entries) != 0 {
+			t.Errorf("Entries = %v, want empty", got.Entries)
+		}
+	})
 }
 
 // TestAsXxxTypeMismatch verifies each AsXxx accessor rejects a TypedRecord
@@ -142,6 +209,9 @@ func TestAsXxxTypeMismatch(t *testing.T) {
 	}
 	if _, err := rec.AsBTreeDelete(); err == nil {
 		t.Error("AsBTreeDelete on a CatalogDelete record: expected error, got nil")
+	}
+	if _, err := rec.AsSplitCommit(); err == nil {
+		t.Error("AsSplitCommit on a CatalogDelete record: expected error, got nil")
 	}
 }
 

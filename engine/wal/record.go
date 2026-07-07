@@ -36,6 +36,22 @@ const (
 
 	// RecordBTreeDelete represents a B+Tree index key being removed.
 	RecordBTreeDelete RecordType = 4
+
+	// RecordSplitCommit represents subtask 2b.3.6's ("Commit entire split as
+	// a single WAL-covered, fsynced transaction") atomic split-commit point:
+	// one record that durably describes everything a completed
+	// engine/split auto-split must make true — the final (post-split)
+	// catalog record for the original fileID, plus every (newPath, newFileID)
+	// pair the split produced. This is deliberately a single, self-contained
+	// record (rather than, say, reusing RecordCatalogPut alongside a separate
+	// B+Tree/graph record) so that ONE Writer.Append/fsync is the entire
+	// split's point of no return: see split.ExecuteSplitAtomic and
+	// split.RecoverSplitCommits, which is this record type's dedicated
+	// recovery pass (catalog.RecoverFromWAL deliberately skips it, exactly as
+	// it already skips RecordBTreeInsert/RecordBTreeDelete today — see that
+	// function's own doc comment on coexisting record types owned by other
+	// packages).
+	RecordSplitCommit RecordType = 5
 )
 
 // String returns a human-readable name for r, used in error messages.
@@ -49,6 +65,8 @@ func (r RecordType) String() string {
 		return "BTreeInsert"
 	case RecordBTreeDelete:
 		return "BTreeDelete"
+	case RecordSplitCommit:
+		return "SplitCommit"
 	default:
 		return fmt.Sprintf("RecordType(%d)", byte(r))
 	}
@@ -319,6 +337,158 @@ func (t TypedRecord) AsBTreeDelete() (BTreeDeletePayload, error) {
 		return BTreeDeletePayload{}, fmt.Errorf("wal: AsBTreeDelete called on record of type %s, want %s", t.Type, RecordBTreeDelete)
 	}
 	return DecodeBTreeDeletePayload(t.Payload)
+}
+
+// --- fsync-before-apply write path ---
+
+// AppendAndApply is this package's fsync-before-apply write path: it encodes
+// rec, durably appends it to w (via Writer.Append, which — per subtask
+// 1.3.1 — does not return until the record has been fsynced to disk), and
+// ONLY THEN invokes apply.
+//
+// This is a structural guarantee, not just a documented convention: the WAL
+// package itself, not the caller, decides when apply runs, so a call site
+// cannot accidentally mutate catalog/index state before the corresponding
+// WAL record is durable. This directly implements docs/LLD/wal.md's
+// invariant ("every mutation to the catalog or any index must be logged in
+// the WAL before it is applied in memory or on disk").
+//
+// Error handling:
+//   - If encoding or the underlying Writer.Append fails, apply is never
+//     called, and the error is returned with a zero offset. Nothing was
+//     durably logged, so nothing should be applied.
+//   - If Writer.Append succeeds but apply returns an error, AppendAndApply
+//     still returns the (non-zero, valid) offset alongside the wrapped
+//     error. This is deliberate: the mutation's intent is already safely
+//     and durably persisted in the WAL at that point, regardless of whether
+//     the in-memory/on-disk apply step succeeded. A failed apply does not
+//     un-happen the durable log write — it is exactly the scenario subtask
+//     1.3.4's recovery replay exists to reconcile (replaying the logged
+//     mutation again on next startup), so callers should treat an apply
+//     error here as "retry or recover the apply step," not as license to
+//     also roll back or ignore the WAL record.
+// --- SplitCommit ---
+
+// SplitCommitEntry is one (NewPath, FileID) pair produced by an auto-split,
+// carried inside a SplitCommitPayload so that recovery can redo the B+Tree
+// insert (and, deterministically re-derive the graph edges) for that new
+// file without needing any other durable source of truth.
+type SplitCommitEntry struct {
+	NewPath string
+	FileID  uint64
+}
+
+// SplitCommitPayload is the payload of a RecordSplitCommit record: everything
+// engine/split's ExecuteSplitAtomic (2b.3.6) needs to durably describe one
+// completed split transaction, and everything RecoverSplitCommits needs to
+// redo that transaction's catalog/B+Tree/graph effects after a crash.
+//
+// EncodedCatalogRecord holds the FULL, final (post-split) catalog.CatalogRecord
+// for OriginalFileID, already encoded via CatalogRecord.Encode() — mirroring
+// CatalogPutPayload's own "treat catalog bytes as opaque" convention, so this
+// package still does not import engine/catalog. OldPath is the original
+// topic path (whose B+Tree entry must be repointed at OriginalFileID, the
+// reused redirect-stub fileID). Entries lists every new file the split
+// produced, in the same canonical (NewPath-sorted) order the split's
+// execution logic itself used, so a replayed B+Tree/graph reconstruction is
+// byte-for-byte reproducible.
+type SplitCommitPayload struct {
+	OriginalFileID       uint64
+	OldPath              string
+	EncodedCatalogRecord []byte
+	Entries              []SplitCommitEntry
+}
+
+// Encode serializes p.
+func (p SplitCommitPayload) Encode() []byte {
+	buf := make([]byte, 0, 8+uint32LenSize+len(p.OldPath)+uint32LenSize+len(p.EncodedCatalogRecord)+4)
+	var idBuf [8]byte
+	binary.LittleEndian.PutUint64(idBuf[:], p.OriginalFileID)
+	buf = append(buf, idBuf[:]...)
+	buf = putUint32Prefixed(buf, []byte(p.OldPath))
+	buf = putUint32Prefixed(buf, p.EncodedCatalogRecord)
+
+	var countBuf [4]byte
+	binary.LittleEndian.PutUint32(countBuf[:], uint32(len(p.Entries)))
+	buf = append(buf, countBuf[:]...)
+	for _, e := range p.Entries {
+		buf = putUint32Prefixed(buf, []byte(e.NewPath))
+		var fidBuf [8]byte
+		binary.LittleEndian.PutUint64(fidBuf[:], e.FileID)
+		buf = append(buf, fidBuf[:]...)
+	}
+	return buf
+}
+
+// DecodeSplitCommitPayload parses data as a SplitCommitPayload.
+func DecodeSplitCommitPayload(data []byte) (SplitCommitPayload, error) {
+	if len(data) < 8 {
+		return SplitCommitPayload{}, fmt.Errorf("wal: SplitCommitPayload too short: got %d bytes, need at least 8", len(data))
+	}
+	originalFileID := binary.LittleEndian.Uint64(data[:8])
+	off := 8
+
+	oldPathBytes, off, err := readUint32Prefixed(data, off)
+	if err != nil {
+		return SplitCommitPayload{}, fmt.Errorf("wal: decoding SplitCommitPayload.OldPath: %w", err)
+	}
+
+	encodedRecord, off, err := readUint32Prefixed(data, off)
+	if err != nil {
+		return SplitCommitPayload{}, fmt.Errorf("wal: decoding SplitCommitPayload.EncodedCatalogRecord: %w", err)
+	}
+	record := make([]byte, len(encodedRecord))
+	copy(record, encodedRecord)
+
+	if off+4 > len(data) {
+		return SplitCommitPayload{}, fmt.Errorf("wal: SplitCommitPayload truncated entry count at offset %d", off)
+	}
+	count := int(binary.LittleEndian.Uint32(data[off:]))
+	off += 4
+
+	entries := make([]SplitCommitEntry, 0, count)
+	for i := 0; i < count; i++ {
+		var pathBytes []byte
+		pathBytes, off, err = readUint32Prefixed(data, off)
+		if err != nil {
+			return SplitCommitPayload{}, fmt.Errorf("wal: decoding SplitCommitPayload.Entries[%d].NewPath: %w", i, err)
+		}
+		if off+8 > len(data) {
+			return SplitCommitPayload{}, fmt.Errorf("wal: SplitCommitPayload truncated Entries[%d].FileID at offset %d", i, off)
+		}
+		fileID := binary.LittleEndian.Uint64(data[off:])
+		off += 8
+		entries = append(entries, SplitCommitEntry{NewPath: string(pathBytes), FileID: fileID})
+	}
+
+	if off != len(data) {
+		return SplitCommitPayload{}, fmt.Errorf("wal: SplitCommitPayload has %d trailing bytes after %d entries", len(data)-off, count)
+	}
+
+	return SplitCommitPayload{
+		OriginalFileID:       originalFileID,
+		OldPath:              string(oldPathBytes),
+		EncodedCatalogRecord: record,
+		Entries:              entries,
+	}, nil
+}
+
+// NewSplitCommitRecord builds a ready-to-append TypedRecord for a split's
+// atomic commit point.
+func NewSplitCommitRecord(p SplitCommitPayload) TypedRecord {
+	return TypedRecord{
+		Type:    RecordSplitCommit,
+		Payload: p.Encode(),
+	}
+}
+
+// AsSplitCommit decodes t's payload as a SplitCommitPayload. It returns an
+// error if t.Type is not RecordSplitCommit.
+func (t TypedRecord) AsSplitCommit() (SplitCommitPayload, error) {
+	if t.Type != RecordSplitCommit {
+		return SplitCommitPayload{}, fmt.Errorf("wal: AsSplitCommit called on record of type %s, want %s", t.Type, RecordSplitCommit)
+	}
+	return DecodeSplitCommitPayload(t.Payload)
 }
 
 // --- fsync-before-apply write path ---
