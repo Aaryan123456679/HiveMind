@@ -1,0 +1,40 @@
+{
+  "subtask": "2b.3.5",
+  "rows": [
+    {
+      "requirement": "SPLIT_SIBLING edges exist between all pairs of new files",
+      "test": "TestSplitGraphEdges/graph_edges (sibling assertions)",
+      "covered": true
+    },
+    {
+      "requirement": "Inbound edges previously pointing at old path now resolve to redirect stub, without rewriting the inbound-edge list",
+      "test": "TestSplitGraphEdges/graph_edges (asserts pre-existing edge with Target==originalFileID is unchanged in ReadAll output, i.e. never rewritten, and still semantically resolves to the stub because originalFileID's identity is reused)",
+      "covered": true
+    },
+    {
+      "requirement": "EdgeRedirect edges exist from originalFileID (stub) to each new fileID",
+      "test": "TestSplitGraphEdges/graph_edges (redirect assertions)",
+      "covered": true
+    },
+    {
+      "requirement": "nil appender rejected",
+      "test": "TestSplitGraphEdges/nil_appender",
+      "covered": true
+    },
+    {
+      "requirement": "empty newFileIDs rejected",
+      "test": "TestSplitGraphEdges/empty_new_file_ids",
+      "covered": true
+    },
+    {
+      "requirement": "No regression to 2b.1.1-2b.3.4",
+      "test": "full go test ./split/... -race -v -count=1 -timeout 10m",
+      "covered": true
+    },
+    {
+      "requirement": "engine/graph package itself untouched/still green",
+      "test": "go test ./graph/... -count=1 -timeout 5m",
+      "covered": true
+    }
+  ]
+}

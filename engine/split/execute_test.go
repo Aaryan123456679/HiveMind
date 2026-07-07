@@ -9,6 +9,7 @@ import (
 
 	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
+	"github.com/Aaryan123456679/HiveMind/engine/graph"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
 
@@ -564,6 +565,151 @@ func TestSplitBtreeRepoint(t *testing.T) {
 		tree := newTestBtree(t)
 		if err := ExecuteSplitBtreeInsert(tree, oldPath, fallbackOriginalFileID, map[string]uint64{oldPath: 2}); err == nil {
 			t.Fatal("expected error when a new path equals oldPath, got nil")
+		}
+	})
+}
+
+// newTestEdgeAppender opens a fresh graph.EdgeAppender rooted at a
+// t.TempDir() subdirectory, for TestSplitGraphEdges's use.
+func newTestEdgeAppender(t *testing.T) *graph.EdgeAppender {
+	t.Helper()
+
+	dir := filepath.Join(t.TempDir(), "edges")
+	appender, err := graph.OpenEdgeAppender(dir)
+	if err != nil {
+		t.Fatalf("graph.OpenEdgeAppender: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := appender.Close(); err != nil {
+			t.Errorf("EdgeAppender.Close: %v", err)
+		}
+	})
+	return appender
+}
+
+// hasEdge reports whether edges contains an Edge exactly matching want.
+func hasEdge(edges []graph.Edge, want graph.Edge) bool {
+	for _, e := range edges {
+		if e == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSplitGraphEdges(t *testing.T) {
+	const originalFileID = uint64(1)
+	const inboundSourceFileID = uint64(999) // some other file, pre-existing edge into originalFileID
+
+	t.Run("graph_edges", func(t *testing.T) {
+		idAlloc, cs, cat, w := newTestContentStoreDepsWithWAL(t)
+
+		dir := filepath.Join(t.TempDir(), "edges")
+		appender, err := graph.OpenEdgeAppender(dir)
+		if err != nil {
+			t.Fatalf("graph.OpenEdgeAppender: %v", err)
+		}
+
+		// Seed a pre-existing inbound edge that points at the old path's
+		// fileID, BEFORE the split ever runs -- simulating some earlier,
+		// unrelated graph relationship (e.g. a reference/citation edge)
+		// that targeted the file that is about to be split.
+		preExistingInbound := graph.Edge{Source: inboundSourceFileID, Target: originalFileID, Type: graph.EdgeSplitSibling}
+		if err := appender.AppendEdge(preExistingInbound); err != nil {
+			t.Fatalf("seeding pre-existing inbound edge: %v", err)
+		}
+
+		putSplitRecord(t, cat, originalFileID, uint64(len(FixtureFileContent)))
+
+		newFileIDsByPath, err := ExecuteSplitAllocateAndWrite(idAlloc, cs, FixtureFileContent, FixtureSplitPlan)
+		if err != nil {
+			t.Fatalf("ExecuteSplitAllocateAndWrite: %v", err)
+		}
+
+		newFileIDs := make([]uint64, 0, len(newFileIDsByPath))
+		for _, proposal := range FixtureSplitPlan.Files {
+			newFileIDs = append(newFileIDs, newFileIDsByPath[proposal.NewPath])
+		}
+
+		if _, err := ExecuteSplitRedirectStub(cat, w, cs, originalFileID, newFileIDs); err != nil {
+			t.Fatalf("ExecuteSplitRedirectStub: %v", err)
+		}
+
+		if err := ExecuteSplitGraphEdges(appender, originalFileID, newFileIDs); err != nil {
+			t.Fatalf("ExecuteSplitGraphEdges: %v", err)
+		}
+		if err := appender.Close(); err != nil {
+			t.Fatalf("EdgeAppender.Close: %v", err)
+		}
+
+		gotEdges, err := graph.ReadAll(dir)
+		if err != nil {
+			t.Fatalf("graph.ReadAll: %v", err)
+		}
+
+		// The pre-existing inbound edge must still be present, byte-for-byte
+		// unchanged: engine/graph is append-only and offers no rewrite API,
+		// and because 2b.3.2 reuses originalFileID for the redirect stub,
+		// this unchanged edge already points at the stub -- nothing needed
+		// to be rewritten or re-appended for it to do so.
+		if !hasEdge(gotEdges, preExistingInbound) {
+			t.Errorf("pre-existing inbound edge %+v missing from ReadAll output; append-only log must never rewrite/drop existing edges", preExistingInbound)
+		}
+
+		// SPLIT_SIBLING edges: both directions, for every pair of new
+		// fileIDs (complete directed graph; see architecture-discovery.md).
+		for _, a := range newFileIDs {
+			for _, b := range newFileIDs {
+				if a == b {
+					continue
+				}
+				want := graph.Edge{Source: a, Target: b, Type: graph.EdgeSplitSibling}
+				if !hasEdge(gotEdges, want) {
+					t.Errorf("missing SPLIT_SIBLING edge %+v", want)
+				}
+			}
+		}
+
+		// EdgeRedirect edges: from the (identity-reused) originalFileID/stub
+		// to each new fileID.
+		for _, id := range newFileIDs {
+			want := graph.Edge{Source: originalFileID, Target: id, Type: graph.EdgeRedirect}
+			if !hasEdge(gotEdges, want) {
+				t.Errorf("missing REDIRECT edge %+v", want)
+			}
+		}
+
+		// Sanity: total edge count is exactly 1 (pre-existing inbound) +
+		// N*(N-1) (siblings) + N (redirects), for N = len(newFileIDs).
+		n := len(newFileIDs)
+		wantCount := 1 + n*(n-1) + n
+		if len(gotEdges) != wantCount {
+			t.Errorf("len(gotEdges) = %d, want %d", len(gotEdges), wantCount)
+		}
+	})
+
+	t.Run("nil_appender", func(t *testing.T) {
+		if err := ExecuteSplitGraphEdges(nil, originalFileID, []uint64{2, 3}); err == nil {
+			t.Fatal("expected error for nil appender, got nil")
+		}
+	})
+
+	t.Run("empty_new_file_ids", func(t *testing.T) {
+		appender := newTestEdgeAppender(t)
+		if err := ExecuteSplitGraphEdges(appender, originalFileID, nil); err == nil {
+			t.Fatal("expected error for nil newFileIDs, got nil")
+		}
+		if err := ExecuteSplitGraphEdges(appender, originalFileID, []uint64{}); err == nil {
+			t.Fatal("expected error for empty newFileIDs, got nil")
+		}
+	})
+
+	t.Run("single_new_file", func(t *testing.T) {
+		// A degenerate split into exactly one new file: no SPLIT_SIBLING
+		// edges are possible (no pair exists), only the REDIRECT edge.
+		appender := newTestEdgeAppender(t)
+		if err := ExecuteSplitGraphEdges(appender, originalFileID, []uint64{42}); err != nil {
+			t.Fatalf("ExecuteSplitGraphEdges: %v", err)
 		}
 	})
 }

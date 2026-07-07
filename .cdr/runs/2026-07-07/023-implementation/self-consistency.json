@@ -1,0 +1,13 @@
+{
+  "subtask": "2b.3.5",
+  "checks": [
+    { "cmd": "go build ./...", "cwd": "engine", "result": "clean, no output" },
+    { "cmd": "go vet ./...", "cwd": "engine", "result": "clean, no output" },
+    { "cmd": "gofmt -l .", "cwd": "engine", "result": "clean, no output (no unformatted files)" },
+    { "cmd": "go test ./split/... -run TestSplitGraphEdges -count=1 -v -timeout 5m", "cwd": "engine", "result": "PASS: TestSplitGraphEdges and its 4 subtests (graph_edges, nil_appender, empty_new_file_ids, single_new_file)" },
+    { "cmd": "go test ./split/... -race -v -count=1 -timeout 10m", "cwd": "engine", "result": "PASS: 16 top-level PASS lines, 0 FAIL, zero regressions across 2b.1.1-2b.3.5's existing tests" },
+    { "cmd": "go test ./graph/... -count=1 -timeout 5m", "cwd": "engine", "result": "PASS: engine/graph untouched and still green" }
+  ],
+  "matrix_covered": true,
+  "notes": "Self-consistency only (build green, matrix covered) -- NOT verification per invariant I4. /cdr:verify must independently confirm."
+}

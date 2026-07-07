@@ -1,0 +1,25 @@
+{
+  "subtask": "2b.3.5",
+  "files_modified": [
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "files_read_only": [
+    "engine/graph/edge_append.go",
+    "engine/split/orchestrate.go",
+    "engine/split/orchestrate_test.go",
+    ".cdr/memory/pending.md"
+  ],
+  "new_exported_symbols": [
+    "split.ExecuteSplitGraphEdges"
+  ],
+  "blast_radius": "Additive only: new function in engine/split/execute.go plus a new test function in execute_test.go. No existing exported signatures change. engine/graph/edge_append.go is not modified (reused as-is).",
+  "downstream_consumers": [
+    "None yet call ExecuteSplitGraphEdges outside this subtask's own tests; 2b.3.6 is expected to wire it (and the other Execute* primitives) into a single WAL-covered transaction."
+  ],
+  "risk_areas": [
+    "Directionality/topology choice for SPLIT_SIBLING edges (complete directed graph, both directions per pair) is a design decision documented in architecture-discovery.md; a future consumer expecting a different topology (e.g. star) would need to reconcile.",
+    "Crash-recovery/replay integration for graph edge appends remains unresolved by design, deferred to 2b.3.6 per architecture-discovery.md's reasoning; not fixed by this subtask.",
+    "newFileIDs ordering is sorted internally by this function for deterministic on-disk append order, independent of caller's map iteration order."
+  ]
+}

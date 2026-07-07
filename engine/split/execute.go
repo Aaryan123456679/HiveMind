@@ -11,6 +11,7 @@ import (
 
 	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
+	"github.com/Aaryan123456679/HiveMind/engine/graph"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
 
@@ -413,6 +414,94 @@ func ExecuteSplitBtreeInsert(
 	// establishes that mapping otherwise.
 	if err := tree.Insert(oldPath, originalFileID); err != nil {
 		return fmt.Errorf("split: execute: btree insert: repointing old path %q (fileID %d): %w", oldPath, originalFileID, err)
+	}
+
+	return nil
+}
+
+// ExecuteSplitGraphEdges is subtask 2b.3.5's ("Add SPLIT_SIBLING edges
+// between new files; repoint inbound edges to redirect stub") execution
+// primitive. It consumes newFileIDs -- typically the values of the map
+// ExecuteSplitAllocateAndWrite (2b.3.1) returned -- and, via appender
+// (an engine/graph.EdgeAppender rooted at this split's edge log):
+//
+//  1. Appends a graph.EdgeSplitSibling edge for every ORDERED pair of
+//     distinct new fileIDs (i.e. a complete directed graph over the new
+//     fileIDs: N*(N-1) edges for N new files). Both directions are appended
+//     for every unordered pair, because "sibling" is a symmetric
+//     relationship with no natural direction, and this lets a future
+//     traversal reader discover siblings starting from any one of them via
+//     a plain Source-equality filter, without needing undirected-edge-aware
+//     traversal logic. See architecture-discovery.md
+//     (.cdr/runs/2026-07-07/023-implementation/) for why an all-pairs
+//     complete graph was chosen over a star-from-first-file topology (the
+//     latter would silently depend on newFileIDs's ordering to pick a
+//     "hub", which this function deliberately avoids).
+//  2. Appends a graph.EdgeRedirect edge from originalFileID to EACH new
+//     fileID, so a reader who lands on originalFileID (the redirect stub
+//     left behind at the old path by 2b.3.2, which REUSES originalFileID --
+//     no new fileID is ever allocated for the old path) can discover where
+//     the content actually moved to.
+//
+// On "repoint inbound edges to redirect stub": because 2b.3.2 reuses
+// originalFileID for the stub, ANY pre-existing graph edge whose Target is
+// originalFileID ALREADY points at the stub, with zero graph mutation
+// required -- there is nothing to rewrite, and nothing this function needs
+// to append to achieve that (matching engine/graph's append-only design,
+// which offers no edge-mutation API in the first place; see
+// architecture-discovery.md's part (a)). This function only appends the new
+// EdgeRedirect edges described in step 2 above, which is the other half of
+// the redirect relationship: how a reader discovers the new fileIDs once
+// they've landed on the (unchanged-identity) stub.
+//
+// Crash-recovery scope boundary: like the other Execute* functions in this
+// file, this function performs no WAL/fsync transactional wrapping beyond
+// what appender.AppendEdge itself already durably provides for each
+// individual call (see engine/graph/edge_append.go's doc comment). The
+// broader gap -- that graph edge-append records are durable at the byte
+// level but not yet integrated into any wal.Replay-based crash-recovery
+// path the way catalog/btree records are (tracked in
+// .cdr/memory/pending.md) -- is DELIBERATELY NOT resolved here: 2b.3.6's
+// own acceptance criteria explicitly lists "graph edge writes" among what
+// must commit atomically under one WAL-covered, fsynced transaction, so
+// full resolution is left to 2b.3.6. See architecture-discovery.md's part
+// (c) for the full reasoning.
+func ExecuteSplitGraphEdges(
+	appender *graph.EdgeAppender,
+	originalFileID uint64,
+	newFileIDs []uint64,
+) error {
+	if appender == nil {
+		return fmt.Errorf("split: execute: graph edges: appender must not be nil")
+	}
+	if len(newFileIDs) == 0 {
+		return fmt.Errorf("split: execute: graph edges: newFileIDs must not be empty")
+	}
+
+	// Sort a private copy so on-disk append order is deterministic,
+	// independent of the caller's (possibly map-iteration-derived, thus
+	// unordered) newFileIDs slice.
+	ids := make([]uint64, len(newFileIDs))
+	copy(ids, newFileIDs)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	for i := range ids {
+		for j := range ids {
+			if i == j {
+				continue
+			}
+			edge := graph.Edge{Source: ids[i], Target: ids[j], Type: graph.EdgeSplitSibling}
+			if err := appender.AppendEdge(edge); err != nil {
+				return fmt.Errorf("split: execute: graph edges: appending SPLIT_SIBLING edge %d->%d: %w", ids[i], ids[j], err)
+			}
+		}
+	}
+
+	for _, id := range ids {
+		edge := graph.Edge{Source: originalFileID, Target: id, Type: graph.EdgeRedirect}
+		if err := appender.AppendEdge(edge); err != nil {
+			return fmt.Errorf("split: execute: graph edges: appending REDIRECT edge %d->%d: %w", originalFileID, id, err)
+		}
 	}
 
 	return nil
