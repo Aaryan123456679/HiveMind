@@ -1,0 +1,31 @@
+{
+  "changed_files": [
+    "engine/catalog/content.go",
+    "engine/split/execute.go",
+    "engine/split/execute_test.go"
+  ],
+  "new_exported_symbols": [
+    "engine/catalog ContentStore.LockFileContent(fileID uint64) (unlock func())"
+  ],
+  "new_test_only_seams": [
+    "engine/split atomicCommitHook stage \"after_catalog_put_before_invalidate\" (ExecuteSplitAtomic)"
+  ],
+  "call_sites_changed": [
+    "engine/split/execute.go ExecuteSplitRedirectStub: now acquires cs.LockFileContent(originalFileID) before the stub content write, holds it through cat.Put + InvalidateHeaderCache via defer",
+    "engine/split/execute.go ExecuteSplitAtomic: now acquires cs.LockFileContent(originalFileID) before the stub content write, releases it explicitly right after InvalidateHeaderCache (before B+Tree inserts / graph edges), with a lockHeld-guarded defer covering early-return error paths"
+  ],
+  "new_tests": [
+    "engine/split TestSectionIndexInvalidationConcurrent"
+  ],
+  "lock_ordering_analysis": {
+    "existing_order_in_Append": "cs.stripes[stripeFor(fileID)] -> wal.Writer-internal (via wal.AppendAndApply) -> cat.stripes[stripeFor(fileID)] (via cat.Put, nested inside the AppendAndApply closure)",
+    "fix_makes_split_follow": "identical order: cs.stripes -> wal.Writer-internal -> cat.stripes",
+    "FileGuard_interaction": "none -- FileGuard is a separate, independent CAS map with no shared state with cs.stripes/cat.stripes/wal.Writer; acquired by the caller before either split-commit function runs, released after (guard.Release), entirely outside this lock's scope",
+    "risk_of_new_deadlock": "none identified -- no new lock pairs introduced beyond the ones Append already exercises under the existing catalog/content_test.go and catalog_test.go concurrency stress tests",
+    "verification_adversarial_check_2_prior_result": "PASS (030-verification's own adversarial check 2 already confirmed no lock-order-inversion/deadlock existed in the pre-fix code around headerCacheMu/cs.stripes/InvalidateHeaderCache; this fix does not touch headerCacheMu's own locking, only adds cs.stripes acquisition around call sites that previously took no ContentStore-level lock at all)"
+  },
+  "regression_surface": [
+    "engine/split/execute_test.go's existing TestSectionIndexInvalidation, TestSplitAtomicCommit, TestExecuteSplitRedirectStub*, and all other ExecuteSplitAtomic/ExecuteSplitRedirectStub callers -- verified via full ./split/... -race suite (see self-consistency.json)",
+    "engine/catalog/... -race suite (unaffected by this fix's LockFileContent addition, but re-run in full per instructions since it's the package the new exported method lives in)"
+  ]
+}

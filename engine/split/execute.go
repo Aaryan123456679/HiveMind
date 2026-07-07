@@ -309,6 +309,21 @@ func ExecuteSplitRedirectStub(
 	copy(targets, newFileIDs)
 
 	stubContent := buildRedirectStubContent(targets)
+
+	// Acquire the SAME per-fileID stripe lock ContentStore.Append's own
+	// read-modify-write critical section takes (via the exported
+	// LockFileContent method, since ContentStore.stripes itself stays
+	// unexported outside engine/catalog) across this stub write, the catalog
+	// Put that makes it visible, and the header-cache invalidation that
+	// follows. Fixes issue #13's CHANGES_REQUESTED verification finding: prior
+	// to this lock, a concurrent ReadPartial(originalFileID) could interleave
+	// between the durable cat.Put below and InvalidateHeaderCache and cache a
+	// soon-to-be-stale header index. See LockFileContent's doc comment for the
+	// full lock-ordering reasoning (cs.stripes -> wal.Writer-internal ->
+	// cat.stripes, the exact nesting order Append already establishes).
+	unlock := cs.LockFileContent(originalFileID)
+	defer unlock()
+
 	if err := writeNewContentFile(cs.ContentPath(originalFileID), stubContent); err != nil {
 		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: redirect stub: writing stub content for fileID %d: %w", originalFileID, err)
 	}
@@ -333,7 +348,9 @@ func ExecuteSplitRedirectStub(
 		// subtask 2b.4.1): this stub rewrite just changed its content, so any
 		// cache entry computed against the pre-stub content must not survive
 		// past this commit. Called from inside the apply closure so eviction
-		// only takes effect once this transaction has actually committed.
+		// only takes effect once this transaction has actually committed, and
+		// still under the cs.stripes lock acquired above, closing the race the
+		// fix cycle addresses.
 		cs.InvalidateHeaderCache(originalFileID)
 
 		return nil
@@ -540,9 +557,20 @@ func ExecuteSplitGraphEdges(
 //     already returned successfully), before cat.Put is even invoked. A
 //     crash injected here must be fully, deterministically recoverable via
 //     RecoverSplitCommits.
+//   - "after_catalog_put_before_invalidate": after cat.Put has applied the
+//     final (StatusRedirect) catalog record, before InvalidateHeaderCache
+//     evicts the pre-split header-offset cache entry (issue #13's 2b.4.1 fix
+//     cycle). Not a crash/recovery checkpoint (the header cache is
+//     in-memory-only, so a crash here has no recovery implications --
+//     RecoverSplitCommits does not touch it); purely a concurrency-test seam
+//     for TestSectionIndexInvalidationConcurrent to hold this window open and
+//     confirm cs.stripes[stripeFor(originalFileID)] (acquired above, around
+//     this whole apply step) genuinely excludes concurrent ReadPartial calls
+//     from it.
 //   - "after_catalog_put_before_btree": after cat.Put has applied the final
-//     (StatusRedirect) catalog record, before the B+Tree inserts run. Also
-//     must be fully recoverable.
+//     (StatusRedirect) catalog record and the header cache has been
+//     invalidated, before the B+Tree inserts run. Also must be fully
+//     recoverable.
 //   - "after_btree_before_graph": after the B+Tree inserts (new paths, plus
 //     the old path's repoint to the reused originalFileID) have run, before
 //     the graph edge appends run. Also must be fully recoverable.
@@ -787,6 +815,32 @@ func ExecuteSplitAtomic(
 	// Write the redirect stub at the old path (2b.3.2's stub-content logic).
 	// Still not visible: the catalog record's Status/RedirectTargetIDs have
 	// not changed yet.
+	//
+	// Acquire the SAME per-fileID stripe lock ContentStore.Append's own
+	// read-modify-write critical section takes (via the exported
+	// LockFileContent method, since ContentStore.stripes itself stays
+	// unexported outside engine/catalog), spanning this stub write through
+	// the catalog Put and header-cache invalidation below. Fixes issue #13's
+	// CHANGES_REQUESTED verification finding: prior to this lock, a
+	// concurrent ReadPartial(originalFileID) could interleave between the
+	// durable cat.Put and InvalidateHeaderCache and cache a soon-to-be-stale
+	// header index. Deliberately released right after InvalidateHeaderCache
+	// below (NOT held across the B+Tree inserts / graph edge appends that
+	// follow in the same apply closure): those touch entirely different
+	// locks (btree.Tree's own, graph.EdgeAppender's own) that ReadPartial
+	// never takes, so widening this lock's scope to cover them would only
+	// add unnecessary contention against unrelated ReadPartial(originalFileID)
+	// callers with no correctness benefit. lockHeld tracks whether the
+	// deferred release below still needs to run (it does on every early-return
+	// error path; it does not once the closure's own release below has run).
+	unlock := cs.LockFileContent(originalFileID)
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			unlock()
+		}
+	}()
+
 	stubContent := buildRedirectStubContent(newFileIDs)
 	if err := writeNewContentFile(cs.ContentPath(originalFileID), stubContent); err != nil {
 		return catalog.CatalogRecord{}, fmt.Errorf("split: execute: atomic commit: writing stub content for fileID %d: %w", originalFileID, err)
@@ -829,14 +883,40 @@ func ExecuteSplitAtomic(
 			return fmt.Errorf("committing catalog record fileID %d: %w", originalFileID, err)
 		}
 
+		// Test-only checkpoint (issue #13's 2b.4.1 fix cycle,
+		// TestSectionIndexInvalidationConcurrent): fires in the exact window
+		// between cat.Put committing the new Status=Redirect record and
+		// InvalidateHeaderCache evicting the pre-split cache entry -- the
+		// narrow gap where Bug 1 (missing cs.stripes lock across this
+		// sequence) was originally observable. Still under the cs.stripes
+		// lock acquired above, so with the fix in place any concurrent
+		// ReadPartial(originalFileID) call is blocked out of this window
+		// entirely; a test can use this hook to hold the window open and
+		// confirm that.
+		if err := runAtomicCommitHook("after_catalog_put_before_invalidate"); err != nil {
+			return err
+		}
+
 		// Invalidate originalFileID's cached header-offset index (see issue #13's
 		// subtask 2b.4.1) in this same apply step, immediately alongside the
 		// catalog Status transition it pairs with: the redirect-stub content
 		// (already written to disk above, before this WAL commit) is what any
 		// subsequent ReadPartial(originalFileID) call must observe, never a
 		// pre-split cache entry. Newly allocated fileIDs never had a cache entry,
-		// so no invalidation is needed for them.
+		// so no invalidation is needed for them. Still under the cs.stripes lock
+		// acquired above at this point, closing the fix cycle's Bug 1 race.
 		cs.InvalidateHeaderCache(originalFileID)
+
+		// Release the per-fileID content lock now: originalFileID's on-disk
+		// content and catalog record are both consistent (redirect stub +
+		// Status=Redirect) and the header cache has been evicted, so any
+		// ReadPartial(originalFileID) call blocked on this stripe is now safe
+		// to proceed and will observe post-split state. Everything from here
+		// on (B+Tree inserts, graph edge appends) touches locks ReadPartial
+		// never takes, so there is no correctness reason to keep holding this
+		// one across them.
+		unlock()
+		lockHeld = false
 
 		if err := runAtomicCommitHook("after_catalog_put_before_btree"); err != nil {
 			return err

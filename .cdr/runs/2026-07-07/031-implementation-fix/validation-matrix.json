@@ -1,0 +1,28 @@
+{
+  "rows": [
+    {
+      "requirement": "Bug 1: ExecuteSplitRedirectStub acquires the same per-fileID stripe lock Append uses across stub-write + cat.Put + InvalidateHeaderCache",
+      "covered_by": ["engine/split TestSectionIndexInvalidation (still passes end-to-end)", "manual code inspection: LockFileContent acquired via defer at top of function"]
+    },
+    {
+      "requirement": "Bug 1: ExecuteSplitAtomic acquires the same per-fileID stripe lock across stub-write + cat.Put + InvalidateHeaderCache",
+      "covered_by": ["engine/split TestSectionIndexInvalidationConcurrent (new)", "engine/split TestSectionIndexInvalidation"]
+    },
+    {
+      "requirement": "No new lock-order inversion / deadlock introduced",
+      "covered_by": ["architecture-discovery.md + impact-analysis.json lock_ordering_analysis (manual trace)", "full ./split/... -race and ./catalog/... -race suites pass with no timeout/deadlock (self-consistency.json)"]
+    },
+    {
+      "requirement": "Bug 2: genuinely concurrent regression test exercising real goroutines under -race",
+      "covered_by": ["engine/split TestSectionIndexInvalidationConcurrent: background reader goroutine + main-goroutine split, synchronized via sync.WaitGroup start barrier"]
+    },
+    {
+      "requirement": "New test must catch Bug 1 if reintroduced",
+      "covered_by": ["self-consistency.json's bug1_confirmation section: fix temporarily reverted, test failed 10/10 under -race -count=10 with the exact stale-data assertion message, fix restored, test passed 10/10"]
+    },
+    {
+      "requirement": "Zero regressions to 2b.1.x-2b.3.6",
+      "covered_by": ["full go test ./split/... -race -count=1 -timeout 15m", "full go test ./catalog/... -race -count=1 -timeout 10m", "full go test ./... -count=1 -timeout 20m"]
+    }
+  ]
+}

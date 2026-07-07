@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
@@ -1243,5 +1246,187 @@ func TestSectionIndexInvalidation(t *testing.T) {
 	wantNew2 := []catalog.HeaderOffset{{Header: "# Part2 Header", Offset: 0}}
 	if !reflect.DeepEqual(postSplitNew2, wantNew2) {
 		t.Fatalf("ReadPartial (new fileID 2) = %+v, want %+v", postSplitNew2, wantNew2)
+	}
+}
+
+// TestSectionIndexInvalidationConcurrent is issue #13's CHANGES_REQUESTED
+// fix-cycle regression test (verification adversarial-check 3): unlike
+// TestSectionIndexInvalidation above (entirely serial: split fully completes,
+// THEN ReadPartial is called), this test runs a real background goroutine
+// hammering ReadPartial(originalFileID) concurrently with ExecuteSplitAtomic
+// running the split in the main goroutine, synchronized via a start barrier,
+// under -race.
+//
+// It specifically targets Bug 1 from the CHANGES_REQUESTED verdict: prior to
+// the fix, ExecuteSplitAtomic's stub-content-write + cat.Put +
+// InvalidateHeaderCache sequence took no lock at all, so a ReadPartial call
+// already mid-flight with a pre-split cache entry could return that stale
+// entry in the narrow window between cat.Put committing the new
+// Status=Redirect record and InvalidateHeaderCache evicting the cache -- even
+// though that racy call's own *return* can happen at essentially any later
+// wall-clock time, including after ExecuteSplitAtomic itself has returned.
+// (A naive test that only starts issuing ReadPartial calls *after*
+// ExecuteSplitAtomic returns cannot catch this: by definition,
+// InvalidateHeaderCache has already run by then -- in-order, in the split's
+// own goroutine -- so any NEWLY STARTED call is guaranteed a cache miss and
+// recomputes fresh from disk regardless of the locking bug. The actual bug is
+// only observable in calls whose cache-check happens to straddle the
+// cat.Put-to-invalidate window, which is why this test uses the
+// "after_catalog_put_before_invalidate" test hook (see runAtomicCommitHook's
+// doc comment) to reliably hold that window open long enough for the
+// concurrent reader to land in it, rather than relying on natural goroutine
+// scheduling luck to hit a window that is normally only nanoseconds wide.)
+//
+// With the fix (cs.stripes[stripeFor(originalFileID)] held across the whole
+// sequence, including the hook), the reader simply blocks for the duration of
+// the hook and can only resume once the lock is released after
+// InvalidateHeaderCache has already run -- so it must always observe a cache
+// miss and recompute fresh, post-split content. This test asserts exactly
+// that: once the hook fires (i.e. from the earliest possible instant the race
+// window could be entered), every ReadPartial(originalFileID) result the
+// reader goroutine observes, for the remainder of the test, must be the
+// post-split (empty, redirect-stub) answer -- never the pre-split cached
+// headers.
+func TestSectionIndexInvalidationConcurrent(t *testing.T) {
+	const oldPath = "old/topic.md"
+
+	idAlloc, cs, cat, w := newTestContentStoreDepsWithWAL(t)
+	tree := newTestBtree(t)
+	appender := newTestEdgeAppenderTracked(t)
+
+	originalFileID, err := idAlloc.Next()
+	if err != nil {
+		t.Fatalf("idAlloc.Next() (originalFileID): %v", err)
+	}
+
+	guard := NewFileGuard()
+	if !guard.TryAcquire(originalFileID) {
+		t.Fatalf("guard.TryAcquire: expected success")
+	}
+
+	part1 := []byte("# Part1 Header\nbody1\n")
+	part2 := []byte("# Part2 Header\nbody2\n")
+	originalContent := append(append([]byte{}, part1...), part2...)
+
+	rec := catalog.CatalogRecord{
+		FileID:    originalFileID,
+		Status:    catalog.StatusSplitting,
+		SizeBytes: uint64(len(originalContent)),
+	}
+	if _, err := cs.Create(rec, originalContent); err != nil {
+		t.Fatalf("cs.Create(original): %v", err)
+	}
+
+	// Populate the pre-split cache entry the race needs: without this, there
+	// is nothing stale for a racy ReadPartial call to return.
+	preSplit, err := cs.ReadPartial(originalFileID)
+	if err != nil {
+		t.Fatalf("ReadPartial (pre-split, priming cache): %v", err)
+	}
+	wantPreSplit := []catalog.HeaderOffset{{Header: "# Part1 Header", Offset: 0}, {Header: "# Part2 Header", Offset: len(part1)}}
+	if !reflect.DeepEqual(preSplit, wantPreSplit) {
+		t.Fatalf("ReadPartial (pre-split, priming cache) = %+v, want %+v", preSplit, wantPreSplit)
+	}
+
+	plan := SplitPlan{
+		Files: []SplitFileProposal{
+			{NewPath: "new/part-1.md", SectionRanges: []SectionRange{{Start: 0, End: len(part1)}}},
+			{NewPath: "new/part-2.md", SectionRanges: []SectionRange{{Start: len(part1), End: len(originalContent)}}},
+		},
+		RedirectSummary: "see new/part-1.md, new/part-2.md",
+	}
+
+	// Coordination: a start barrier so the reader goroutine is definitely
+	// spinning before the split begins, and a hook that fires exactly inside
+	// the race window (after cat.Put, before InvalidateHeaderCache) to widen
+	// it long enough for the concurrent reader to reliably land inside it.
+	var (
+		readerStarted   sync.WaitGroup
+		stopReader      atomic.Bool
+		badReadDetected atomic.Bool
+		badReadValue    atomic.Value // []catalog.HeaderOffset, set at most once
+		hookFired       atomic.Bool
+	)
+	readerStarted.Add(1)
+
+	var readerWG sync.WaitGroup
+	readerWG.Add(1)
+	go func() {
+		defer readerWG.Done()
+		first := true
+		for !stopReader.Load() {
+			got, err := cs.ReadPartial(originalFileID)
+			if err != nil {
+				// A transient ErrNotFound-style error is not what this test is
+				// checking for; only content correctness matters here.
+				if first {
+					readerStarted.Done()
+					first = false
+				}
+				continue
+			}
+			if first {
+				readerStarted.Done()
+				first = false
+			}
+			// Once the race-window hook has fired at least once, every
+			// ReadPartial result the reader observes from that point on must be
+			// the post-split (empty) answer -- a non-empty result here means a
+			// racy call returned the pre-split cache entry despite the hook
+			// (and, in production, the real cat.Put-to-invalidate window)
+			// already having been entered.
+			if hookFired.Load() && len(got) != 0 {
+				if badReadDetected.CompareAndSwap(false, true) {
+					badReadValue.Store(got)
+				}
+			}
+		}
+	}()
+	readerStarted.Wait()
+
+	setAtomicCommitHook(t, func(stage string) error {
+		if stage == "after_catalog_put_before_invalidate" {
+			hookFired.Store(true)
+			// Hold the window open briefly so the concurrent reader gets many
+			// chances to land in it. With the Bug 1 fix in place, the reader is
+			// blocked on cs.stripes for this entire sleep (cannot even enter its
+			// critical section), so this sleep is "free" -- it does not by
+			// itself cause flakiness either way.
+			time.Sleep(5 * time.Millisecond)
+		}
+		return nil
+	})
+
+	updated, err := ExecuteSplitAtomic(idAlloc, cat, cs, tree, appender, w, guard, oldPath, originalFileID, originalContent, plan)
+	if err != nil {
+		t.Fatalf("ExecuteSplitAtomic: %v", err)
+	}
+	if len(updated.RedirectTargetIDs) != 2 {
+		t.Fatalf("updated.RedirectTargetIDs = %v, want 2 entries", updated.RedirectTargetIDs)
+	}
+
+	// Let the reader keep spinning a little longer after the split has
+	// returned, to also exercise the "subsequent calls after the split call
+	// returns" half of the acceptance criteria, then stop it.
+	time.Sleep(5 * time.Millisecond)
+	stopReader.Store(true)
+	readerWG.Wait()
+
+	if !hookFired.Load() {
+		t.Fatal("race-window hook never fired; test did not actually exercise the cat.Put-to-invalidate window")
+	}
+	if badReadDetected.Load() {
+		t.Fatalf("concurrent ReadPartial(originalFileID) returned stale pre-split header offsets during/after the split: %+v (want empty, post-split redirect-stub content) -- Bug 1 (missing cs.stripes lock across split's content-write+cat.Put+invalidate) reproduced", badReadValue.Load())
+	}
+
+	// Final sanity check matching TestSectionIndexInvalidation: after the
+	// split has fully returned and the reader has stopped, a fresh
+	// ReadPartial call must see the post-split state.
+	finalRead, err := cs.ReadPartial(originalFileID)
+	if err != nil {
+		t.Fatalf("ReadPartial (final, post-split): %v", err)
+	}
+	if len(finalRead) != 0 {
+		t.Fatalf("ReadPartial (final, post-split) = %+v, want empty", finalRead)
 	}
 }

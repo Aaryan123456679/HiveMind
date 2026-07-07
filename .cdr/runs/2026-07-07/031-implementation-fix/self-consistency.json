@@ -1,0 +1,19 @@
+{
+  "note": "Internal sanity check only, per CDR invariant I4 -- this run does NOT constitute verification. Independent re-verification via /cdr:verify is still required.",
+  "checks": [
+    { "cmd": "go build ./...", "result": "clean, no output" },
+    { "cmd": "go vet ./...", "result": "clean, no output" },
+    { "cmd": "gofmt -l .", "result": "clean, no files listed" },
+    { "cmd": "go test ./split/... -race -run TestSectionIndexInvalidation -count=10 -timeout 10m", "result": "PASS x10 for both TestSectionIndexInvalidation and TestSectionIndexInvalidationConcurrent (matched by -run substring), ok in 3.576s" },
+    { "cmd": "go test ./catalog/... -race -count=1 -timeout 10m", "result": "ok, 77.276s" },
+    { "cmd": "go test ./split/... -race -count=1 -timeout 15m", "result": "ok, 2.916s (zero regressions across 2b.1.x-2b.3.6)" },
+    { "cmd": "go test ./... -count=1 -timeout 20m", "result": "ok across all packages: engine, btree (35.570s), catalog (96.715s), graph (1.967s), mvcc (36.342s), split (7.118s), wal (5.831s); loadtest and rpc have no test files" }
+  ],
+  "bug1_confirmation": {
+    "method": "Temporarily replaced `unlock := cs.LockFileContent(originalFileID)` in ExecuteSplitAtomic with `unlock := func() {}` (a no-op), leaving everything else -- including the new atomicCommitHook stage and TestSectionIndexInvalidationConcurrent -- untouched, then ran `go test ./split/... -race -run TestSectionIndexInvalidationConcurrent -count=10 -v`.",
+    "result_with_bug_reintroduced": "FAIL 10/10, every failure with the identical message: 'concurrent ReadPartial(originalFileID) returned stale pre-split header offsets during/after the split: [{Header:# Part1 Header Offset:0} {Header:# Part2 Header Offset:21}] (want empty, post-split redirect-stub content) -- Bug 1 (missing cs.stripes lock across split's content-write+cat.Put+invalidate) reproduced'",
+    "fix_restored": true,
+    "result_after_restoring_fix": "PASS 10/10 under `go test ./split/... -race -run TestSectionIndexInvalidationConcurrent -count=10`, and reconfirmed as part of the full -count=10 run covering both TestSectionIndexInvalidation and TestSectionIndexInvalidationConcurrent above",
+    "conclusion": "TestSectionIndexInvalidationConcurrent genuinely reproduces and catches Bug 1 -- confirmed by direct before/after comparison, not assumed."
+  }
+}

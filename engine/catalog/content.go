@@ -413,6 +413,51 @@ func (cs *ContentStore) InvalidateHeaderCache(fileID uint64) {
 	cs.headerCacheMu.Unlock()
 }
 
+// LockFileContent acquires cs.stripes[stripeFor(fileID)] -- the SAME
+// per-fileID striped mutex Append's own read-modify-write critical section
+// takes (see Append's doc comment) and ReadPartial takes for its read
+// (see ReadPartial's doc comment) -- and returns an unlock function the
+// caller MUST call exactly once (typically via defer) to release it.
+//
+// This is the fix for issue #13's CHANGES_REQUESTED verification finding
+// (subtask 2b.4.1's fix cycle): engine/split/execute.go's
+// ExecuteSplitRedirectStub and ExecuteSplitAtomic durably rewrite
+// originalFileID's content (the redirect-stub write) and then invalidate its
+// header-offset cache, but — before this method existed — did so without
+// ever taking cs.stripes at all, leaving a real window where a concurrent
+// ReadPartial(originalFileID) could interleave between the stub's durable
+// cat.Put and the InvalidateHeaderCache call and observe (and re-cache) a
+// still-valid-looking-but-about-to-be-stale header index.
+//
+// Exposing cs.stripes itself (the raw [numStripes]sync.Mutex array) to
+// engine/split would be a much bigger interface break than necessary and
+// would let callers outside this package take these locks in arbitrary,
+// unreviewed order; LockFileContent instead gives split's execute.go the
+// same mutual-exclusion guarantee Append gets internally through a single
+// narrow, purpose-built method, keeping cs.stripes itself unexported.
+//
+// Lock ordering: this must be acquired BEFORE any nested call this package
+// makes that itself takes a different lock further down the stack (e.g.
+// cs.cat.Put, which takes Catalog's own, independent stripes array) —
+// exactly the order Append already establishes and documents (cs.stripes,
+// then, nested inside, cs.cat's own stripe for the same fileID). Callers
+// holding this lock must not call back into anything that could try to
+// re-acquire cs.stripes[stripeFor(fileID)] itself (this repo's
+// sync.Mutex is non-reentrant); InvalidateHeaderCache is always safe to call
+// while holding this lock because it only ever takes the separate,
+// independent cs.headerCacheMu (see InvalidateHeaderCache's doc comment).
+// wal.Writer's own internal locking is likewise always safe to enter while
+// holding this lock, because Append already does exactly that (cs.stripes
+// held across its own wal.AppendAndApply call), establishing cs.stripes ->
+// wal.Writer-internal as the sole existing nesting order anywhere this lock
+// is taken; this method does not change that order, only lets a second
+// package (engine/split) participate in it correctly.
+func (cs *ContentStore) LockFileContent(fileID uint64) (unlock func()) {
+	stripe := stripeFor(fileID)
+	cs.stripes[stripe].Lock()
+	return cs.stripes[stripe].Unlock
+}
+
 // ReadPartial returns fileID's markdown header-offset index: one HeaderOffset per
 // ATX header line found in fileID's CURRENT content, in the order the headers
 // appear. It resolves fileID through the catalog first, exactly like Read (a
@@ -432,21 +477,17 @@ func (cs *ContentStore) InvalidateHeaderCache(fileID uint64) {
 // stale cache entry — the exact guarantee issue #13's acceptance criteria
 // requires ("ReadPartial never serves offsets against stale content").
 //
-// Note on split: engine/split/execute.go's ExecuteSplitRedirectStub and
-// ExecuteSplitAtomic do NOT take cs.stripes for originalFileID at all (they call
-// the self-locking, cs.stripes-independent InvalidateHeaderCache instead, and
-// otherwise serialize their own critical section via FileGuard/Orchestrator, a
-// different mechanism entirely from cs.stripes). A ReadPartial call that races a
-// split's redirect-stub content write itself (i.e. calls os.ReadFile on
-// cs.ContentPath(originalFileID) at some arbitrary point during the split's
-// non-atomic content-write phase) could in principle observe partially-written
-// content if it landed mid-write — but writeNewContentFile's temp-file+rename
-// technique (the same one cs.writeContentFile uses) makes any single os.ReadFile
-// always observe either the fully-old or fully-new content, never a torn file,
-// so this is not a correctness gap for ReadPartial's cache: whichever
-// consistent snapshot it reads and caches is a valid answer for SOME instant in
-// time, and the next InvalidateHeaderCache call (from the split's own apply
-// closure, once its WAL commit has durably applied) still correctly evicts it.
+// Note on split (updated by issue #13's 2b.4.1 fix cycle): engine/split/execute.go's
+// ExecuteSplitRedirectStub and ExecuteSplitAtomic now ALSO take
+// cs.stripes[stripeFor(originalFileID)] — via the exported LockFileContent
+// method below, since cs.stripes itself stays unexported — across their own
+// stub-content-write + cat.Put + InvalidateHeaderCache sequence, mirroring
+// Append's own critical section exactly. This closes the real (narrow) race
+// window the original 2b.4.1 implementation left open, where a ReadPartial
+// call could interleave between a split's durable cat.Put and its
+// InvalidateHeaderCache call and cache a soon-to-be-stale header index. See
+// LockFileContent's doc comment for the full design rationale and lock-order
+// reasoning.
 func (cs *ContentStore) ReadPartial(fileID uint64) ([]HeaderOffset, error) {
 	stripe := stripeFor(fileID)
 	cs.stripes[stripe].Lock()
