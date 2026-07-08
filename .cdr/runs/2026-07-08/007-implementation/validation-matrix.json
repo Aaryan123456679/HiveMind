@@ -1,0 +1,36 @@
+{
+  "criteria": [
+    {
+      "criterion": "Compaction merges accumulated per-node edge-log entries into the CSR array",
+      "check": "TestCompaction_MergesWithExistingGraph, TestCompaction_EntityCooccurWeightsSum: assert post-compaction CSRGraph.Neighbors reflects log-appended edges"
+    },
+    {
+      "criterion": "No edges lost",
+      "check": "TestCompaction_MergesWithExistingGraph: pre-existing graph.dat edges plus new log edges all present post-compaction"
+    },
+    {
+      "criterion": "No edges duplicated",
+      "check": "TestCompaction_NonCooccurDedupLastWrite: two log entries for the same (source,target,type) collapse to exactly one CSR entry"
+    },
+    {
+      "criterion": "Weight increments on repeated ENTITY_COOCCUR edges",
+      "check": "TestCompaction_EntityCooccurWeightsSum: N repeated appends with Weight:1 sum to Weight==N"
+    },
+    {
+      "criterion": "go test ./engine/graph/... -run TestCompaction passes",
+      "check": "explicit go test invocation with -timeout, run before commit as self-consistency (not verification)"
+    },
+    {
+      "criterion": "Crash-safety: crash before graph.dat rename leaves old graph.dat + logs intact (safe retry)",
+      "check": "TestCompaction_CrashBeforeRenameLeavesOldGraphAndLogsIntact"
+    },
+    {
+      "criterion": "Crash-safety: logs only truncated after graph.dat durably renamed",
+      "check": "TestCompaction_TruncatesLogsAfterCompaction (positive path) + TestCompaction_TruncateFailureDoesNotLoseGraphUpdate (failure path proves graph update independent of truncate)"
+    },
+    {
+      "criterion": "gofmt/go vet/go build clean",
+      "check": "self-consistency.json step"
+    }
+  ]
+}

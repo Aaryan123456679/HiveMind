@@ -158,6 +158,55 @@ func (l *EdgeLog) ReadNode(sourceFileID uint64) ([]CSREdge, error) {
 	return edges, nil
 }
 
+// TruncateNode discards every edge currently durably recorded in sourceFileID's
+// per-node log, resetting it to empty. This is intended to be called by subtask
+// 3.1.3's compaction (compact.go) ONLY after the edges it read via ReadNode have
+// already been durably folded into a fresh graph.dat (i.e. after WriteCSR's
+// atomic rename has succeeded) - never before, since truncating first would
+// permanently lose any not-yet-compacted edge if the process then crashed before
+// finishing the compaction write.
+//
+// If sourceFileID currently has an open wal.Writer (because AppendEdge or
+// ReadNode has already been used for it), that writer is closed and dropped from
+// the cache first, so a subsequent AppendEdge for the same fileID lazily reopens
+// a brand-new wal.Writer (matching OpenWriter's own "no existing segment files"
+// / non-resuming path) rather than continuing to append to a file this method is
+// about to delete out from under it. It is not an error for sourceFileID to have
+// no log at all yet (nothing to truncate).
+func (l *EdgeLog) TruncateNode(sourceFileID uint64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if w, ok := l.writers[sourceFileID]; ok {
+		if err := w.Close(); err != nil {
+			return fmt.Errorf("graph: closing edge log for node %d before truncate: %w", sourceFileID, err)
+		}
+		delete(l.writers, sourceFileID)
+	}
+
+	dir := l.nodeDir(sourceFileID)
+	segmentPaths, err := listWALSegments(dir)
+	if err != nil {
+		return err
+	}
+	for _, path := range segmentPaths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("graph: removing edge log segment %s: %w", path, err)
+		}
+	}
+	// Also remove manifest.json/manifest.json.tmp if wal.Checkpoint was ever used
+	// against this node dir (edgelog.go itself never calls it, but be defensive
+	// so a stale control file never confuses a future wal.OpenWriter resume check).
+	_ = os.Remove(filepath.Join(dir, "manifest.json"))
+	_ = os.Remove(filepath.Join(dir, "manifest.json.tmp"))
+	// Best-effort: remove the now-empty node directory itself. Not fatal if it
+	// still contains something else or removal fails - the next AppendEdge will
+	// MkdirAll it again regardless.
+	_ = os.Remove(dir)
+
+	return nil
+}
+
 // Close closes every currently-open per-node wal.Writer this EdgeLog has opened,
 // collecting and returning any errors encountered along the way (via errors.Join) rather
 // than stopping at the first failure, so a single stuck writer does not prevent the

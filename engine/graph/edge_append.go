@@ -54,6 +54,28 @@ const (
 	// now-stub file left behind at the old path after a split) to one of
 	// its redirect targets.
 	EdgeRedirect
+
+	// EdgeEntityCooccur represents an edge incremented when the ingestion
+	// segmentation agent extracts co-occurring entities across two files
+	// (see docs/LLD/graph.md, docs/LLD/ingestion-agent.md). Its CSREdge.Weight
+	// (see csr.go) accumulates across repeated co-occurrence observations of
+	// the same (source, target) pair; subtask 3.1.3's compact.go is what
+	// performs that accumulation when folding edge-log entries into graph.dat.
+	//
+	// Added here (ahead of subtask 3.1.4, which owns the full EdgeType set's
+	// creation/validation support per docs/LLD/graph.md) because 3.1.3's own
+	// acceptance criteria/test spec requires exercising ENTITY_COOCCUR edges
+	// through compaction; 3.1.4 remains responsible for validating this value
+	// (e.g. rejecting it where it doesn't belong) beyond what this file does.
+	EdgeEntityCooccur
+
+	// EdgeLLMAsserted represents an edge created from the ingestion
+	// segmentation agent's related_topics output (an LLM-asserted
+	// relationship, not a mechanically-derived co-occurrence). Added
+	// alongside EdgeEntityCooccur for the same reason (see above); unlike
+	// EdgeEntityCooccur, this subtask's compaction does not special-case its
+	// weight (see compact.go's mergeEdges doc comment).
+	EdgeLLMAsserted
 )
 
 // String returns a human-readable name for t, used in error messages.
@@ -63,6 +85,10 @@ func (t EdgeType) String() string {
 		return "SplitSibling"
 	case EdgeRedirect:
 		return "Redirect"
+	case EdgeEntityCooccur:
+		return "EntityCooccur"
+	case EdgeLLMAsserted:
+		return "LLMAsserted"
 	default:
 		return fmt.Sprintf("EdgeType(%d)", byte(t))
 	}

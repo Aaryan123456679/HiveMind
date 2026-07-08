@@ -58,6 +58,42 @@ through `edge_append.go`. Edge-type creation/validation support beyond rejecting
 (`engine/graph/edge.go`) — this writer only persists and reads back whatever `CSREdge` values
 it is given.
 
+### Compaction (subtask 3.1.3, `engine/graph/compact.go`)
+
+`Compact(graphPath string, log *EdgeLog) (*CSRGraph, error)` folds every source `fileID`'s
+accumulated per-node edge-log entries (3.1.2) into a fresh, complete CSR snapshot, written
+atomically to `graphPath` via `csr.go`'s existing `WriteCSR` (unchanged since 3.1.1). It merges
+with `graphPath`'s existing contents if any — a missing `graphPath` is treated as "no prior
+graph", not an error, so the first-ever compaction run needs no setup. `EdgeType` gained two new
+values ahead of subtask 3.1.4 (`EdgeEntityCooccur`, `EdgeLLMAsserted`, in `edge_append.go`),
+since 3.1.3's own acceptance criteria require exercising `ENTITY_COOCCUR` through compaction and
+that constant did not previously exist; full type-filtered creation/validation support remains
+3.1.4's job.
+
+**Weight-aggregation semantics.** `ENTITY_COOCCUR` edges are occurrence counts, not structural
+facts: every occurrence of the same `(source, target)` pair — already-compacted or freshly
+logged, however many times repeated — contributes its `Weight` to a running **sum** for that
+edge, with `LastUpdated` taking the **max** across every occurrence merged. Every other edge type
+(`SPLIT_SIBLING`, `REDIRECT`, `LLM_ASSERTED`) is deduplicated by `(source, target, type)` to
+exactly one CSR entry (never emitted twice, satisfying "without losing or duplicating edges"),
+with the most-recently-observed occurrence (by `LastUpdated`) winning outright — **not** summed,
+since these types represent one-off structural/assertional facts rather than counted
+observations.
+
+**Crash-safety ordering.** Compaction reads the existing `graph.dat` and every edge log's
+pending entries, merges them entirely in memory, and only then calls `WriteCSR` (already atomic:
+temp file + fsync + rename). Per-node edge logs are truncated (`EdgeLog.TruncateNode`, added by
+this subtask) **only after** `WriteCSR`'s rename has durably succeeded — never before, never
+interleaved. A crash any time before the rename completes leaves the old `graph.dat` (or none)
+and every edge log fully intact: retrying compaction from scratch is safe, with no edge lost or
+duplicated. A crash in the narrow window after the rename succeeds but before every per-node log
+is truncated is a documented, accepted risk (mirroring `engine/wal`'s own `Checkpoint`
+precedent, where "durably applied up to here" is necessarily a separate, best-effort step after
+the underlying mutation is already durable): a subsequent compaction run may re-merge — and, for
+`ENTITY_COOCCUR`, re-sum — entries in a log that was not yet truncated. `Compact` therefore
+treats the post-rename `graph.dat` as authoritative and durable regardless of truncation outcome,
+reporting truncation failures as a separate, non-fatal-to-the-graph-update error.
+
 ## Edge shape
 
 ```

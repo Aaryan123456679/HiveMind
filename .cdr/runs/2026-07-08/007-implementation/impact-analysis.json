@@ -1,0 +1,39 @@
+{
+  "affected_files": [
+    {
+      "path": "engine/graph/compact.go",
+      "change": "new file — Compact(graphPath string, log *EdgeLog) (*CSRGraph, error): load existing CSR, enumerate edge-log nodes, merge/aggregate per Decision 1, WriteCSR atomically, then truncate compacted per-node logs."
+    },
+    {
+      "path": "engine/graph/compact_test.go",
+      "change": "new file — TestCompaction (+ subtests): repeated ENTITY_COOCCUR weight summing, non-cooccur dedup/last-write-wins, merge with pre-existing graph.dat, empty-log no-op, crash-injection (kill before rename vs after rename/before truncation)."
+    },
+    {
+      "path": "engine/graph/edgelog.go",
+      "change": "add exported EdgeLog.TruncateNode(sourceFileID uint64) error: closes+drops cached writer, deletes on-disk segment files for that node, so next AppendEdge reopens fresh."
+    },
+    {
+      "path": "engine/graph/edgelog_test.go",
+      "change": "add TestTruncateNode: append, truncate, ReadNode returns nil; append-after-truncate starts a fresh log."
+    },
+    {
+      "path": "engine/graph/edge_append.go",
+      "change": "extend EdgeType enum with EdgeEntityCooccur, EdgeLLMAsserted (needed by 3.1.3's own test spec; full validation deferred to 3.1.4)."
+    },
+    {
+      "path": "docs/LLD/graph.md",
+      "change": "add 3.1.3 compaction subsection: weight-aggregation semantics, crash-safety ordering, TruncateNode."
+    }
+  ],
+  "dependents": [
+    "3.1.4 (engine/graph/edge.go) will build on the EdgeType additions made here.",
+    "3.1.5 (traverse.go) and 3.1.6 (graph_test.go) will call Compact()/read graph.dat produced by it."
+  ],
+  "contracts_touched": [
+    "graph.dat on-disk format: unchanged (compact.go only ever produces it via existing WriteCSR).",
+    "EdgeLog: new exported method TruncateNode; existing AppendEdge/ReadNode/Close unchanged.",
+    "EdgeType: two new enum values appended after existing ones (EdgeRedirect=2), preserving on-disk byte values already persisted by 3.1.1/3.1.2 (EdgeTypeInvalid=0, EdgeSplitSibling=1, EdgeRedirect=2 unchanged)."
+  ],
+  "risk_level": "medium",
+  "risk_notes": "Rewrites the durable adjacency store wholesale; getting the truncate-after-rename ordering wrong would either lose not-yet-compacted edges (if truncated before rename) or silently double-count ENTITY_COOCCUR weights across repeated compactions (if truncation is skipped/retried carelessly). Crash-injection test required per task instructions."
+}
