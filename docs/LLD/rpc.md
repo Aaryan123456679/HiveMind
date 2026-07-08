@@ -4,8 +4,11 @@ last_synced_commit: 699105baec69c1feff075a58e5ab8d2b054db317
 
 # LLD: `engine/rpc/`
 
-Status: scaffold only (`engine/rpc/doc.go` placeholder). See [HLD.md](../HLD.md) for system
-context.
+Status: `.proto` contracts defined (`proto/hivemind.proto`, task-3.2.1, issue #16) with
+generated Go (`engine/rpc/gen/`) and Python (`agents/hivemind_pb2*.py`) stubs checked in.
+Server handler implementations (`engine/rpc/server.go`) and the real gRPC-backed
+`ProposeSplit` client (`engine/split/proposer_grpc.go`) are not yet implemented (task-3.2.2/
+3.2.3). See [HLD.md](../HLD.md) for system context.
 
 ## Purpose
 
@@ -36,7 +39,7 @@ and — for split proposals — acting as a gRPC *client* of the Python agent se
 - gRPC (not REST) is used specifically so both sides can attach interceptors logging per-call
   latency and (Python-side) LLM cost, feeding the benchmark harness (see [eval.md](eval.md)).
 - Contracts are defined in `proto/` (shared `.proto` files between `engine/`, `api/`, and
-  `agents/`) — not yet written at this scaffold stage.
+  `agents/`) — see `proto/hivemind.proto`.
 
 ## Interactions with other modules
 

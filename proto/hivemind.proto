@@ -1,0 +1,169 @@
+// Package hivemind.v1: shared gRPC contract between the Go storage engine
+// (engine/rpc/) and the Python ML/agent service (agents/). See
+// docs/LLD/rpc.md for the design notes this file implements (task-3.2.1,
+// GitHub issue #16, Epic Phase 3).
+//
+// Six RPCs, matching docs/LLD/rpc.md's "Exposed RPCs" (server-side, Go
+// engine as server) and "Consumed RPC" (client-side, Go engine as client of
+// the Python agent service) sections exactly:
+//   - PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates:
+//     implemented by engine/rpc/'s server (task-3.2.2), called by api/ and
+//     agents/query/.
+//   - ProposeSplit: implemented by agents/ingestion/'s Python service,
+//     called by engine/split/ (task-3.2.3, replacing task-2b.2's
+//     MockSplitProposer).
+//
+// This file defines contracts only: no server/client implementation lives
+// here (see engine/rpc/server.go for 3.2.2, engine/split/proposer_grpc.go
+// for 3.2.3).
+syntax = "proto3";
+
+package hivemind.v1;
+
+option go_package = "github.com/Aaryan123456679/HiveMind/engine/rpc/gen;hivemindv1";
+
+// EdgeType mirrors engine/graph/edge.go's ValidEdgeType set and canonical
+// wire names (EdgeTypeName/ParseEdgeType): ENTITY_COOCCUR, LLM_ASSERTED,
+// SPLIT_SIBLING, REDIRECT. EDGE_TYPE_UNSPECIFIED (0) mirrors
+// engine/graph's EdgeTypeInvalid zero-value sentinel and, per
+// engine/graph/traverse.go's GraphNeighbors, means "no filter" when used as
+// a GraphNeighborsRequest.edge_type_filter value.
+enum EdgeType {
+  EDGE_TYPE_UNSPECIFIED = 0;
+  ENTITY_COOCCUR = 1;
+  LLM_ASSERTED = 2;
+  SPLIT_SIBLING = 3;
+  REDIRECT = 4;
+}
+
+// PutSegment writes a segment produced by the ingestion segmentation agent
+// into a topic file (append or create). See docs/LLD/rpc.md.
+message PutSegmentRequest {
+  // file_id is the target topic file's fileID. If 0, the server creates a
+  // new file (create semantics); if non-zero, the server appends to the
+  // existing file (append semantics) -- mirrors
+  // engine/catalog.ContentStore's Create/Append split.
+  uint64 file_id = 1;
+  bytes content = 2;
+}
+
+message PutSegmentResponse {
+  uint64 file_id = 1;
+  // new_version is the file's MVCC version after this write.
+  uint64 new_version = 2;
+}
+
+// GetFile performs a full-file read at the current MVCC snapshot. See
+// docs/LLD/rpc.md and engine/catalog.ContentStore.Read.
+message GetFileRequest {
+  uint64 file_id = 1;
+}
+
+message GetFileResponse {
+  bytes content = 1;
+  uint64 version = 2;
+}
+
+// ReadPartial performs a section-level read using the markdown
+// header-offset cache. See docs/LLD/catalog.md's staleness risk and
+// engine/catalog.ContentStore.ReadPartial / HeaderOffset.
+message ReadPartialRequest {
+  uint64 file_id = 1;
+}
+
+// HeaderOffset mirrors engine/catalog.HeaderOffset field-for-field.
+message HeaderOffset {
+  string header = 1;
+  int64 offset = 2;
+}
+
+message ReadPartialResponse {
+  repeated HeaderOffset headers = 1;
+}
+
+// GraphNeighbors performs 0-2 hop graph traversal. See docs/LLD/graph.md's
+// "Traversal API" section and engine/graph.GraphNeighbors's exact
+// parameter/ordering semantics (hop asc, weight desc, target fileID asc,
+// then capped at max_nodes).
+message GraphNeighborsRequest {
+  uint64 file_id = 1;
+  // depth must be in [0, 2] -- see engine/graph.GraphNeighbors.
+  int32 depth = 2;
+  // edge_type_filter: EDGE_TYPE_UNSPECIFIED means no filter (match every
+  // valid edge type).
+  EdgeType edge_type_filter = 3;
+  int32 max_nodes = 4;
+}
+
+// Neighbor mirrors one engine/graph.CSREdge result entry plus the hop
+// distance at which it was reached.
+message Neighbor {
+  uint64 target_file_id = 1;
+  EdgeType type = 2;
+  float weight = 3;
+  int32 hop = 4;
+}
+
+message GraphNeighborsResponse {
+  repeated Neighbor neighbors = 1;
+}
+
+// SearchCandidates is a non-LLM candidate topic search consumed by the
+// Python query-agent's topic-selector. See docs/LLD/query-agent.md and
+// docs/LLD/rpc.md.
+message SearchCandidatesRequest {
+  string query = 1;
+  int32 max_results = 2;
+}
+
+message CandidateTopic {
+  uint64 file_id = 1;
+  string path = 2;
+  float score = 3;
+}
+
+message SearchCandidatesResponse {
+  repeated CandidateTopic candidates = 1;
+}
+
+// ProposeSplit is called by engine/split/ (client side) against the Python
+// ingestion agent service (server side) during auto-split. Field shapes
+// mirror engine/split.SplitPlan/SplitFileProposal/SectionRange and
+// docs/LLD/ingestion-agent.md's literal shape note:
+//   ProposeSplit(fileContent) -> [{newPath, sectionRanges}, ...] + redirect
+//   summary
+message ProposeSplitRequest {
+  bytes file_content = 1;
+}
+
+// SectionRange is a half-open byte-offset range [start, end) into the
+// original file_content, mirroring engine/split.SectionRange exactly.
+message SectionRange {
+  int64 start = 1;
+  int64 end = 2;
+}
+
+// SplitFileProposal mirrors engine/split.SplitFileProposal exactly.
+message SplitFileProposal {
+  string new_path = 1;
+  repeated SectionRange section_ranges = 2;
+}
+
+message ProposeSplitResponse {
+  repeated SplitFileProposal files = 1;
+  string redirect_summary = 2;
+}
+
+// HiveMind is the single shared gRPC service exposing all six RPCs this
+// contract defines. A single service (rather than one per RPC-group) keeps
+// task-3.2.2/3.2.3/3.2.4/3.2.5's generated client/server surface simple --
+// engine/rpc/'s server implements HiveMindServer; engine/split/'s
+// proposer_grpc.go (task-3.2.3) only calls HiveMindClient.ProposeSplit.
+service HiveMind {
+  rpc PutSegment(PutSegmentRequest) returns (PutSegmentResponse);
+  rpc GetFile(GetFileRequest) returns (GetFileResponse);
+  rpc ReadPartial(ReadPartialRequest) returns (ReadPartialResponse);
+  rpc GraphNeighbors(GraphNeighborsRequest) returns (GraphNeighborsResponse);
+  rpc SearchCandidates(SearchCandidatesRequest) returns (SearchCandidatesResponse);
+  rpc ProposeSplit(ProposeSplitRequest) returns (ProposeSplitResponse);
+}

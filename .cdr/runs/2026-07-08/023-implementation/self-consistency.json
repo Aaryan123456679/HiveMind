@@ -1,0 +1,24 @@
+{
+  "subtask": "task-3.2.1",
+  "scope": "Internal sanity only per invariant I4 -- NOT independent verification. /cdr:verify performs that separately.",
+  "checks": [
+    {"check": "gofmt -l engine/", "result": "clean, zero files listed"},
+    {"check": "go vet ./... (engine module)", "result": "clean, zero warnings"},
+    {"check": "go build ./... (engine module)", "result": "clean, exit 0, includes new engine/rpc/gen package"},
+    {"check": "protoc --go_out --go-grpc_out proto/hivemind.proto", "result": "exit 0, zero errors"},
+    {"check": "python -m grpc_tools.protoc (agents/.venv) proto/hivemind.proto", "result": "exit 0, zero errors"},
+    {"check": "python import hivemind_pb2, hivemind_pb2_grpc", "result": "imports cleanly"},
+    {"check": "Go HiveMindClient/HiveMindServer interface method set vs Python HiveMindServicer/HiveMindStub method set vs docs/LLD/rpc.md RPC list", "result": "all six RPC names (PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates, ProposeSplit) present and spelled identically in both generated languages and the LLD"}
+  ],
+  "validation_matrix_coverage": {
+    "AC1-six-rpcs-defined": "covered -- verified via grep + service block read",
+    "AC2-protoc-go-clean": "covered",
+    "AC3-protoc-python-clean": "covered",
+    "AC4-stub-signatures-match-lld": "covered"
+  },
+  "not_verified_here": [
+    "3.2.2's server handler correctness (no server.go implemented yet -- out of scope)",
+    "3.2.3's real ProposeSplit client correctness (no proposer_grpc.go yet -- out of scope)",
+    "runtime gRPC call behavior (no live server/client exercised, contract-only subtask)"
+  ]
+}

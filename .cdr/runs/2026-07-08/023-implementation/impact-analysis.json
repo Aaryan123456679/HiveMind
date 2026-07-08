@@ -1,0 +1,50 @@
+{
+  "subtask": "task-3.2.1",
+  "issue": 16,
+  "affected_files": {
+    "new": [
+      "proto/hivemind.proto",
+      "proto/README.md (updated)",
+      "engine/go.mod / engine/go.sum (add google.golang.org/grpc, google.golang.org/protobuf deps)",
+      "engine/rpc/gen/hivemind.pb.go (generated, checked in)",
+      "engine/rpc/gen/hivemind_grpc.pb.go (generated, checked in)",
+      "agents/hivemind_pb2.py (generated, checked in)",
+      "agents/hivemind_pb2_grpc.py (generated, checked in)",
+      "agents/hivemind_pb2.pyi (generated, checked in)",
+      "docs/LLD/rpc.md (status note update only: scaffold -> proto contracts defined)"
+    ],
+    "unchanged": [
+      "engine/rpc/doc.go",
+      "engine/split/*.go (no gRPC wiring in this subtask, deferred to 3.2.3)",
+      "engine/graph/*.go, engine/catalog/*.go, engine/btree/* (contracts only reference these types by name in comments; no code changes)"
+    ]
+  },
+  "contracts_introduced": {
+    "service": "HiveMind (proto/hivemind.proto, package hivemind.v1)",
+    "rpcs": [
+      "PutSegment(PutSegmentRequest) returns (PutSegmentResponse)",
+      "GetFile(GetFileRequest) returns (GetFileResponse)",
+      "ReadPartial(ReadPartialRequest) returns (ReadPartialResponse)",
+      "GraphNeighbors(GraphNeighborsRequest) returns (GraphNeighborsResponse)",
+      "SearchCandidates(SearchCandidatesRequest) returns (SearchCandidatesResponse)",
+      "ProposeSplit(ProposeSplitRequest) returns (ProposeSplitResponse)"
+    ]
+  },
+  "dependents": {
+    "direct": [
+      "task-3.2.2 (engine/rpc/server.go) will implement the Go server side of the first 5 RPCs against these generated stubs",
+      "task-3.2.3 (engine/split/proposer_grpc.go) will implement a SplitProposer backed by the generated ProposeSplit client stub",
+      "task-3.2.4 (interceptor) will wrap the generated server/client with latency/cost interceptors",
+      "task-3.2.5 (integration test) exercises the full generated stack end-to-end"
+    ],
+    "indirect": [
+      "api/ (future HTTP gateway, per docs/LLD/rpc.md, not yet built) will eventually be a client of engine/rpc's server"
+    ]
+  },
+  "risk_level": "low",
+  "risk_notes": [
+    "Additive only: no existing Go or Python source file's behavior changes; only new files plus one new go.mod dependency pair and one doc status line.",
+    "Generated code is checked in (common Go community practice for this repo's tooling-light setup) rather than regenerated at build time, avoiding a new Makefile/CI codegen step in this subtask -- consistent with 'keep it minimal' guidance.",
+    "Message/RPC shapes are a best-effort mapping from existing Go signatures (GraphNeighbors, ReadPartial, SplitProposer) and could need small adjustment once 3.2.2/3.2.3 actually wire real handlers -- flagged, not blocking, since 3.2.1's acceptance criteria is compilation + shape match to docs/LLD/rpc.md's RPC list, not handler-level correctness."
+  ]
+}

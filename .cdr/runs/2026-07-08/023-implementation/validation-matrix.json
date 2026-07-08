@@ -1,0 +1,27 @@
+{
+  "subtask": "task-3.2.1",
+  "criteria": [
+    {
+      "id": "AC1-six-rpcs-defined",
+      "description": "A single set of .proto files under proto/ defines request/response messages and service method(s) for all six RPCs: PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates, ProposeSplit.",
+      "check": "grep for 'rpc PutSegment' / 'rpc GetFile' / 'rpc ReadPartial' / 'rpc GraphNeighbors' / 'rpc SearchCandidates' / 'rpc ProposeSplit' in proto/hivemind.proto; all six present exactly once in a single service block."
+    },
+    {
+      "id": "AC2-protoc-go-clean",
+      "description": "protoc --go_out=. --go-grpc_out=. proto/*.proto succeeds with zero errors.",
+      "check": "run protoc with protoc-gen-go/protoc-gen-go-grpc plugins against proto/hivemind.proto from repo root; exit code 0, generated files under engine/rpc/gen/ compile via go build ./...."
+    },
+    {
+      "id": "AC3-protoc-python-clean",
+      "description": "Python grpc_tools.protoc equivalent succeeds with zero errors.",
+      "check": "run agents/.venv's python -m grpc_tools.protoc against proto/hivemind.proto; exit code 0, generated *_pb2.py/*_pb2_grpc.py import cleanly under agents/.venv's python."
+    },
+    {
+      "id": "AC4-stub-signatures-match-lld",
+      "description": "Generated stub signatures match the documented RPC list in docs/LLD/rpc.md.",
+      "check": "manual diff: docs/LLD/rpc.md's 'Exposed RPCs' (PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates) + 'Consumed RPC' (ProposeSplit) against generated HiveMindServer/HiveMindClient Go interface method names and Python stub's HiveMindStub method names -- exact 1:1 name match, six methods total."
+    }
+  ],
+  "self_consistency_only": true,
+  "note": "This matrix is internal sanity-check scope only (I4): independent verification is delegated to /cdr:verify and is NOT performed by this run."
+}
