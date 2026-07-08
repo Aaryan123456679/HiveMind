@@ -1,0 +1,45 @@
+{
+  "affected_files": [
+    {
+      "path": "engine/graph/edge.go",
+      "change": "new file: ValidEdgeType/(EdgeType).Valid(), canonical Name()/ParseEdgeType string mapping, validated NewCSREdge constructor"
+    },
+    {
+      "path": "engine/graph/edge_test.go",
+      "change": "new file: TestEdgeTypes - validity, name round-trip, NewCSREdge rejection, wiring-level checks via edgelog/csr"
+    },
+    {
+      "path": "engine/graph/edgelog.go",
+      "change": "AppendEdge: replace '== EdgeTypeInvalid' check with ValidEdgeType() to reject any undefined byte value, not just 0"
+    },
+    {
+      "path": "engine/graph/csr.go",
+      "change": "decodeCSREdge becomes fallible (returns error on undefined type); LoadCSR surfaces the error; WriteCSR validates every edge's type before encoding"
+    }
+  ],
+  "unaffected_but_reviewed": [
+    {
+      "path": "engine/graph/edge_append.go",
+      "reason": "already correctly scoped to SPLIT_SIBLING/REDIRECT only per docs/LLD/graph.md; no change"
+    },
+    {
+      "path": "engine/graph/compact.go",
+      "reason": "mergeEdges weight-aggregation semantics already correctly generalize to all 4 types; verified by direct reading against docs/LLD/graph.md, no change needed"
+    }
+  ],
+  "modules_dependents": [
+    "engine/graph package internal only (edgelog.go, csr.go depend on new edge.go helpers)",
+    "no external callers of decodeCSREdge/WriteCSR/LoadCSR/EdgeLog.AppendEdge exist yet outside engine/graph (traverse.go/3.1.5 and engine/split wiring are future subtasks)"
+  ],
+  "contracts_changed": [
+    "decodeCSREdge signature: (data []byte) CSREdge -> (data []byte) (CSREdge, error) - internal, unexported, only 2 call sites (csr.go LoadCSR, edgelog.go ReadNodeAfter), both updated in this change",
+    "EdgeLog.AppendEdge: now rejects any EdgeType byte not in {SplitSibling, Redirect, EntityCooccur, LLMAsserted}, previously only rejected 0 - backward compatible for all currently-existing callers (none exist yet outside tests)",
+    "WriteCSR: now returns an error for a CSRGraph containing an edge with an undefined type - backward compatible, no existing caller constructs such a graph"
+  ],
+  "risk_level": "low",
+  "risk_notes": [
+    "No existing production caller of EdgeLog.AppendEdge/WriteCSR outside engine/graph's own test suite yet (traverse.go/3.1.5, engine/split wiring are still unbuilt), so tightening validation cannot regress a real caller.",
+    "decodeCSREdge signature change is internal/unexported with exactly 2 call sites, both updated in the same commit.",
+    "Package has twice produced severe, silently-corrupting bugs this phase (3.1.3's two fix cycles) at compaction/edge-log seams - conservative test design used here: explicit round-trip tests for all 4 types through encode/decode and through EdgeLog.AppendEdge/ReadNode, not just the happy path."
+  ]
+}

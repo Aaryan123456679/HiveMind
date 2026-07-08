@@ -92,14 +92,23 @@ func (e CSREdge) encode(buf []byte) {
 }
 
 // decodeCSREdge parses data (as previously produced by CSREdge.encode) into a CSREdge. data
-// must be exactly csrEdgeEncodedSize bytes.
-func decodeCSREdge(data []byte) CSREdge {
-	return CSREdge{
+// must be exactly csrEdgeEncodedSize bytes. It returns an error if the decoded Type byte is
+// not one of the edge types ValidEdgeType (edge.go, subtask 3.1.4) recognizes, rather than
+// silently accepting an undefined type - a defensive check on top of WriteCSR's own CRC32
+// integrity check, since CRC32 alone would not catch a logic bug upstream that wrote an
+// undefined type byte in the first place (the CRC would simply match whatever bytes were
+// actually written).
+func decodeCSREdge(data []byte) (CSREdge, error) {
+	e := CSREdge{
 		Target:      binary.LittleEndian.Uint64(data[offCSREdgeTarget:]),
 		Type:        EdgeType(data[offCSREdgeType]),
 		Weight:      binary.LittleEndian.Uint32(data[offCSREdgeWeight:]),
 		LastUpdated: int64(binary.LittleEndian.Uint64(data[offCSREdgeLastUpdated:])),
 	}
+	if !ValidEdgeType(e.Type) {
+		return CSREdge{}, fmt.Errorf("graph: decoded CSR edge has invalid type %d (target=%d)", data[offCSREdgeType], e.Target)
+	}
+	return e, nil
 }
 
 // CSRGraph is an in-memory, immutable-once-built CSR (compressed sparse row) adjacency
@@ -163,6 +172,12 @@ func (g *CSRGraph) Neighbors(fileID uint64) []CSREdge {
 // filesystem) — mirroring engine/catalog/content.go's writeContentFile convention for
 // whole-file durable writes.
 func WriteCSR(path string, g *CSRGraph) error {
+	for i, e := range g.edges {
+		if !ValidEdgeType(e.Type) {
+			return fmt.Errorf("graph: refusing to write CSR file %s: edge index %d (target=%d) has invalid type %v", path, i, e.Target, e.Type)
+		}
+	}
+
 	payload := encodeCSRPayload(g)
 
 	header := make([]byte, csrHeaderSize)
@@ -261,7 +276,11 @@ func LoadCSR(path string) (*CSRGraph, error) {
 
 	edges := make([]CSREdge, edgeCount)
 	for i := range edges {
-		edges[i] = decodeCSREdge(payload[off : off+csrEdgeEncodedSize])
+		e, err := decodeCSREdge(payload[off : off+csrEdgeEncodedSize])
+		if err != nil {
+			return nil, fmt.Errorf("graph: CSR file %s: %w (edge index %d)", path, err, i)
+		}
+		edges[i] = e
 		off += csrEdgeEncodedSize
 	}
 

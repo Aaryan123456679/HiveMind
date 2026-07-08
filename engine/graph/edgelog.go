@@ -112,11 +112,13 @@ func (l *EdgeLog) getOrOpenWriter(sourceFileID uint64) (*wal.Writer, error) {
 
 // AppendEdge durably appends edge to sourceFileID's own per-node log, fsyncing before it
 // returns (the same durability guarantee wal.Writer already provides catalog/btree
-// mutations and edge_append.go's EdgeAppender). It returns an error if edge.Type is the
-// EdgeTypeInvalid zero-value sentinel; no other type validation is performed here (that
-// is subtask 3.1.4's job - see this file's package doc comment).
+// mutations and edge_append.go's EdgeAppender). It returns an error if edge.Type is not
+// one of the four edge types ValidEdgeType (edge.go, subtask 3.1.4) recognizes - this
+// used to only reject the EdgeTypeInvalid zero-value sentinel, leaving any other
+// undefined byte value free to be durably written; full validation is subtask 3.1.4's
+// job, now implemented here.
 func (l *EdgeLog) AppendEdge(sourceFileID uint64, edge CSREdge) error {
-	if edge.Type == EdgeTypeInvalid {
+	if !ValidEdgeType(edge.Type) {
 		return fmt.Errorf("graph: cannot append edge with invalid type %v", edge.Type)
 	}
 	w, err := l.getOrOpenWriter(sourceFileID)
@@ -179,7 +181,11 @@ func (l *EdgeLog) ReadNodeAfter(sourceFileID uint64, afterSeg int) ([]CSREdge, i
 			if len(rec) != csrEdgeEncodedSize {
 				return nil, afterSeg, fmt.Errorf("graph: edge log segment %s has malformed record of %d bytes, want %d", seg.path, len(rec), csrEdgeEncodedSize)
 			}
-			edges = append(edges, decodeCSREdge(rec))
+			e, err := decodeCSREdge(rec)
+			if err != nil {
+				return nil, afterSeg, fmt.Errorf("graph: edge log segment %s: %w", seg.path, err)
+			}
+			edges = append(edges, e)
 		}
 	}
 	return edges, maxSeg, nil

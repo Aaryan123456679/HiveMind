@@ -1,0 +1,22 @@
+{
+  "note": "Internal sanity check only - this is NOT verification (invariant I4: implementer must not verify own work). A separate agent must independently verify.",
+  "checks": [
+    {"check": "gofmt -l engine/graph", "result": "clean (no output)"},
+    {"check": "go vet ./...", "result": "clean"},
+    {"check": "go build ./...", "result": "clean"},
+    {"check": "go test ./engine/graph/... -run TestEdgeTypes -timeout 60s -v", "result": "PASS, all 6 subtests"},
+    {"check": "go test ./engine/graph/... -race -timeout 180s -v (full package suite)", "result": "PASS, all tests including 3.1.1-3.1.3's existing suites; no regression; no flakes observed this run"}
+  ],
+  "validation_matrix_coverage": {
+    "AC1-type-filtered-creation": "covered by TestEdgeTypes/NewCSREdge, TestEdgeTypes/NameParseRoundTrip",
+    "AC2-validation-rejects-invalid": "covered by TestEdgeTypes/ValidEdgeType, /NewCSREdge, /EdgeLogRejectsUndefinedType, /WriteCSRRejectsUndefinedType, /CSREdgeEncodeDecodeRoundTrip",
+    "AC3-weight-aggregation-semantics-correct": "no new test added (no change made to compact.go); pre-existing TestCompaction/EntityCooccurWeightsSum and TestCompaction/NonCooccurDedupLastWrite in compact_test.go still pass unchanged",
+    "AC4-no-regression": "full engine/graph -race suite green",
+    "AC5-go-discipline": "gofmt/vet/build clean; -race used; every go test invocation carried an explicit -timeout"
+  },
+  "known_gaps_disclosed_not_fixed": [
+    "edge_append.go's decodeEdge/AppendEdge remain scoped to SplitSibling/Redirect only, unchanged - this is correct per docs/LLD/graph.md, not a gap.",
+    "The pre-existing, non-blocking lock-ordering gap in EdgeLog.ReadNodeAfter/TruncateNode (logged in .cdr/memory/pending.md during 3.1.3's verification, forward-referenced to milestone #10 issues #38-42) is out of scope for 3.1.4 and was not touched.",
+    "No new validation was added at the EdgeAppender (edge_append.go) layer beyond what already existed, since docs/LLD/graph.md explicitly scopes that mechanism to SPLIT_SIBLING/REDIRECT only and it already correctly enforces that scope."
+  ]
+}
