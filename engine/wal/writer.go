@@ -175,7 +175,17 @@ func segmentPath(dir string, n int) string {
 
 // latestSegmentNum scans dir for existing "wal-<N>.log" files and returns the
 // highest N found along with resuming=true, or (0, false, nil) if dir
-// contains no segment files yet (a brand-new WAL).
+// contains no segment files yet (a brand-new WAL) and no segment-floor
+// marker (see WriteSegmentFloor) has been recorded for dir.
+//
+// If dir currently has no segment files but a caller previously called
+// WriteSegmentFloor(dir, floor) - meaning dir's segment files existed once,
+// were fully removed by that caller (e.g. graph.EdgeLog.TruncateNode), and
+// segment numbering must not restart at 0 because something else durably
+// recorded facts about segment numbers <= floor-1 - segmentNum starts at
+// that floor instead. As soon as any real segment file exists, that file's
+// own number takes precedence and the floor marker is ignored entirely (it
+// has already served its purpose for that segment's lifetime).
 func latestSegmentNum(dir string) (n int, resuming bool, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -202,11 +212,100 @@ func latestSegmentNum(dir string) (n int, resuming bool, err error) {
 	}
 
 	if len(found) == 0 {
+		floor, ferr := readSegmentFloor(dir)
+		if ferr != nil {
+			if !os.IsNotExist(ferr) {
+				return 0, false, ferr
+			}
+			return 0, false, nil
+		}
+		if floor > 0 {
+			return floor, false, nil
+		}
 		return 0, false, nil
 	}
 
 	sort.Ints(found)
 	return found[len(found)-1], true, nil
+}
+
+// segmentFloorFile is the name of a small control file, sibling to a WAL
+// directory's segment files, written by WriteSegmentFloor.
+const segmentFloorFile = ".segment-floor"
+
+// WriteSegmentFloor durably (temp file + fsync + atomic rename, matching
+// this package's own segment-file durability idiom) records floor as the
+// minimum segment number a future OpenWriter call against dir must use once
+// dir's existing segment files have all been removed.
+//
+// This exists for callers that fully truncate (remove every existing
+// segment file from) a WAL directory but must prevent a subsequent
+// OpenWriter call from restarting segment numbering at 0 - because some
+// other durable record elsewhere (e.g. engine/graph/compact.go's
+// compact-state sidecar) already refers to segment numbers up through
+// floor-1 as "already accounted for", and reusing one of those numbers for
+// new, not-yet-accounted-for data would let that other record incorrectly
+// treat the new data as already covered. See engine/graph/edgelog.go's
+// TruncateNode, the first caller of this function, for the full rationale
+// and the ordering (floor written BEFORE segment files are removed) that
+// makes this safe even if the calling process crashes partway through.
+//
+// WriteSegmentFloor is monotonic: if dir already has a recorded floor >=
+// floor, the existing (higher or equal) value is left untouched rather than
+// being lowered - a caller computing floor from a possibly-stale segment
+// listing must never be able to regress an already-published floor.
+func WriteSegmentFloor(dir string, floor int) error {
+	if floor < 0 {
+		return fmt.Errorf("wal: segment floor must be >= 0, got %d", floor)
+	}
+
+	if existing, err := readSegmentFloor(dir); err == nil {
+		if existing >= floor {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	path := filepath.Join(dir, segmentFloorFile)
+	tmp, err := os.CreateTemp(dir, segmentFloorFile+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("wal: creating temp segment floor file in %s: %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.WriteString(strconv.Itoa(floor)); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("wal: writing segment floor file in %s: %w", dir, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("wal: syncing segment floor file in %s: %w", dir, err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("wal: closing segment floor file in %s: %w", dir, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("wal: renaming segment floor file in %s: %w", dir, err)
+	}
+	return nil
+}
+
+// readSegmentFloor reads dir's segment floor file, if any, returning
+// (0, an os.IsNotExist-satisfying error) if dir has no recorded floor.
+func readSegmentFloor(dir string) (int, error) {
+	data, err := os.ReadFile(filepath.Join(dir, segmentFloorFile))
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("wal: malformed segment floor file in %s: %w", dir, err)
+	}
+	return n, nil
 }
 
 // Append writes payload as a new record to the current segment, rotating to

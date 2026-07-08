@@ -196,10 +196,41 @@ func (l *EdgeLog) ReadNodeAfter(sourceFileID uint64, afterSeg int) ([]CSREdge, i
 // If sourceFileID currently has an open wal.Writer (because AppendEdge or
 // ReadNode has already been used for it), that writer is closed and dropped from
 // the cache first, so a subsequent AppendEdge for the same fileID lazily reopens
-// a brand-new wal.Writer (matching OpenWriter's own "no existing segment files"
-// / non-resuming path) rather than continuing to append to a file this method is
-// about to delete out from under it. It is not an error for sourceFileID to have
-// no log at all yet (nothing to truncate).
+// a brand-new wal.Writer rather than continuing to append to a file this method
+// is about to delete out from under it. It is not an error for sourceFileID to
+// have no log at all yet (nothing to truncate).
+//
+// # Segment numbering must never be reused after a successful truncation
+//
+// A second, more severe bug was found in this fix cycle beyond the one
+// compact.go's package doc comment already documents (the "retry idempotency"
+// crash-safety window): TruncateNode used to remove sourceFileID's entire node
+// directory outright. Since wal.OpenWriter always starts a brand-new (or
+// newly-empty) directory's segment numbering at 0, the very next AppendEdge for
+// the same fileID after a successful truncation would silently start writing to
+// "wal-0.log" again - the exact same segment number compact.go's compact-state
+// sidecar had just durably recorded as "already folded into graph.dat" for this
+// fileID. The next Compact run would then see that reused segment number,
+// conclude (per the sidecar) that it was already accounted for, and skip it -
+// permanently and silently discarding every edge appended after the node's
+// first successful truncation, with no crash or failure injection required at
+// all (issue #15, subtask 3.1.3, second fix cycle).
+//
+// The fix: TruncateNode no longer deletes the node directory. Instead, before
+// removing any segment file, it durably records (via wal.WriteSegmentFloor) a
+// "segment floor" one past the highest segment number currently on disk for
+// this fileID, so the next wal.OpenWriter call for this directory - once its
+// segment files really are all gone - resumes numbering from that floor rather
+// than from 0. The floor is written BEFORE the segment files are removed
+// specifically so that a crash between these two steps is safe: the
+// not-yet-removed segment files are still on disk, so the next OpenWriter call
+// resumes appending to them directly (wal.OpenWriter's own "existing segment
+// files win over any floor marker" rule), which is exactly the same
+// already-documented, safe-to-retry outcome as if this TruncateNode call had
+// failed outright (see compact.go's package doc comment). Writing the floor
+// AFTER removal, by contrast, would reopen the exact same window this fix
+// closes: a crash in that gap would leave an empty directory with no floor
+// recorded, and the next AppendEdge would restart numbering at 0 again.
 func (l *EdgeLog) TruncateNode(sourceFileID uint64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -212,13 +243,32 @@ func (l *EdgeLog) TruncateNode(sourceFileID uint64) error {
 	}
 
 	dir := l.nodeDir(sourceFileID)
-	segmentPaths, err := listWALSegments(dir)
+	segments, err := listWALSegmentsNumbered(dir)
 	if err != nil {
 		return err
 	}
-	for _, path := range segmentPaths {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("graph: removing edge log segment %s: %w", path, err)
+	if len(segments) == 0 {
+		// Nothing to truncate for this fileID: either it never had a log, or
+		// a prior TruncateNode call already ran and no edge has been
+		// appended since. Any segment-floor marker already recorded for dir
+		// (see below) is left in place untouched - it still protects the
+		// next AppendEdge from reusing a segment number that compact.go may
+		// already have durably recorded as reflected in graph.dat.
+		return nil
+	}
+
+	// segments is sorted ascending by listWALSegmentsNumbered, so the last
+	// entry is the highest segment number currently on disk for this
+	// fileID. See the doc comment above for why this must be recorded
+	// BEFORE any segment file below is removed.
+	maxSeg := segments[len(segments)-1].num
+	if err := wal.WriteSegmentFloor(dir, maxSeg+1); err != nil {
+		return fmt.Errorf("graph: recording segment floor for node %d before truncate: %w", sourceFileID, err)
+	}
+
+	for _, seg := range segments {
+		if err := os.Remove(seg.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("graph: removing edge log segment %s: %w", seg.path, err)
 		}
 	}
 	// Also remove manifest.json/manifest.json.tmp if wal.Checkpoint was ever used
@@ -226,10 +276,10 @@ func (l *EdgeLog) TruncateNode(sourceFileID uint64) error {
 	// so a stale control file never confuses a future wal.OpenWriter resume check).
 	_ = os.Remove(filepath.Join(dir, "manifest.json"))
 	_ = os.Remove(filepath.Join(dir, "manifest.json.tmp"))
-	// Best-effort: remove the now-empty node directory itself. Not fatal if it
-	// still contains something else or removal fails - the next AppendEdge will
-	// MkdirAll it again regardless.
-	_ = os.Remove(dir)
+	// The node directory itself is intentionally no longer removed here: it
+	// now holds the segment-floor marker written above, which must survive
+	// so the next AppendEdge's wal.OpenWriter call sees it and does not
+	// restart segment numbering at 0 (see doc comment above).
 
 	return nil
 }
@@ -249,26 +299,6 @@ func (l *EdgeLog) Close() error {
 	}
 	l.writers = make(map[uint64]*wal.Writer)
 	return errors.Join(errs...)
-}
-
-// listWALSegments returns dir's "wal-<N>.log" segment file paths, sorted ascending by
-// segment number, matching engine/wal's own segment-file naming convention. It returns
-// (nil, nil) if dir does not exist (i.e. sourceFileID has never had an edge appended).
-//
-// This intentionally duplicates edge_append.go's listEdgeSegments logic rather than
-// factoring out a shared helper: edge_append.go (task-2b.3.4, issue #12) is left
-// completely untouched by this subtask, matching 3.1.1's own precedent, so its behavior
-// cannot be accidentally affected by a change made here.
-func listWALSegments(dir string) ([]string, error) {
-	segments, err := listWALSegmentsNumbered(dir)
-	if err != nil {
-		return nil, err
-	}
-	paths := make([]string, len(segments))
-	for i, s := range segments {
-		paths[i] = s.path
-	}
-	return paths, nil
 }
 
 // numberedSegment pairs a "wal-<N>.log" segment file's path with its parsed

@@ -111,6 +111,34 @@
 // require changing csr.go's on-disk format and LoadCSR's payload-length
 // validation, which every other caller of LoadCSR (including this file's own
 // existing-graph reload) depends on staying exactly as task-3.1.1 defined it.
+//
+// # Segment-number reuse (second fix cycle)
+//
+// The compact-state sidecar above fixed the crash-after-rename-but-before-
+// truncate window, but in doing so introduced a second, more severe bug: the
+// sidecar records "already folded into graphPath" using an edge log's
+// segment NUMBERS (see EdgeLog.ReadNodeAfter), not any content hash or
+// per-edge identity. EdgeLog.TruncateNode used to fully remove a node's
+// per-node log directory once its entries were durably folded in, and
+// engine/wal's OpenWriter always starts a brand-new (or newly-empty)
+// directory's segment numbering at 0. So the very next edge appended to that
+// same node after ANY successful, uneventful truncation - no crash or
+// failure required at all - would silently be written to a reused segment
+// number the sidecar had already marked "already accounted for", and the
+// next ordinary Compact run would skip it as a result: a real edge, appended
+// on the completely normal happy path, permanently and silently discarded.
+// This is strictly worse than the bug the sidecar itself fixed, because it
+// requires no failure injection and no crash whatsoever - only two ordinary
+// Compact cycles on the same node.
+//
+// The fix (see EdgeLog.TruncateNode's own doc comment for the full
+// crash-safety trace): TruncateNode no longer deletes a node's log
+// directory. Instead, before removing any segment file, it durably records
+// (via wal.WriteSegmentFloor) a floor one past the highest segment number
+// that directory has ever used, so segment numbers are never reused across a
+// truncation - closing the collision this fix cycle exists to fix - while
+// leaving the original compact-state sidecar mechanism above, and its own
+// documented residual crash window, completely unchanged.
 package graph
 
 import (
@@ -256,7 +284,17 @@ func saveCompactState(graphPath string, state map[uint64]uint64) error {
 // silently skips any entry that isn't a plain, non-negative base-10 integer
 // (e.g. a stray unrelated file placed directly under root), matching this
 // package's existing tolerance for unrecognized directory entries (see
-// listWALSegments).
+// listWALSegmentsNumbered).
+//
+// Note that, since this fix cycle, EdgeLog.TruncateNode no longer removes a
+// node's per-node directory (it keeps it around to hold a wal.WriteSegmentFloor
+// marker - see TruncateNode's doc comment for why), so a fileID's directory -
+// and therefore this function's inclusion of it - persists even once every
+// edge ever appended to it has been compacted and truncated away. Compact
+// below already tolerates this correctly: a node with no segments currently
+// on disk simply contributes no logEdges and is a cheap no-op both to read
+// (ReadNodeAfter) and to re-truncate (TruncateNode itself is a no-op when it
+// finds no segment files).
 func edgeLogNodeIDs(root string) ([]uint64, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {

@@ -485,3 +485,192 @@ func TestTruncateNode(t *testing.T) {
 	}
 	assertNeighbors(t, got2, []CSREdge{{Target: 3, Type: EdgeRedirect, Weight: 0, LastUpdated: 2}})
 }
+
+// TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost is this
+// fix cycle's regression test for the F2 finding in
+// .cdr/runs/2026-07-08/010-verification/verification.json: a prior fix for
+// the retry-idempotency bug (TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight
+// above) made EdgeLog.TruncateNode delete a node's entire log directory once
+// its entries were durably folded into graph.dat. Since engine/wal's
+// OpenWriter always restarts segment numbering at 0 for a brand-new/empty
+// directory, the very next edge appended to that same node after a
+// completely ordinary, uneventful truncation would silently reuse a segment
+// number compact.go's compact-state sidecar had already recorded as
+// "already accounted for" - so the next ordinary Compact run would skip it,
+// permanently and silently losing it. No crash or failure injection is
+// involved anywhere in this scenario; it is the exact minimal repro from the
+// verification finding: append, compact (full success), append again to the
+// same node, compact again - both edges must be reflected afterwards.
+func TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost(t *testing.T) {
+	dir := t.TempDir()
+	graphPath := filepath.Join(dir, "graph.dat")
+	logRoot := filepath.Join(dir, "edgelogs")
+
+	l, err := OpenEdgeLog(logRoot)
+	if err != nil {
+		t.Fatalf("OpenEdgeLog: %v", err)
+	}
+	defer l.Close()
+
+	const source, target = 100, 200
+
+	// First edge, first (fully successful, no failure injected) compaction.
+	first := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 3, LastUpdated: 10}
+	if err := l.AppendEdge(source, first); err != nil {
+		t.Fatalf("AppendEdge #1: %v", err)
+	}
+	if _, err := Compact(graphPath, l); err != nil {
+		t.Fatalf("first Compact: %v", err)
+	}
+	reloaded1, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after first Compact: %v", err)
+	}
+	assertNeighbors(t, reloaded1.Neighbors(source), []CSREdge{first})
+
+	// Second edge to the SAME node, appended only after the first
+	// compaction has already fully succeeded (including truncation) - the
+	// ordinary, happy-path sequence a real ingestion pipeline would follow.
+	second := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 5, LastUpdated: 20}
+	if err := l.AppendEdge(source, second); err != nil {
+		t.Fatalf("AppendEdge #2: %v", err)
+	}
+
+	// Second, ordinary periodic-compaction cycle - nothing unusual injected.
+	if _, err := Compact(graphPath, l); err != nil {
+		t.Fatalf("second Compact: %v", err)
+	}
+
+	reloaded2, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after second Compact: %v", err)
+	}
+	want := []CSREdge{{Target: target, Type: EdgeEntityCooccur, Weight: 8, LastUpdated: 20}}
+	assertNeighbors(t, reloaded2.Neighbors(source), want)
+
+	// A third round-trip (append, compact) confirms the fix is not merely
+	// "works once": segment numbering must keep advancing indefinitely,
+	// never colliding with a previously-recorded compact-state entry again.
+	third := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 1, LastUpdated: 30}
+	if err := l.AppendEdge(source, third); err != nil {
+		t.Fatalf("AppendEdge #3: %v", err)
+	}
+	if _, err := Compact(graphPath, l); err != nil {
+		t.Fatalf("third Compact: %v", err)
+	}
+	reloaded3, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after third Compact: %v", err)
+	}
+	want3 := []CSREdge{{Target: target, Type: EdgeEntityCooccur, Weight: 9, LastUpdated: 30}}
+	assertNeighbors(t, reloaded3.Neighbors(source), want3)
+}
+
+// TestCompaction_FailedTruncateRetryThenOrdinarySubsequentAppendsSurvive
+// combines both fix cycles in one sequence, targeting the exact seam between
+// them: a failed-truncate retry cycle (F1's scenario) followed by normal,
+// uneventful subsequent appends and compactions on the SAME node (F2's
+// scenario). Regressing either fix in a way that only shows up when the
+// other fix's code path has already run for this node (e.g. an off-by-one
+// in the segment floor computed from a sidecar-driven retry, rather than
+// from a clean first-time truncation) would be caught here even if each
+// fix's own dedicated regression test above still passes in isolation.
+func TestCompaction_FailedTruncateRetryThenOrdinarySubsequentAppendsSurvive(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: directory permission bits do not block writes, cannot simulate the truncate-failure window this test needs")
+	}
+
+	dir := t.TempDir()
+	graphPath := filepath.Join(dir, "graph.dat")
+	logRoot := filepath.Join(dir, "edgelogs")
+
+	l, err := OpenEdgeLog(logRoot)
+	if err != nil {
+		t.Fatalf("OpenEdgeLog: %v", err)
+	}
+	defer l.Close()
+
+	const source, target = 55, 66
+
+	first := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 3, LastUpdated: 1}
+	if err := l.AppendEdge(source, first); err != nil {
+		t.Fatalf("AppendEdge #1: %v", err)
+	}
+
+	// Ensure the writer is closed (and dropped from the cache) before we
+	// lock down the directory, matching the F1 regression test's own setup.
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	l2, err := OpenEdgeLog(logRoot)
+	if err != nil {
+		t.Fatalf("re-OpenEdgeLog: %v", err)
+	}
+	defer l2.Close()
+
+	nodeDir := l2.nodeDir(source)
+	if err := os.Chmod(nodeDir, 0o500); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+
+	// First Compact: WriteCSR's rename succeeds, but TruncateNode fails
+	// (F1's window).
+	if _, err := Compact(graphPath, l2); err == nil {
+		t.Fatalf("expected first Compact to report a truncate-phase error, got nil")
+	}
+	reloaded1, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after first Compact: %v", err)
+	}
+	assertNeighbors(t, reloaded1.Neighbors(source), []CSREdge{first})
+
+	// Lift the failure condition and retry - the documented recovery
+	// action. The still-un-truncated log entry must not be re-summed, and
+	// this retry's TruncateNode call must succeed and correctly record a
+	// segment floor (not just delete the directory) this time.
+	if err := os.Chmod(nodeDir, 0o755); err != nil {
+		t.Fatalf("Chmod restore: %v", err)
+	}
+	if _, err := Compact(graphPath, l2); err != nil {
+		t.Fatalf("retry Compact: unexpected error: %v", err)
+	}
+	reloaded2, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after retry Compact: %v", err)
+	}
+	assertNeighbors(t, reloaded2.Neighbors(source), []CSREdge{first})
+
+	// Now the F2 scenario, on the very same node that just went through a
+	// failed-then-retried truncation: append again and compact again,
+	// twice, exactly as TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost
+	// does. Both edges must be reflected, not silently dropped.
+	second := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 5, LastUpdated: 2}
+	if err := l2.AppendEdge(source, second); err != nil {
+		t.Fatalf("AppendEdge #2: %v", err)
+	}
+	if _, err := Compact(graphPath, l2); err != nil {
+		t.Fatalf("second (post-retry) Compact: %v", err)
+	}
+	reloaded3, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after second post-retry Compact: %v", err)
+	}
+	assertNeighbors(t, reloaded3.Neighbors(source), []CSREdge{
+		{Target: target, Type: EdgeEntityCooccur, Weight: 8, LastUpdated: 2},
+	})
+
+	third := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 2, LastUpdated: 3}
+	if err := l2.AppendEdge(source, third); err != nil {
+		t.Fatalf("AppendEdge #3: %v", err)
+	}
+	if _, err := Compact(graphPath, l2); err != nil {
+		t.Fatalf("third (post-retry) Compact: %v", err)
+	}
+	reloaded4, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after third post-retry Compact: %v", err)
+	}
+	assertNeighbors(t, reloaded4.Neighbors(source), []CSREdge{
+		{Target: target, Type: EdgeEntityCooccur, Weight: 10, LastUpdated: 3},
+	})
+}
