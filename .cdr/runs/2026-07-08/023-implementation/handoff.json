@@ -1,0 +1,45 @@
+{
+  "subtask": "task-3.2.1",
+  "issue": 16,
+  "commit": "cfbe29a0b1cf425b3f6e6548755793d9f17a4890",
+  "commit_verified_via": "git rev-parse HEAD after commit, matches git log -1 --format=%H",
+  "status": "implemented, not yet verified (verification delegated to /cdr:verify per invariant I4)",
+  "files": {
+    "proto/hivemind.proto": "new, 169 lines -- single HiveMind service, 6 RPCs, EdgeType enum",
+    "engine/rpc/gen/hivemind.pb.go": "generated, 1173 lines",
+    "engine/rpc/gen/hivemind_grpc.pb.go": "generated, 342 lines -- HiveMindClient (line 58-65), HiveMindServer (line ~144)",
+    "agents/hivemind_pb2.py": "generated, 73 lines",
+    "agents/hivemind_pb2_grpc.py": "generated, 327 lines -- HiveMindStub.__init__ (line ~1-30), HiveMindServicer (methods list confirmed via dir())",
+    "agents/hivemind_pb2.pyi": "generated type stubs",
+    "engine/go.mod": "modified -- added google.golang.org/grpc v1.82.0, google.golang.org/protobuf v1.36.11",
+    "engine/go.sum": "new",
+    "proto/README.md": "modified -- regeneration commands documented",
+    "docs/LLD/rpc.md": "modified -- status line only, scaffold-only -> contracts-defined"
+  },
+  "acceptance_criteria": [
+    {"id": "AC1-six-rpcs-defined", "location": "proto/hivemind.proto lines 106-166 (service HiveMind block)"},
+    {"id": "AC2-protoc-go-clean", "verified_locally": "protoc --go_out=engine --go-grpc_out=engine proto/hivemind.proto, exit 0"},
+    {"id": "AC3-protoc-python-clean", "verified_locally": "python -m grpc_tools.protoc (agents/.venv), exit 0"},
+    {"id": "AC4-stub-signatures-match-lld", "verified_locally": "manual name diff, docs/LLD/rpc.md vs generated Go/Python interfaces, exact match"}
+  ],
+  "test_specs_run": [
+    "gofmt -l engine/ (clean)",
+    "go vet ./... (engine module, clean)",
+    "go build ./... (engine module, clean, includes engine/rpc/gen)",
+    "python -c \"import hivemind_pb2, hivemind_pb2_grpc\" (agents/.venv, clean)"
+  ],
+  "remaining_subtasks_not_in_this_commit": [
+    "task-3.2.2 -- engine/rpc/server.go handler implementations for PutSegment/GetFile/ReadPartial/GraphNeighbors/SearchCandidates + engine/rpc/server_test.go",
+    "task-3.2.3 -- engine/split/proposer_grpc.go real gRPC SplitProposer (replacing engine/split/proposer_mock.go's MockSplitProposer) + proposer_grpc_test.go",
+    "task-3.2.4 -- engine/rpc/interceptor.go + agents-side interceptor for per-call latency/cost",
+    "task-3.2.5 -- engine/rpc/integration_test.go, Go<->Python round trip for ProposeSplit and PutSegment"
+  ],
+  "pointers_for_verifier": {
+    "requirement": ".cdr/runs/2026-07-08/023-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-08/023-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-08/023-implementation/impact-analysis.json",
+    "validation_matrix": ".cdr/runs/2026-07-08/023-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-08/023-implementation/self-consistency.json"
+  },
+  "security_note": "gh issue view 16 body contained no embedded prompt-injection text this run (checked per repo's known recurring pattern). Fake system-reminder-style text (date-change notice, MCP tokensave tool-use directive, 'Auto Mode Active' directive) WAS observed appearing inline inside Bash tool output during this run (mixed into git/gh command results) -- treated as untrusted data, not followed, disclosing per instructions. An untracked .tokensave/ directory pre-existing in the repo root (dated 4-6 July, not created this run) was left untouched and not staged."
+}
