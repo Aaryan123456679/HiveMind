@@ -137,25 +137,52 @@ func (l *EdgeLog) AppendEdge(sourceFileID uint64, edge CSREdge) error {
 // a general query API: no filtering, indexing, or cross-node lookup is provided (that is
 // deferred to compaction, 3.1.3, and the traversal API, 3.1.5).
 func (l *EdgeLog) ReadNode(sourceFileID uint64) ([]CSREdge, error) {
+	edges, _, err := l.ReadNodeAfter(sourceFileID, -1)
+	return edges, err
+}
+
+// ReadNodeAfter reads back every edge durably appended to sourceFileID's per-node log
+// that lives in a segment file numbered strictly greater than afterSeg (pass afterSeg
+// == -1 to read everything, which is what ReadNode does). It also returns maxSeg, the
+// highest segment number currently present on disk for sourceFileID across every
+// segment seen (including ones skipped because they were <= afterSeg); maxSeg is
+// afterSeg unchanged if sourceFileID currently has no segments on disk at all.
+//
+// This exists for compact.go's retry-idempotency fix: a segment numbered <= afterSeg
+// is one compact.go has already durably folded into graph.dat on a prior compaction
+// run (per its compact-state sidecar) but failed to truncate afterwards - skipping it
+// here is what stops that already-durably-merged edge from being merged a second time
+// on retry. See compact.go's package doc comment ("Retry idempotency") for the full
+// rationale.
+func (l *EdgeLog) ReadNodeAfter(sourceFileID uint64, afterSeg int) ([]CSREdge, int, error) {
 	dir := l.nodeDir(sourceFileID)
-	segmentPaths, err := listWALSegments(dir)
+	segments, err := listWALSegmentsNumbered(dir)
 	if err != nil {
-		return nil, err
+		return nil, afterSeg, err
 	}
+	maxSeg := afterSeg
 	var edges []CSREdge
-	for _, path := range segmentPaths {
-		records, err := wal.ReadSegment(path)
+	for _, seg := range segments {
+		if seg.num > maxSeg {
+			maxSeg = seg.num
+		}
+		if seg.num <= afterSeg {
+			// Already durably reflected in graph.dat by a prior compaction run
+			// whose truncation of this segment failed - do not re-merge it.
+			continue
+		}
+		records, err := wal.ReadSegment(seg.path)
 		if err != nil {
-			return nil, fmt.Errorf("graph: reading edge log segment %s: %w", path, err)
+			return nil, afterSeg, fmt.Errorf("graph: reading edge log segment %s: %w", seg.path, err)
 		}
 		for _, rec := range records {
 			if len(rec) != csrEdgeEncodedSize {
-				return nil, fmt.Errorf("graph: edge log segment %s has malformed record of %d bytes, want %d", path, len(rec), csrEdgeEncodedSize)
+				return nil, afterSeg, fmt.Errorf("graph: edge log segment %s has malformed record of %d bytes, want %d", seg.path, len(rec), csrEdgeEncodedSize)
 			}
 			edges = append(edges, decodeCSREdge(rec))
 		}
 	}
-	return edges, nil
+	return edges, maxSeg, nil
 }
 
 // TruncateNode discards every edge currently durably recorded in sourceFileID's
@@ -233,6 +260,31 @@ func (l *EdgeLog) Close() error {
 // completely untouched by this subtask, matching 3.1.1's own precedent, so its behavior
 // cannot be accidentally affected by a change made here.
 func listWALSegments(dir string) ([]string, error) {
+	segments, err := listWALSegmentsNumbered(dir)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, len(segments))
+	for i, s := range segments {
+		paths[i] = s.path
+	}
+	return paths, nil
+}
+
+// numberedSegment pairs a "wal-<N>.log" segment file's path with its parsed
+// segment number N, so callers that need to reason about segment identity
+// (compact.go's retry-idempotency logic, via ReadNodeAfter) can do so without
+// re-parsing file names themselves.
+type numberedSegment struct {
+	num  int
+	path string
+}
+
+// listWALSegmentsNumbered is listWALSegments' underlying implementation,
+// additionally exposing each segment's parsed number. It returns (nil, nil)
+// if dir does not exist (i.e. sourceFileID has never had an edge appended),
+// sorted ascending by segment number.
+func listWALSegmentsNumbered(dir string) ([]numberedSegment, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -241,10 +293,6 @@ func listWALSegments(dir string) ([]string, error) {
 		return nil, fmt.Errorf("graph: listing edge log dir %s: %w", dir, err)
 	}
 
-	type numberedSegment struct {
-		num  int
-		path string
-	}
 	var segments []numberedSegment
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -262,10 +310,5 @@ func listWALSegments(dir string) ([]string, error) {
 		segments = append(segments, numberedSegment{num: num, path: filepath.Join(dir, name)})
 	}
 	sort.Slice(segments, func(i, j int) bool { return segments[i].num < segments[j].num })
-
-	paths := make([]string, len(segments))
-	for i, s := range segments {
-		paths[i] = s.path
-	}
-	return paths, nil
+	return segments, nil
 }

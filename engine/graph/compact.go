@@ -65,15 +65,188 @@
 //     and reports truncation failures separately (see Compact's doc comment
 //     below) rather than treating them as reasons to consider the compaction
 //     itself failed.
+//
+// # Retry idempotency
+//
+// The crash-after-rename-but-before-truncate window above used to have a much
+// worse consequence than "redundant work on retry": a retried Compact would
+// re-read the same not-yet-truncated log entries as "incoming" and merge them
+// AGAIN against an "existing" graph.dat that (from the prior, already-durable
+// run) already reflected their contribution - permanently double-counting
+// (and, on repeated failed-truncate retries, further compounding) any
+// EdgeEntityCooccur weight involved. This was not self-correcting, unlike
+// most of this file's other documented retry properties.
+//
+// The fix is a small durable "compact-state" sidecar file next to graphPath
+// (see loadCompactState/saveCompactState below), recording, per source
+// fileID, the highest edge-log segment number already durably folded into
+// graphPath. Compact consults this before deciding what counts as "incoming"
+// for a node (via EdgeLog.ReadNodeAfter): segments at or below the recorded
+// number are known to already be reflected in the "existing" adjacency loaded
+// from graphPath and are skipped, regardless of whether they were ever
+// successfully truncated off disk. The sidecar is written atomically (temp
+// file + fsync + rename, matching WriteCSR's own pattern) immediately after
+// WriteCSR's rename succeeds and before any TruncateNode call is attempted,
+// so its contents always describe graphPath's actual, currently-durable
+// contents - not merely what compaction intended or attempted to truncate.
+//
+// This closes the compounding-corruption bug for the tested and documented
+// failure window (TruncateNode failing after a successful WriteCSR rename).
+// It narrows, but does not claim to eliminate to zero, one further edge: a
+// real process crash landing in the sub-millisecond window between WriteCSR's
+// rename returning and saveCompactState's own rename completing would still
+// leave a stale (pre-this-round) compact-state on disk. Unlike the bug being
+// fixed here, that residual window (a) requires an actual crash, not merely a
+// failing operation (permission error, disk full, EBUSY, etc. - the entire
+// class this fix does close, and the only class this package's existing
+// crash-injection tests exercise or that issue #15's 3.1.3 spec requires),
+// and (b) is bounded to at most one extra re-summing per such crash rather
+// than being deterministically and unboundedly compounding on every ordinary
+// truncate failure the way the original bug was. This tradeoff - closing the
+// common, deterministically-reproducible corruption path with a single extra
+// small atomic file, rather than pursuing full multi-file transactional
+// atomicity across graph.dat and every per-node edge-log directory - is the
+// "simplest and most robust" option evaluated for this fix; folding the
+// marker into graph.dat itself was considered and rejected because it would
+// require changing csr.go's on-disk format and LoadCSR's payload-length
+// validation, which every other caller of LoadCSR (including this file's own
+// existing-graph reload) depends on staying exactly as task-3.1.1 defined it.
 package graph
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 )
+
+// compactStateSuffix names the small sidecar file, next to graphPath, that
+// Compact uses to track retry idempotency (see package doc comment above).
+const compactStateSuffix = ".compact-state"
+
+// compactStateMagic/compactStateVersion identify compact-state sidecar files,
+// mirroring csr.go's own magic+version+CRC framing for graph.dat itself.
+var compactStateMagic = [4]byte{'G', 'C', 'P', 'S'}
+
+const compactStateVersion = uint32(1)
+
+// compactStateHeaderSize is magic(4) + version(4) + count(4) + payloadCRC(4).
+const compactStateHeaderSize = 16
+
+// compactStatePath returns the compact-state sidecar path for graphPath.
+func compactStatePath(graphPath string) string {
+	return graphPath + compactStateSuffix
+}
+
+// loadCompactState reads graphPath's compact-state sidecar, returning a nil
+// (empty) map - not an error - if the file does not exist yet: this is the
+// normal case for the very first compaction ever run against graphPath, and
+// for any graphPath written before this fix existed. A nil/missing entry for
+// a given fileID is treated identically to loadCompactState never having been
+// called at all (afterSeg defaults to -1: "read every segment"), so this is
+// purely additive and cannot regress the pre-existing full-log-inclusion
+// behavior for nodes it has no recorded state for.
+func loadCompactState(graphPath string) (map[uint64]uint64, error) {
+	path := compactStatePath(graphPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("graph: reading compact state %s: %w", path, err)
+	}
+	if len(data) < compactStateHeaderSize {
+		return nil, fmt.Errorf("graph: compact state %s too short: got %d bytes, want at least %d-byte header", path, len(data), compactStateHeaderSize)
+	}
+	var magic [4]byte
+	copy(magic[:], data[0:4])
+	if magic != compactStateMagic {
+		return nil, fmt.Errorf("graph: compact state %s has invalid magic %q, want %q", path, magic, compactStateMagic)
+	}
+	version := binary.LittleEndian.Uint32(data[4:8])
+	if version != compactStateVersion {
+		return nil, fmt.Errorf("graph: compact state %s has unsupported format version %d, want %d", path, version, compactStateVersion)
+	}
+	count := binary.LittleEndian.Uint32(data[8:12])
+	wantCRC := binary.LittleEndian.Uint32(data[12:16])
+	body := data[compactStateHeaderSize:]
+	if wantLen := uint64(count) * 16; uint64(len(body)) != wantLen {
+		return nil, fmt.Errorf("graph: compact state %s payload length mismatch: got %d bytes, want %d (count=%d)", path, len(body), wantLen, count)
+	}
+	if gotCRC := crc32.ChecksumIEEE(body); gotCRC != wantCRC {
+		return nil, fmt.Errorf("graph: compact state %s failed payload CRC check (want %08x, got %08x)", path, wantCRC, gotCRC)
+	}
+
+	state := make(map[uint64]uint64, count)
+	for i := uint32(0); i < count; i++ {
+		off := i * 16
+		id := binary.LittleEndian.Uint64(body[off:])
+		seg := binary.LittleEndian.Uint64(body[off+8:])
+		state[id] = seg
+	}
+	return state, nil
+}
+
+// saveCompactState atomically (temp file + fsync + rename, matching csr.go's
+// WriteCSR pattern exactly) replaces graphPath's compact-state sidecar with
+// state. Called by Compact only after WriteCSR's own rename has already
+// succeeded, and before any TruncateNode call - see package doc comment.
+func saveCompactState(graphPath string, state map[uint64]uint64) error {
+	ids := make([]uint64, 0, len(state))
+	for id := range state {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	body := make([]byte, len(ids)*16)
+	for i, id := range ids {
+		off := i * 16
+		binary.LittleEndian.PutUint64(body[off:], id)
+		binary.LittleEndian.PutUint64(body[off+8:], state[id])
+	}
+
+	header := make([]byte, compactStateHeaderSize)
+	copy(header[0:4], compactStateMagic[:])
+	binary.LittleEndian.PutUint32(header[4:8], compactStateVersion)
+	binary.LittleEndian.PutUint32(header[8:12], uint32(len(ids)))
+	binary.LittleEndian.PutUint32(header[12:16], crc32.ChecksumIEEE(body))
+
+	path := compactStatePath(graphPath)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("graph: creating temp compact state file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(header); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("graph: writing compact state header to %s: %w", tmpPath, err)
+	}
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("graph: writing compact state body to %s: %w", tmpPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("graph: syncing compact state file %s: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("graph: closing compact state file %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("graph: renaming %s to %s: %w", tmpPath, path, err)
+	}
+	return nil
+}
 
 // edgeLogNodeIDs lists every source fileID that currently has a per-node
 // subdirectory under an EdgeLog's root (i.e. every fileID that has ever had an
@@ -202,21 +375,52 @@ func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 		return nil, fmt.Errorf("graph: compaction failed to load existing graph %s: %w", graphPath, err)
 	}
 
+	// prevState records, per fileID, the highest edge-log segment number a
+	// prior compaction run already durably folded into the "existing"
+	// adjacency just loaded above. See package doc comment ("Retry
+	// idempotency"): segments at or below that number must NOT be re-read as
+	// "incoming" below, or their contribution would be merged a second time.
+	prevState, err := loadCompactState(graphPath)
+	if err != nil {
+		return nil, fmt.Errorf("graph: compaction failed to load compact state for %s: %w", graphPath, err)
+	}
+
 	nodeIDs, err := edgeLogNodeIDs(log.root)
 	if err != nil {
 		return nil, fmt.Errorf("graph: compaction failed to enumerate edge log nodes: %w", err)
 	}
 
+	newState := make(map[uint64]uint64, len(prevState))
+	for id, seg := range prevState {
+		newState[id] = seg
+	}
+
 	var compactedNodeIDs []uint64
 	for _, id := range nodeIDs {
-		logEdges, err := log.ReadNode(id)
+		afterSeg := -1
+		if seg, ok := prevState[id]; ok {
+			afterSeg = int(seg)
+		}
+
+		logEdges, maxSeg, err := log.ReadNodeAfter(id, afterSeg)
 		if err != nil {
 			return nil, fmt.Errorf("graph: compaction failed to read edge log for node %d: %w", id, err)
 		}
-		if len(logEdges) == 0 {
+		if len(logEdges) > 0 {
+			adjacency[id] = mergeEdges(adjacency[id], logEdges)
+		}
+		if maxSeg < 0 {
+			// No segments at all currently on disk for this id (e.g. an
+			// edgeLogNodeIDs entry left over from an empty/stray directory) -
+			// nothing to record and nothing to truncate.
 			continue
 		}
-		adjacency[id] = mergeEdges(adjacency[id], logEdges)
+		// Every segment currently on disk for this node - whether freshly
+		// read above or already covered by prevState - is about to be
+		// durably reflected in the new graph.dat written below, so it is
+		// both safe and desirable to truncate all of them now (self-healing
+		// cleanup of any leftover segment from a prior failed truncate).
+		newState[id] = uint64(maxSeg)
 		compactedNodeIDs = append(compactedNodeIDs, id)
 	}
 
@@ -233,15 +437,24 @@ func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 		return nil, fmt.Errorf("graph: compaction failed to write %s: %w", graphPath, err)
 	}
 
-	// graphPath is now durably updated. Only past this point do we truncate
-	// any per-node edge log - see this file's package doc comment for why
-	// this ordering is the crux of compaction's crash-safety.
-	var truncErrs []error
+	// graphPath is now durably updated. Persist the compact-state sidecar
+	// before attempting any truncation, so that even if every TruncateNode
+	// call below fails, a subsequent retry still knows exactly which
+	// segments are already reflected in graphPath and will not re-merge
+	// them - see package doc comment ("Retry idempotency").
+	var postWriteErrs []error
+	if err := saveCompactState(graphPath, newState); err != nil {
+		postWriteErrs = append(postWriteErrs, fmt.Errorf("graph: compaction failed to persist compact state for %s (graphPath itself is still correct and durable, but a subsequent retry may re-merge not-yet-truncated segments for nodes affected by this failure): %w", graphPath, err))
+	}
+
+	// Only past this point do we truncate any per-node edge log - see this
+	// file's package doc comment for why this ordering is the crux of
+	// compaction's crash-safety.
 	for _, id := range compactedNodeIDs {
 		if err := log.TruncateNode(id); err != nil {
-			truncErrs = append(truncErrs, fmt.Errorf("graph: compaction failed to truncate edge log for node %d after successful write: %w", id, err))
+			postWriteErrs = append(postWriteErrs, fmt.Errorf("graph: compaction failed to truncate edge log for node %d after successful write: %w", id, err))
 		}
 	}
 
-	return newGraph, errors.Join(truncErrs...)
+	return newGraph, errors.Join(postWriteErrs...)
 }

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "009-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "3.1.3 fix cycle - retry-after-truncate-failure idempotency (issue #15)",
+  "git_head": "ebbc1ff0d24d641ec870cdc0a452149da2c25a4c",
+  "run_key": "sha256:3.1.3-fix-F1-retry-idempotency-ebbc1ff0d24d641ec870cdc0a452149da2c25a4c",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-08T04:48:09Z",
+  "ended_at": "2026-07-08T05:05:00Z"
+}

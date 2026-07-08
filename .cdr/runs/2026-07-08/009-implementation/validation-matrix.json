@@ -1,0 +1,23 @@
+{
+  "rows": [
+    {"id": "V1", "case": "EdgeEntityCooccur weight sums correctly within a single Compact pass (multiple log entries + existing graph.dat)", "covered_by": "TestCompaction/EntityCooccurWeightsSum, TestCompaction/MergesWithExistingGraph (unmodified)", "status": "pass"},
+    {"id": "V2", "case": "Non-cooccur edge types dedupe last-write-wins within a single pass", "covered_by": "TestCompaction/NonCooccurDedupLastWrite (unmodified)", "status": "pass"},
+    {"id": "V3", "case": "No edge log present is a no-op", "covered_by": "TestCompaction/NoEdgeLogIsNoop (unmodified)", "status": "pass"},
+    {"id": "V4", "case": "Successful compaction truncates the logs it compacted", "covered_by": "TestCompaction/TruncatesLogsAfterCompaction (unmodified)", "status": "pass"},
+    {"id": "V5", "case": "Crash (write failure) before WriteCSR's rename leaves graph.dat absent/unchanged and edge log fully intact", "covered_by": "TestCompaction_CrashBeforeRenameLeavesOldGraphAndLogsIntact (unmodified)", "status": "pass"},
+    {"id": "V6", "case": "graph.dat durable and correct even when truncation fails after a successful write", "covered_by": "TestCompaction_TruncateFailureDoesNotLoseGraphUpdate (unmodified)", "status": "pass"},
+    {"id": "V7", "case": "TruncateNode in isolation: no-op on nonexistent node, resets to empty, works with/without an open writer", "covered_by": "TestTruncateNode (unmodified)", "status": "pass"},
+    {"id": "V8 (new, fix-specific)", "case": "Retry after a truncate-phase failure does NOT double-count EdgeEntityCooccur weight, and the retry itself successfully finishes truncation", "covered_by": "TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight (new)", "status": "pass", "empirically_confirmed_would_fail_pre_fix": "Weight got 6, want 3 (verified by running this test against the pre-fix compact.go/edgelog.go via git stash)"},
+    {"id": "V9", "case": "Compact-state sidecar absent (first-ever compaction, or graph.dat predates this fix) behaves identically to before (afterSeg=-1, read everything)", "covered_by": "TestCompaction's subtests all start from a fresh temp dir with no sidecar present - implicitly covered", "status": "pass"},
+    {"id": "V10", "case": "Full module regression: no other package/test affected", "covered_by": "go test ./... -count=1 -timeout 300s (whole engine module)", "status": "pass"}
+  ],
+  "commands_run": [
+    "gofmt -l . (clean)",
+    "go vet ./... (clean)",
+    "go build ./... (clean)",
+    "go test ./graph/... -run 'TestCompaction|TestTruncateNode' -v -race -count=5 -timeout 120s (PASS)",
+    "go test ./graph/... -race -count=1 -timeout 180s (PASS)",
+    "go test ./... -count=1 -timeout 300s (PASS, all engine module packages: engine, btree, catalog, graph, mvcc, split, wal)",
+    "git stash push -- graph/compact.go graph/edgelog.go; go test ./graph/... -run TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight -v (FAIL, Weight=6 want 3, confirming the new test catches the pre-fix bug); git stash pop"
+  ]
+}

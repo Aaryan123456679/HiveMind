@@ -1,0 +1,20 @@
+{
+  "files_touched": [
+    {"path": "engine/graph/compact.go", "kind": "modified", "note": "new compact-state sidecar (loadCompactState/saveCompactState/compactStatePath, constants), Compact() rewritten to consult it via EdgeLog.ReadNodeAfter instead of ReadNode, package doc comment extended with new 'Retry idempotency' section."},
+    {"path": "engine/graph/edgelog.go", "kind": "modified", "note": "listWALSegments refactored into listWALSegmentsNumbered (exposes numberedSegment{num,path}, now package-level type) + a thin listWALSegments wrapper (unchanged external behavior/signature); new EdgeLog.ReadNodeAfter(sourceFileID, afterSeg) method; ReadNode reimplemented as ReadNodeAfter(id, -1) with identical observable behavior."},
+    {"path": "engine/graph/compact_test.go", "kind": "modified", "note": "new TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight; no existing test modified."}
+  ],
+  "files_not_touched": [
+    {"path": "engine/graph/csr.go", "reason": "considered embedding the marker inside graph.dat itself to close the residual two-rename race entirely; rejected because it requires changing WriteCSR's on-disk format and LoadCSR's strict payload-length validation, which every other LoadCSR caller depends on - out of scope and higher blast radius than this fix needs."},
+    {"path": "engine/graph/edge_append.go", "reason": "unrelated, separate append-only log mechanism (task-2b.3.4/issue #12), untouched per 3.1.1/3.1.3's own established precedent."}
+  ],
+  "downstream_consumers": [
+    {"consumer": "engine/graph tests (TestCompaction*, TestTruncateNode)", "impact": "TestCompaction, TestTruncateNode, and both existing crash-injection tests pass unmodified (verified by running -race -count=5)."},
+    {"consumer": "no other package imports engine/graph's Compact/EdgeLog yet (grep confirmed - 3.1.3/3.1.4/3.1.5 are still in-progress epic subtasks)", "impact": "none outside engine/graph"}
+  ],
+  "new_on_disk_artifact": {
+    "path": "<graphPath>.compact-state",
+    "purpose": "sidecar file recording, per source fileID, the highest edge-log segment number already durably folded into graphPath; written atomically (temp+fsync+rename) immediately after WriteCSR succeeds, before any TruncateNode call",
+    "backward_compat": "absent file (e.g. graphPath written by the pre-fix code, or first-ever compaction) is treated identically to an empty map - afterSeg defaults to -1 (read everything), matching prior behavior exactly for any node with no recorded entry"
+  }
+}

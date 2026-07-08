@@ -350,6 +350,99 @@ func TestCompaction_TruncateFailureDoesNotLoseGraphUpdate(t *testing.T) {
 	assertNeighbors(t, reloaded.Neighbors(source), []CSREdge{edge})
 }
 
+// TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight is this
+// fix's regression test for the corruption bug found in verification of the
+// original 3.1.3 implementation: a second Compact call - the documented,
+// natural recovery action after a truncate-phase failure - used to re-read
+// the still-un-truncated edge-log entry as "incoming" and merge it AGAIN
+// against an "existing" graph.dat that (from the first, already-durable
+// Compact call) already reflected that entry's contribution, permanently
+// doubling (and, on further retries, continuing to compound) the merged
+// EdgeEntityCooccur weight. It reuses
+// TestCompaction_TruncateFailureDoesNotLoseGraphUpdate's exact setup (append
+// one EdgeEntityCooccur edge with Weight=3, force TruncateNode to fail after
+// WriteCSR's rename has already succeeded) and then performs the natural
+// retry: a second Compact call once the failure condition is lifted. The
+// weight must still be exactly 3 after that retry, not 6.
+func TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: directory permission bits do not block writes, cannot simulate the truncate-failure window this test needs")
+	}
+
+	dir := t.TempDir()
+	graphPath := filepath.Join(dir, "graph.dat")
+	logRoot := filepath.Join(dir, "edgelogs")
+
+	l, err := OpenEdgeLog(logRoot)
+	if err != nil {
+		t.Fatalf("OpenEdgeLog: %v", err)
+	}
+	defer l.Close()
+
+	const source, target = 5, 6
+	edge := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 3, LastUpdated: 42}
+	if err := l.AppendEdge(source, edge); err != nil {
+		t.Fatalf("AppendEdge: %v", err)
+	}
+
+	// Ensure the writer is closed (and dropped from the cache) before we lock
+	// down the directory, so TruncateNode's own os.Remove calls - not
+	// wal.Writer's already-open file descriptor - are what fails.
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	l2, err := OpenEdgeLog(logRoot)
+	if err != nil {
+		t.Fatalf("re-OpenEdgeLog: %v", err)
+	}
+	defer l2.Close()
+
+	nodeDir := l2.nodeDir(source)
+	if err := os.Chmod(nodeDir, 0o500); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+
+	// First Compact: WriteCSR's rename succeeds (graph.dat correctly shows
+	// Weight=3), but TruncateNode fails because nodeDir is read-only.
+	if _, err := Compact(graphPath, l2); err == nil {
+		t.Fatalf("expected first Compact to report a truncate-phase error, got nil")
+	}
+
+	reloaded, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after first Compact: %v", err)
+	}
+	assertNeighbors(t, reloaded.Neighbors(source), []CSREdge{edge})
+
+	// Lift the failure condition and retry - the documented recovery action
+	// ("safe to simply retry Compact later"). The still-un-truncated log
+	// entry from the first run must NOT be re-summed into graph.dat now that
+	// it can be read again.
+	if err := os.Chmod(nodeDir, 0o755); err != nil {
+		t.Fatalf("Chmod restore: %v", err)
+	}
+
+	if _, err := Compact(graphPath, l2); err != nil {
+		t.Fatalf("second (retry) Compact: unexpected error: %v", err)
+	}
+
+	reloaded2, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after retry Compact: %v", err)
+	}
+	assertNeighbors(t, reloaded2.Neighbors(source), []CSREdge{edge})
+
+	// The retry should also have finished the truncation this time, leaving
+	// no residual edge-log entries for the node.
+	got, err := l2.ReadNode(source)
+	if err != nil {
+		t.Fatalf("ReadNode after retry: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected edge log to be empty after successful retry truncation, got %+v", got)
+	}
+}
+
 // TestTruncateNode (belongs conceptually with edgelog_test.go's suite, kept
 // here since it's exercised primarily as compaction's own post-write step)
 // confirms EdgeLog.TruncateNode in isolation: it resets a node's log to
