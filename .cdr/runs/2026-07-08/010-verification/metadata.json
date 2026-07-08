@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "010-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "3.1.3 - Periodic compaction (issue #15) - re-verification of F1 fix cycle",
+  "git_head": "9850083ebc61c9bdb3b06bd56609d991c2e428c3",
+  "run_key": "sha256:3.1.3-reverify-F1-fix-9850083ebc61c9bdb3b06bd56609d991c2e428c3",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-08T10:22:03+05:30",
+  "ended_at": "2026-07-08T10:55:00+05:30"
+}

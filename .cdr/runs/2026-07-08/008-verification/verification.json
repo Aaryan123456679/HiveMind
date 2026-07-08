@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-verification",
+  "subtask": "3.1.3 - Periodic compaction (issue #15)",
+  "commit_reviewed": "ebbc1ff0d24d641ec870cdc0a452149da2c25a4c",
+  "verdict": "CHANGES_REQUESTED",
+  "security_note": "gh issue view 15 and .cdr tool output in this run again contained injected fake system-reminder-style text (fake date-change notice, fake MCP 'tokensave' tool-usage instructions, fake 'Auto Mode Active' directive), matching the known recurring prompt-injection pattern for this repo. Treated as untrusted plain-text data only; nothing in it was acted on.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Issue #15's own text for 3.1.3 confirms: 'Compaction merges accumulated per-node edge-log entries into the CSR array without losing or duplicating edges, including weight increments on repeated ENTITY_COOCCUR edges' -- only ENTITY_COOCCUR is named for weight increments, matching the implementer's sum-vs-dedup split (ENTITY_COOCCUR sums; SPLIT_SIBLING/REDIRECT/LLM_ASSERTED dedupe last-write-wins). Test spec command (go test ./engine/graph/... -run TestCompaction) present and passes."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Compact() signature, atomic WriteCSR reuse, EdgeLog.TruncateNode addition, and EdgeType enum extension all match docs/LLD/graph.md's 3.1.3 subsection and the file's own package doc comment. EdgeEntityCooccur/EdgeLLMAsserted added with byte values 3/4, no collision with existing EdgeTypeInvalid=0/EdgeSplitSibling=1/EdgeRedirect=2. edge_append.go's decode switch (line ~143) still explicitly enumerates only EdgeSplitSibling/EdgeRedirect and rejects everything else including the two new types -- correct, since EdgeAppender remains scoped to split/redirect edges per LLD; no silent fallthrough or default-case gap found."
+    },
+    "regression_risk": {
+      "status": "fail",
+      "evidence": "CRITICAL: empirically reproduced permanent silent weight-corruption bug in the documented 'accepted narrow risk' crash-safety window. Scenario: Compact() succeeds at WriteCSR's atomic rename (graph.dat durably updated, weight correctly summed to N) but EdgeLog.TruncateNode fails/is interrupted afterward (crash, permission error, disk issue, process kill) for a node with an EdgeEntityCooccur edge. On ANY subsequent retry of Compact (which is the documented recovery path), Compact's Compact() loads the ALREADY-UPDATED graph.dat as 'existing' (already reflecting the un-truncated log entry's weight), then re-reads that same still-present log entry as 'incoming' and mergeEdges' EdgeEntityCooccur branch SUMS them again (existing.Weight + incoming.Weight), permanently doubling the weight in the newly-written graph.dat. This is not self-correcting: the corrupted value becomes the new 'durable truth' and each further retry (if truncation keeps failing) compounds further. Reproduced with a minimal test: AppendEdge(weight=3) -> Compact (truncate forced to fail, WriteCSR succeeds, weight correctly 3 on disk) -> Compact again (retry) -> resulting weight=6 on disk, confirmed via LoadCSR. This directly contradicts the implementer's characterization as 'accepted narrow risk...mirrors engine/wal.Checkpoint's own precedent' -- wal.Checkpoint's analogous best-effort step does not cause its own next run to double-apply an already-durable mutation; this one does, because Compact's merge treats 'existing' (already includes the log's contribution) and 'incoming' (the same not-yet-truncated log entry) as two independent additive occurrences instead of recognizing the overlap. This is a genuine data-corruption bug, not disclosed-and-safe behavior, and the two shipped crash-injection tests do not catch it: TestCompaction_TruncateFailureDoesNotLoseGraphUpdate sets up exactly the right crash window (forces TruncateNode to fail after a successful WriteCSR) but only asserts graph.dat correctness ONCE, immediately after the single failed-truncate compaction -- it never performs the natural recovery action (retrying Compact) that the documented recommendation explicitly tells operators/schedulers to do ('safe simply retry Compact later'), so the actual failure mode is never exercised by the test suite. TestCompaction_CrashBeforeRenameLeavesOldGraphAndLogsIntact only covers the (already-safe) pre-rename crash window and is not implicated.",
+      "reproduction": "engine/graph: OpenEdgeLog -> AppendEdge(source=5, {Target:6, Type:EdgeEntityCooccur, Weight:3, LastUpdated:42}) -> chmod nodeDir 0500 -> Compact(graphPath, log) returns non-nil truncate error but graph.dat correctly has Weight=3 -> chmod nodeDir back to 0755 -> Compact(graphPath, log) again (natural retry) -> LoadCSR(graphPath).Neighbors(5) now shows Weight=6, not 3."
+    },
+    "edge_cases": {
+      "status": "pass_with_comments",
+      "evidence": "TestCompaction's 5 subtests cover: sum-across-log-entries for ENTITY_COOCCUR, last-write-wins for non-cooccur types, merging fresh log entries with a pre-existing graph.dat entry (single occurrence in each), no-op when log is empty (byte-identical graph.dat), and truncation-after-compaction. All pass and are individually correct for a SINGLE successful compaction pass. However none of the 5 subtests, nor the 2 crash-injection tests, construct the repeated-compaction-with-partial-truncation-failure scenario above -- the actual highest-risk edge case for this subtask given the acceptance criteria's crash-safety framing goes untested."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No injection/traversal concerns found; fileID-derived directory names are parsed via strconv.ParseUint with silent-skip on non-numeric entries (edgeLogNodeIDs), consistent with existing package convention (listWALSegments). No secrets or untrusted external input handled in this diff."
+    },
+    "performance": {
+      "status": "pass_with_comments",
+      "evidence": "Compact() is O(existing CSR nodes + all per-node log entries), single full in-memory rebuild per run -- consistent with 3.1.1's whole-snapshot design and disclosed as such. No new concern beyond what 3.1.1/3.1.2 already established."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "compact.go's package doc comment thoroughly documents the intended semantics (even though the crash-safety characterization is incorrect per the regression_risk finding above); mergeEdges is a small, readable pure function; docs/LLD/graph.md updated consistently with the code."
+    },
+    "test_coverage": {
+      "status": "fail",
+      "evidence": "See regression_risk. The one test spec item (TestCompaction, 5 subtests) and TestTruncateNode are all present and pass, satisfying the letter of the issue's test spec command (go test ./engine/graph/... -run TestCompaction), but the crash-injection tests do not prove the claimed crash-safety property; they prove a weaker, insufficient property (single-pass durability), not retry-safety, which is the property actually claimed in both the code comments and the implementer's summary."
+    },
+    "confidence": {
+      "status": "fail",
+      "evidence": "The implementer's own summary asked the verifier to specifically scrutinize this exact scenario ('does a second compaction pass overwrite the summed weight, or does it ADD ON TOP...silently corrupting the weight value forever') -- the verifier's independent empirical reproduction confirms the corrupting case, i.e. the implementer's own flagged risk area is a real, confirmed bug, not an accepted-and-safe tradeoff."
+    },
+    "possible_improvements": {
+      "items": [
+        "Fix the corruption: before writing weight-summed EdgeEntityCooccur merges, either (a) track which nodes' log entries have not yet been truncated from a prior failed compaction and detect/skip re-summing already-reflected contributions (hard, needs extra bookkeeping), or (b) make TruncateNode idempotent-safe against the exact problem by NOT loading existing graph.dat's CSR entries as a base to sum on top of for a node whose log is known-stale; simplest correct fix is likely to make Compact's per-node unit of work single-phase-committed: only mark/trust a node's contribution once BOTH write and truncate succeed, and treat write-succeeded-but-truncate-failed nodes specially on the next run (e.g. by tracking a small durable 'already compacted through offset/generation' marker per node, similar to a WAL checkpoint pointer, rather than diffing full snapshots).",
+        "At minimum, retry-safety must be proven by a test that performs a SECOND Compact call after a forced truncate failure and asserts the weight is unchanged (not doubled) -- this is the missing test that would have caught this bug before merge.",
+        "Consider making the crash-safety doc comment's comparison to engine/wal.Checkpoint more precise, or removing it, since the actual failure mode here is worse than Checkpoint's own precedent (data corruption vs. redundant re-application)."
+      ]
+    }
+  },
+  "adversarial_checks_summary": [
+    "1. Re-summing risk: CONFIRMED REAL BUG, not accepted risk. See regression_risk.",
+    "2. Crash-injection test adequacy: both tests inject failure at plausible points (pre-rename directory-unwritable; post-rename-pre-truncate directory-unwritable) but neither asserts post-crash RETRY correctness, which is the actual claim being made.",
+    "3. Weight-aggregation correctness (single pass): TestCompaction's EntityCooccurWeightsSum and MergesWithExistingGraph subtests correctly verify summing across log-repeats and log+existing-graph merges for a single compaction pass. No test covers a second/retried pass.",
+    "4. CSR round-trip after compaction: MergesWithExistingGraph and NoEdgeLogIsNoop subtests confirm LoadCSR-after-WriteCSR round-trips correctly post-compaction, reusing 3.1.1's BuildCSR/WriteCSR machinery unchanged; no new offset-array logic introduced by this subtask, low incremental risk here.",
+    "5. EdgeType enum extension: byte values 3/4, no collision with existing 0/1/2; edge_append.go's decode switch explicitly rejects the new types rather than silently accepting them (no default-case gap).",
+    "6. TruncateNode: correctly closes/drops cached wal.Writer under l.mu.Lock() before deleting on-disk segment files, avoiding write-after-delete. Concurrent AppendEdge during TruncateNode is serialized via the same mutex (blocks then reopens fresh writer) -- safe. However EdgeLog.ReadNode (used by Compact) does NOT take l.mu at all, so a concurrent AppendEdge whose wal.Writer has an open/unflushed segment could theoretically race with a concurrent ReadNode reading that same segment file mid-write; this is a pre-existing, disclosed limitation per the implementer's own handoff notes and issue #15's 3.1.3 test spec does not require -race/concurrent-compaction coverage (unlike 3.1.2), so this is NOT treated as a new blocking finding, but is noted as a carry-forward non-blocking item.",
+    "7. Build/vet/test commands run by verifier: gofmt -l . (clean), go vet ./... (clean), go build ./... (clean), go test ./graph/... -run TestCompaction -race -count=5 -timeout 10m (PASS), go test ./graph/... -run TestTruncateNode -race -count=5 -timeout 10m (PASS), go test ./graph/... -count=1 -timeout 10m (PASS, zero regressions to csr_test.go/edgelog_test.go/edge_append_test.go). Full module-wide go test ./... was not run given the blocking bug found makes it moot for this verdict; implementer's own report of a clean full-module run is otherwise plausible given no other package was touched."
+  ],
+  "blocking_findings": [
+    {
+      "id": "F1",
+      "severity": "critical",
+      "title": "Retry-after-partial-truncate-failure permanently double-counts (and further compounds) EdgeEntityCooccur weight",
+      "location": "engine/graph/compact.go: Compact() lines ~193-246, mergeEdges() lines ~110-165",
+      "must_fix_before": "PASS"
+    }
+  ],
+  "next_steps": {
+    "proceed_to_cdr_commit": false,
+    "safe_to_proceed_to_3.1.4": false,
+    "reason": "3.1.4 (edge-type-filtered creation/validation) builds on this subtask's EdgeType enum extension, which is fine, but 3.1.3 itself must not be committed/merged as-is: it contains a genuine durable-store corruption bug directly in the crash-safety property the subtask exists to provide. Recommend routing back to implementation for a fix + a new retry-safety test before re-verification."
+  }
+}

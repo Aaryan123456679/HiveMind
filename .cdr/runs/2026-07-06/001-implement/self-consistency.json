@@ -1,0 +1,23 @@
+{
+  "subtask": "3.1.1",
+  "build": "go build ./... : clean",
+  "vet": "go vet ./... : clean",
+  "gofmt": "gofmt -l . : no output (clean)",
+  "targeted_test": "go test ./graph/... -run TestCSRFormat -count=1 -timeout 5m : PASS",
+  "package_test": "go test ./graph/... -count=1 -timeout 10m : PASS, all 9 tests (5 new CSR tests + 4 pre-existing edge_append tests), zero regressions",
+  "full_module_test": {
+    "command": "go test ./... -count=1 -timeout 25m",
+    "result": "FAIL",
+    "failing_package": "engine/split",
+    "failing_test": "TestReaderDuringSplit",
+    "assessment": "PRE-EXISTING FLAKY TEST, NOT A REGRESSION FROM THIS SUBTASK",
+    "evidence": [
+      "engine/graph (this subtask's only touched package) passed cleanly in the full-module run (1.962s, 0 failures).",
+      "This subtask's changes (engine/graph/csr.go, engine/graph/csr_test.go) do not import, reference, or touch engine/split or any of its dependencies.",
+      "Re-ran 'go test ./split/... -run TestReaderDuringSplit -count=3' in isolation: PASS, PASS, FAIL - confirms this is a timing-sensitive race test that intermittently fails regardless of this subtask's changes (same failure message as the full-module run: 'reader never observed post-split content across 400 iterations -- test did not actually overlap with the split').",
+      ".cdr/index/regression.jsonl and task.jsonl both have prior entries referencing TestReaderDuringSplit from Phase 2b (issue #13/#14) fix cycles, confirming this test has a known history of flakiness/rework, independent of this subtask."
+    ],
+    "recommendation": "Flag to /cdr:verify as a known pre-existing flake unrelated to subtask 3.1.1's scope (engine/graph CSR format only); does not block this subtask's acceptance. Not something this agent should fix per its single-responsibility scope (csr.go/csr_test.go only) or its I4 no-self-verification constraint."
+  },
+  "validation_matrix_coverage": "all 5 planned test cases (TestCSRFormat, TestCSREmptyGraph, TestCSRCorruptedPayloadDetected, TestCSRLargeAdjacency, TestCSRTruncatedHeaderRejected) implemented and passing"
+}

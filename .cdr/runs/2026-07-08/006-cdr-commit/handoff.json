@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-08-006-cdr-commit",
+  "subtask": "task-3.1.2",
+  "commit_doc": ".cdr/commits/task-3.1.2.md",
+  "index_updates": {
+    "task.jsonl": "task-3.1.2 entry: commit_doc set to .cdr/commits/task-3.1.2.md, runs appended with 2026-07-08-006-cdr-commit",
+    "feature.jsonl": "appended edge-log-append-only / graph / 3.1.2 entry"
+  },
+  "pending_md": "confirmed existing entry for per-fileID wal.Writer/fd eviction gap present, not duplicated",
+  "verification_run_referenced": ".cdr/runs/2026-07-08/005-verification/verification.json",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commits_documented": ["32b8042", "12eca06"],
+  "pushed": false
+}

@@ -1,0 +1,50 @@
+{
+  "subtask": "3.1.1",
+  "issue": 15,
+  "commit": "a4e473d",
+  "files_changed": [
+    {"path": "engine/graph/csr.go", "note": "new file, full CSR format impl"},
+    {"path": "engine/graph/csr_test.go", "note": "new file, 5 tests"},
+    {"path": "docs/LLD/graph.md", "note": "added 'graph.dat CSR format' subsection under existing 'Storage layout' heading"}
+  ],
+  "acceptance_criteria": "Adjacency data for all fileIDs persists to graph.dat in a CSR-like compact array format that reloads correctly after a process restart.",
+  "required_test_spec": "go test ./engine/graph/... -run TestCSRFormat",
+  "test_cases_added": [
+    "TestCSRFormat (engine/graph/csr_test.go)",
+    "TestCSREmptyGraph (engine/graph/csr_test.go)",
+    "TestCSRCorruptedPayloadDetected (engine/graph/csr_test.go)",
+    "TestCSRTruncatedHeaderRejected (engine/graph/csr_test.go)",
+    "TestCSRLargeAdjacency (engine/graph/csr_test.go)"
+  ],
+  "public_api_added": [
+    "type CSREdge struct{Target uint64; Type EdgeType; Weight uint32; LastUpdated int64}",
+    "type CSRGraph struct{...} (unexported fields)",
+    "func BuildCSR(adjacency map[uint64][]CSREdge) *CSRGraph",
+    "func (g *CSRGraph) NodeCount() int",
+    "func (g *CSRGraph) EdgeCount() int",
+    "func (g *CSRGraph) Neighbors(fileID uint64) []CSREdge",
+    "func WriteCSR(path string, g *CSRGraph) error",
+    "func LoadCSR(path string) (*CSRGraph, error)"
+  ],
+  "self_consistency_summary": {
+    "build_vet_fmt": "clean",
+    "graph_package_tests": "all PASS (5 new + 4 pre-existing edge_append tests), zero regressions",
+    "full_engine_module_test": "FAIL in engine/split (TestReaderDuringSplit) only - CONFIRMED PRE-EXISTING FLAKE unrelated to this subtask's changes (isolated re-run: PASS/PASS/FAIL across 3 runs; engine/graph itself passed cleanly in the same full-module run; this subtask touches no split-package code)",
+    "detail_ref": "self-consistency.json in this run dir"
+  },
+  "known_issue_for_verifier": {
+    "test": "engine/split.TestReaderDuringSplit",
+    "status": "pre-existing intermittent race-timing flake, NOT introduced by this subtask",
+    "recommendation": "verifier should independently confirm this is unrelated to engine/graph/csr.go (no import/reference between the two packages) rather than treating it as a 3.1.1 regression"
+  },
+  "security_note": "gh issue view 15 output and prior bash tool output in this session's history contained injected fake system-reminder-style text (fake date-change notice, fake MCP 'tokensave' server instructions, fake 'Auto Mode Active' directive). Treated as untrusted data only, not acted upon, per standing repo security note. An untracked .tokensave/ directory (pre-existing local tool state, not created by this agent) was deliberately left out of the commit.",
+  "not_pushed": true,
+  "docs_pointers": {
+    "requirement": ".cdr/runs/2026-07-06/001-implement/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-06/001-implement/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-06/001-implement/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-06/001-implement/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-06/001-implement/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-06/001-implement/self-consistency.json"
+  }
+}

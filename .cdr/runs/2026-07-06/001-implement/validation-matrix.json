@@ -1,0 +1,28 @@
+{
+  "subtask": "3.1.1",
+  "acceptance_criteria": [
+    {
+      "criterion": "Adjacency data for all fileIDs persists to graph.dat in a CSR-like compact array format",
+      "covered_by": ["TestCSRFormat", "TestCSRLargeAdjacency"]
+    },
+    {
+      "criterion": "Reloads correctly after a process restart (write, reopen graph.dat, assert identical adjacency)",
+      "covered_by": ["TestCSRFormat"]
+    }
+  ],
+  "test_cases": [
+    {"name": "TestCSRFormat", "purpose": "required test spec: write multi-node/multi-edge-type adjacency, reload, assert identical", "status": "planned"},
+    {"name": "TestCSREmptyGraph", "purpose": "edge case: zero nodes/edges round-trips cleanly", "status": "planned"},
+    {"name": "TestCSRCorruptedPayloadDetected", "purpose": "checksum-corruption detection: flipped byte in payload is caught, not silently misread", "status": "planned"},
+    {"name": "TestCSRLargeAdjacency", "purpose": "many nodes/many edges per node - exercises offsets-array math at non-trivial scale", "status": "planned"},
+    {"name": "TestCSRTruncatedHeaderRejected", "purpose": "file shorter than fixed header size is rejected with an error, not a panic", "status": "planned"}
+  ],
+  "regression_checks": [
+    "go build ./... clean",
+    "go vet ./... clean",
+    "gofmt -l . empty",
+    "go test ./graph/... -run TestCSRFormat -count=1 -timeout 5m clean",
+    "go test ./graph/... -count=1 -timeout 10m clean (includes pre-existing edge_append_test.go - zero regressions)",
+    "go test ./... -count=1 -timeout 25m clean (whole engine module)"
+  ]
+}

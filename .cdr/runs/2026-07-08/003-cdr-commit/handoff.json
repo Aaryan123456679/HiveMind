@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-08-003-cdr-commit",
+  "subtask": "3.1.1",
+  "issue": 15,
+  "commit": "a4e473d71402e46f9cfa69ba37c8743cf68af059",
+  "verification_verdict": "PASS_WITH_COMMENTS",
+  "verification_run": ".cdr/runs/2026-07-08/002-verification/verification.json",
+  "commit_doc": ".cdr/commits/task-3.1.1.md",
+  "index_updates": [
+    ".cdr/index/task.jsonl (appended task-3.1.1)",
+    ".cdr/index/feature.jsonl (appended csr-adjacency-format)"
+  ],
+  "pending_updates": [
+    ".cdr/memory/pending.md (appended LoadCSR/decodeCSREdge EdgeType-validation follow-up, Phase 3, forward-referenced to milestone #10 issues #38-42)"
+  ],
+  "not_done": [
+    "no push performed",
+    "GitHub issue #15 left open (5 subtasks remain: 3.1.2-3.1.6)",
+    "no GitHub issue created for the new pending.md item"
+  ]
+}

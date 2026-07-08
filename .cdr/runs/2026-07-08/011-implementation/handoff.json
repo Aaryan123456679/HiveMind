@@ -3,7 +3,7 @@
   "run_id": "011-implementation",
   "subtask": "3.1.3 - Periodic compaction (issue #15) - F2 second fix cycle",
   "status": "completed",
-  "commit": "PENDING_FILL_AFTER_COMMIT",
+  "commit": "ed5746834af9e4508c53c1b9ab59dae330d789c5",
   "changed_files": [
     "engine/wal/writer.go",
     "engine/graph/edgelog.go",

@@ -1,0 +1,41 @@
+{
+  "subtask": "3.1.6",
+  "rows": [
+    {
+      "criterion": "Combined workload of edge inserts, compaction, and traversal queries produces results consistent with a serial-execution oracle",
+      "check": "TestGraphRoundTrip builds an independent oracle (map-based, mirroring documented mergeEdges/GraphNeighbors semantics without calling that code) and asserts GraphNeighbors output equals oracleNeighbors output at every checkpoint across 3 append+compact cycles"
+    },
+    {
+      "criterion": "Test spec: go test ./engine/graph/... -run TestGraphRoundTrip: interleave inserts/compaction/traversal, assert oracle-matching results at checkpoints",
+      "check": "TestGraphRoundTrip interleaves AppendEdge batches, Compact calls, and GraphNeighbors assertions across 3 cycles with checkpoints after each Compact"
+    },
+    {
+      "criterion": "Exercise all 4 edge types (ENTITY_COOCCUR, LLM_ASSERTED, SPLIT_SIBLING, REDIRECT) per docs/LLD/graph.md and 3.1.4",
+      "check": "Each append batch includes at least one edge of each of the 4 valid EdgeType values"
+    },
+    {
+      "criterion": "ENTITY_COOCCUR weight-summing semantics correct across repeated edges and across compaction rounds (seam bug F1's class)",
+      "check": "Multiple ENTITY_COOCCUR edges for the same (source,target) pair appended within a cycle and across cycles 1->2->3; oracle independently sums; GraphNeighbors Weight field asserted equal to oracle sum at each checkpoint"
+    },
+    {
+      "criterion": "No data loss/duplication across a second compaction round over previously-compacted-and-truncated nodes (seam bug F2's class)",
+      "check": "Cycle 2 and cycle 3 append new edges to source fileIDs already compacted+truncated in a prior cycle via the SAME EdgeLog/root; post-cycle GraphNeighbors results checked against oracle for both old and new edges, confirming neither lost nor duplicated"
+    },
+    {
+      "criterion": "Full round trip implies durability across a simulated restart, not just in-process correctness",
+      "check": "After cycle 2's Compact, discard the in-memory *CSRGraph, call LoadCSR fresh against the same graph.dat path, and assert GraphNeighbors on the freshly-loaded graph is identical to both the pre-restart result and the oracle"
+    },
+    {
+      "criterion": "Post-restart process can still correctly append and compact further (not just read)",
+      "check": "Cycle 3 reopens EdgeLog via OpenEdgeLog against the same root after the simulated restart, appends further edges (including further ENTITY_COOCCUR increments), Compacts, LoadCSR-reloads, and asserts against the final oracle state"
+    },
+    {
+      "criterion": "depth/edge-type-filter behavior remains correct under the composed pipeline",
+      "check": "GraphNeighbors assertions cover depth=1 and depth=2, both with edgeTypeFilter=EdgeTypeInvalid (no filter) and with a specific filter (e.g. EdgeEntityCooccur), plus a depth=0 boundary call"
+    },
+    {
+      "criterion": "Mandatory Go discipline",
+      "check": "gofmt -l ., go vet ./..., go build ./... all clean; go test ./engine/graph/... -run TestGraphRoundTrip -race -timeout 60s and full package suite -race -timeout 120s green"
+    }
+  ]
+}

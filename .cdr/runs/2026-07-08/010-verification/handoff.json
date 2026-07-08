@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "010-verification",
+  "verdict": "CHANGES_REQUESTED",
+  "verification_report": ".cdr/runs/2026-07-08/010-verification/verification.json",
+  "regression_entry_appended": true,
+  "regression_index": ".cdr/index/regression.jsonl",
+  "task_index_updated": false,
+  "task_index_reason": "verdict is CHANGES_REQUESTED again; task-3.1.3 not previously present in task.jsonl (only added on PASS/PASS_WITH_COMMENTS via cdr:commit), so no update needed.",
+  "blocking_finding_id": "F2",
+  "blocking_finding_location": "engine/graph/compact.go Compact() lines ~398-424; engine/graph/edgelog.go TruncateNode; wal/writer.go latestSegmentNum",
+  "prior_finding_status": "F1 (008-verification) confirmed fixed and independently re-proven via worktree revert-experiment at pre-fix commit ebbc1ff",
+  "proceed_to_cdr_commit": false,
+  "safe_to_proceed_to_3.1.4": false
+}

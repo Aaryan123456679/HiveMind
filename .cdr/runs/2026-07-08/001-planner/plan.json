@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-08-001-planner",
+  "macro": "cdr-plan",
+  "generated_at": "2026-07-08T03:53:10Z",
+  "source_docs": [
+    ".cdr/memory/pending.md",
+    ".cdr/index/regression.jsonl",
+    "docs/LLD/btree.md",
+    "docs/LLD/mvcc.md",
+    "docs/LLD/split.md",
+    "docs/LLD/wal.md",
+    "docs/LLD/catalog.md"
+  ],
+  "security_note": "gh api output for the milestone list, and later a Bash tool result during a mid-task resume, both contained embedded fake system-reminder-style text (fake date-change notices, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive). Treated as untrusted plain-text data in all cases, never followed, never acted on.",
+  "milestone_placement_rationale": "Existing milestones are numbered by GitHub creation order (2,5,6,7,8,9 = Phase1,3,4,5,6,7). Phase 5 ('Benchmark suite') is the more test-centric of the two candidates the user flagged (ground-truth queries, precision/recall benchmarking of the storage+retrieval stack) versus Phase 6 ('Demo + deployment + load tests', which is broader: UI, deployment, README, plus load tests). Benchmarking a storage engine that still has two open HIGH-severity concurrency/correctness bugs (2a.2.2 MVCC snapshot premature-reclaim race, 2a.4.3 dangling B+Tree NextSibling) would produce unreliable results, so this epic must land before Phase 5. GitHub milestones have no native insert-between ordering; named it 'Phase 4.5' (sits between Phase 4 'Query pipeline' milestone #6 and Phase 5 milestone #7 by naming convention, matching this repo's numbering pattern) and created as milestone #10 (next available creation-order number).",
+  "epics": [
+    {
+      "id": "epic-4.5",
+      "phase": "4.5",
+      "title": "Phase 4.5: Storage-engine technical debt & correctness follow-ups",
+      "github_milestone_number": 10,
+      "github_milestone_url": "https://github.com/Aaryan123456679/HiveMind/milestone/10",
+      "tasks": [
+        {
+          "id": "task-4.5.1",
+          "title": "engine/btree: crash-safety & correctness follow-ups",
+          "modules": ["engine/btree/"],
+          "github_issue_number": 38,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/38",
+          "source": ["pending.md: node-latch eviction, TryLock retry cap, Lookup doc overclaim, repairEmptyLeafAtParent/split-ordering regression-test gap", "regression.jsonl: subtask 2a.4.3 (HIGH, unresolved, dangling NextSibling)", "regression.jsonl: low-risk untested-path items from 1.1.2/1.2.1-1.2.6"],
+          "subtasks": [
+            {"id": "4.5.1.1", "title": "Fix dangling cross-grandparent NextSibling after degenerate-ancestor splice", "severity": "high", "ac": "spliceOutDegenerateAncestor patches the true left-neighbor NextSibling even when gj==0 (cross-grandparent), or a descent-time safeguard prevents trusting a dangling link.", "test": "go test ./engine/btree/... -race -run TestDeleteSpliceGj0CrossGrandparentNoDangling", "modules": ["engine/btree/delete.go", "engine/btree/delete_test.go"]},
+            {"id": "4.5.1.2", "title": "Add retry cap / livelock guard to crabbing TryLock restart-from-root loop", "ac": "errRestartFromRoot loop bounded, surfaces explicit error instead of retrying forever.", "test": "go test ./engine/btree/... -run TestCrabbingRetryCapSurfacesError", "modules": ["engine/btree/insert.go", "engine/btree/delete.go", "engine/btree/insert_test.go"]},
+            {"id": "4.5.1.3", "title": "Bound NodeStore latch registry with eviction", "ac": "latch.go's map[uint64]*nodeLatch bounded via LRU/refcount eviction, mirrors engine/mvcc's commitLocks.", "test": "go test ./engine/btree/... -run TestNodeLatchRegistryBounded", "modules": ["engine/btree/latch.go", "engine/btree/latch_test.go"]},
+            {"id": "4.5.1.4", "title": "Fix Tree.Lookup doc comment overclaim (never locks)", "ac": "Doc comment accurately describes single brief rootMu acquisition.", "test": "doc-only; go vet + gofmt clean", "modules": ["engine/btree/lookup.go"]},
+            {"id": "4.5.1.5", "title": "Add fast deterministic regression tests for repairEmptyLeafAtParent orphan fix + split write-ordering fix", "ac": "Two hook-forced-interleaving tests independently pin down both fixed bug classes.", "test": "go test ./engine/btree/... -race -run TestRepairEmptyLeafOrphanRegression|TestSplitPublishLastOrderingRegression", "modules": ["engine/btree/delete.go", "engine/btree/insert.go", "engine/btree/delete_test.go", "engine/btree/insert_test.go"]},
+            {"id": "4.5.1.6", "title": "Harden low-risk untested paths (consolidated)", "ac": "Adds coverage for ReadNode/WriteNode error paths, chooseLeafSplit/chooseInternalSplit boundaries, PrefixScan empty tree, corrupted .root sidecar.", "test": "go test ./engine/btree/... -race (TestReadWriteNodeErrorPaths, TestChooseSplitBoundaryCases, TestPrefixScanEmptyTree, TestLoadRootTruncatedSidecar)", "modules": ["engine/btree/lookup_test.go", "engine/btree/insert_test.go", "engine/btree/scan_test.go", "engine/btree/btree_test.go"]}
+          ]
+        },
+        {
+          "id": "task-4.5.2",
+          "title": "engine/mvcc: snapshot/epoch correctness follow-up",
+          "modules": ["engine/mvcc/"],
+          "github_issue_number": 39,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/39",
+          "source": ["regression.jsonl: subtask 2a.2.2 (HIGH, unresolved, not in pending.md)", "regression.jsonl: subtask 2a.2.3 (medium, unresolved doc-overclaim)"],
+          "subtasks": [
+            {"id": "4.5.2.1", "title": "Fix NewSnapshot epoch-acquire-before-version-read TOCTOU", "severity": "high", "ac": "AcquireCurrentEpoch called before cat.Get() version read; RunCompaction never reclaims a still-pinned Snapshot's version.", "test": "go test ./engine/mvcc/... -race -run TestNewSnapshotClosesEpochAcquireVersionReadRace", "modules": ["engine/mvcc/read.go", "engine/mvcc/gc.go", "engine/mvcc/gc_test.go"]},
+            {"id": "4.5.2.2", "title": "Correct TestGCUnderConcurrency doc-comment overclaim", "ac": "Doc comment no longer claims equivalence to the narrow deterministic 2a.2.2 regression test.", "test": "go test ./engine/mvcc/... -race -run TestGCUnderConcurrency", "modules": ["engine/mvcc/gc_test.go"]}
+          ]
+        },
+        {
+          "id": "task-4.5.3",
+          "title": "engine/split: wiring, eviction & recovery follow-ups",
+          "modules": ["engine/split/", "engine/catalog/", "engine/btree/", "docs/LLD/split.md"],
+          "github_issue_number": 40,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/40",
+          "source": ["pending.md: split.Trigger wiring, FileGuard eviction, abandoned SPLITTING recovery, raw topic-path keys, crash-injection subtest reconstruction, TestReaderDuringSplit flake, issue #14 wording overclaim"],
+          "subtasks": [
+            {"id": "4.5.3.1", "title": "Wire engine/split.Trigger into engine/catalog/content.go's Append", "ac": "ContentStore.Append invokes Trigger/Signal/CrossesThreshold on every append.", "test": "go test ./engine/catalog/... -run TestAppendTriggersSplitSignal", "modules": ["engine/catalog/content.go", "engine/catalog/content_test.go", "engine/split/trigger.go"]},
+            {"id": "4.5.3.2", "title": "Bound FileGuard registry with eviction", "ac": "Per-fileID guard map bounded, same eviction approach as 4.5.1.3.", "test": "go test ./engine/split/... -run TestFileGuardRegistryBounded", "modules": ["engine/split/guard.go", "engine/split/guard_test.go"]},
+            {"id": "4.5.3.3", "title": "Add automatic recovery/timeout for abandoned SPLITTING catalog records", "ac": "Lease/heartbeat-based timeout reverts StatusSplitting after crash; future BeginSplit succeeds.", "test": "go test ./engine/split/... -race -run TestAbandonedSplittingRecoversAfterTimeout", "modules": ["engine/split/orchestrate.go", "engine/split/orchestrate_test.go"]},
+            {"id": "4.5.3.4", "title": "Add topic-path key normalization/namespace layer for B+Tree keys", "ac": "ExecuteSplitBtreeInsert uses a normalization layer instead of raw path strings.", "test": "go test ./engine/split/... -run TestSplitBtreeKeyNormalization", "modules": ["engine/split/execute.go", "engine/split/execute_test.go"]},
+            {"id": "4.5.3.5", "title": "Reconstruct fresh in-memory objects in TestSplitAtomicCommit's crash-injection subtests", "ac": "4 crash-point subtests use freshly reconstructed catalog/tree/appender objects, not reused partially-mutated ones.", "test": "go test ./engine/split/... -race -run TestSplitAtomicCommit", "modules": ["engine/split/execute_test.go"]},
+            {"id": "4.5.3.6", "title": "Fix TestReaderDuringSplit ~1-3% timing flake with deterministic barrier", "ac": "Sleep-based overlap replaced with a signal-channel barrier; no false failures.", "test": "go test ./engine/split/... -race -run TestReaderDuringSplit -count=50", "modules": ["engine/split/split_race_test.go"]},
+            {"id": "4.5.3.7", "title": "Correct issue #14 / docs/LLD/split.md snapshot-isolation wording overclaim", "ac": "Wording reflects actual no-torn-read guarantee, not true MVCC snapshot isolation.", "test": "doc-only", "modules": ["docs/LLD/split.md"]}
+          ]
+        },
+        {
+          "id": "task-4.5.4",
+          "title": "engine/wal: btree checkpoint durability + doc/wording fixes",
+          "modules": ["engine/wal/", "engine/btree/", "docs/LLD/wal.md"],
+          "github_issue_number": 41,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/41",
+          "source": ["pending.md: btree SaveRoot/WAL-replay gap, cosmetic duplicated doc-comment", "regression.jsonl: subtasks 1.3.1-1.3.4 open low/medium items not closed by 1.3.5"],
+          "subtasks": [
+            {"id": "4.5.4.1", "title": "Wire btree SaveRoot into WAL replay or add periodic auto-checkpoint + crash-window test", "severity": "medium", "ac": "RecoverFromWAL no longer silently no-ops on btree WAL records, or SaveRoot is auto-invoked.", "test": "go test ./engine/btree/... -race -run TestCrashBetweenInsertAndSaveRootRecovers", "modules": ["engine/btree/persist.go", "engine/btree/btree_test.go", "engine/wal/recovery.go"]},
+            {"id": "4.5.4.2", "title": "Delete orphaned duplicated AppendAndApply doc-comment block", "ac": "Orphaned block (~lines 342-370) removed.", "test": "doc-only; gofmt + vet clean", "modules": ["engine/wal/record.go"]},
+            {"id": "4.5.4.3", "title": "Add RecordTypeInvalid / out-of-range RecordType validation", "ac": "DecodeTypedRecord rejects Type 0 and out-of-range types.", "test": "go test ./engine/wal/... -run TestDecodeTypedRecordRejectsInvalidType", "modules": ["engine/wal/record.go", "engine/wal/record_test.go"]},
+            {"id": "4.5.4.4", "title": "Correct checkpoint.go doc comment false claim vs SaveRoot precedent", "ac": "Doc comment no longer claims lineage to SaveRoot's WriteAt idiom.", "test": "doc-only", "modules": ["engine/wal/checkpoint.go"]},
+            {"id": "4.5.4.5", "title": "docs/LLD/wal.md LLD-sync pass", "ac": "Documents record format, RecordType vocabulary, checkpoint manifest schema, Replay contract, torn-tail handling.", "test": "doc-only", "modules": ["docs/LLD/wal.md"]}
+          ]
+        },
+        {
+          "id": "task-4.5.5",
+          "title": "engine/catalog: low-risk hardening follow-ups",
+          "modules": ["engine/catalog/", "docs/LLD/catalog.md"],
+          "github_issue_number": 42,
+          "github_issue_url": "https://github.com/Aaryan123456679/HiveMind/issues/42",
+          "source": ["regression.jsonl: open low/medium items from subtasks 1.1.3, 1.1.4, 1.4.1, 1.4.3"],
+          "subtasks": [
+            {"id": "4.5.5.1", "title": "Add isUsed guard to FreePage to reject double-free", "ac": "FreePage errors on double-free instead of silent no-op.", "test": "go test ./engine/catalog/... -run TestFreePageDoubleFreeRejected", "modules": ["engine/catalog/file.go", "engine/catalog/file_test.go"]},
+            {"id": "4.5.5.2", "title": "Add IDAllocator cross-check against catalog.dat high-water-mark", "ac": "Sidecar/catalog.dat mismatch detected on first CRUD use.", "test": "go test ./engine/catalog/... -run TestIDAllocatorCrossChecksCatalogHighWaterMark", "modules": ["engine/catalog/idalloc.go", "engine/catalog/idalloc_test.go"]},
+            {"id": "4.5.5.3", "title": "Add concurrent Append-vs-Read -race test for ContentStore", "ac": "No-torn-read guarantee empirically pinned down under -race.", "test": "go test ./engine/catalog/... -race -run TestContentAppendConcurrentRead", "modules": ["engine/catalog/content_test.go"]},
+            {"id": "4.5.5.4", "title": "Add ContentStore.Create duplicate-fileID semantics test/guard", "ac": "Duplicate Create behavior explicitly documented and tested; empty/large content covered.", "test": "go test ./engine/catalog/... -run TestContentCreateDuplicateFileID|TestContentCreateEmptyAndLargeContent", "modules": ["engine/catalog/content.go", "engine/catalog/content_test.go"]},
+            {"id": "4.5.5.5", "title": "docs/LLD/catalog.md LLD-sync pass", "ac": "Documents ContentStore contract, WAL-before-apply wiring, striped-mutex FileManager scoping.", "test": "doc-only", "modules": ["docs/LLD/catalog.md"]}
+          ]
+        }
+      ]
+    }
+  ],
+  "standing_convention_note": "User instruction (added mid-run, 2026-07-08): at the end of each future milestone/epic close-out, any new pending.md/regression.jsonl items generated during that epic should be folded into this same Phase 4.5 tech-debt milestone rather than spawning a new one, until Phase 4.5 itself is closed out.",
+  "totals": {
+    "issues_created": 5,
+    "subtasks_total": 24
+  }
+}

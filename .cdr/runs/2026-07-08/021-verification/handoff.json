@@ -1,0 +1,9 @@
+{
+  "run_id": "021-verification",
+  "subtask": "3.1.6",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_path": ".cdr/runs/2026-07-08/021-verification/verification.json",
+  "commit": "e79513f2ab7ec1752ea817ce9e1a309c1e6e9ede",
+  "issue_15_closable_pending_user_authorization": true,
+  "open_comment": "task-3.1.2 missing from .cdr/index/task.jsonl (see .cdr/index/regression.jsonl entry, non-blocking)"
+}

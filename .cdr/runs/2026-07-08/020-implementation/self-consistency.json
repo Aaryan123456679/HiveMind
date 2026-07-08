@@ -1,0 +1,16 @@
+{
+  "note": "Internal sanity only, per invariant I4 - this is NOT verification. A separate agent independently verifies.",
+  "build": {
+    "gofmt_l": "clean (no output)",
+    "go_vet": "clean",
+    "go_build": "clean"
+  },
+  "tests": {
+    "targeted": "go test ./graph/... -run TestGraphRoundTrip -race -v -timeout 60s -> PASS (1 test)",
+    "package_suite": "go test ./graph/... -race -count=1 -timeout 120s -> ok (8.786s)",
+    "full_workspace_suite": "go test ./... -count=1 -timeout 25m -> all packages ok except engine/split's TestReaderDuringSplit (pre-existing, already-tracked flake per .cdr/memory/pending.md and every prior 3.1.x subtask record; reproduced this run: 'reader never observed post-split content across 400 iterations -- test did not actually overlap with the split'; unrelated to engine/graph)"
+  },
+  "validation_matrix_coverage": "All 9 rows in validation-matrix.json covered by assertions in engine/graph/graph_test.go's TestGraphRoundTrip (see file for line-level detail): oracle-based correctness across 3 append+compact cycles, all 4 edge types exercised, ENTITY_COOCCUR weight-summing across cycles (seam bug F1's class), no loss/duplication on repeated compaction of already-truncated nodes (seam bug F2's class), simulated restart via fresh LoadCSR with pre/post-restart result equality, post-restart append+compact cycle via freshly reopened EdgeLog, depth 0/1/2 and filtered/unfiltered GraphNeighbors queries, maxNodes cap.",
+  "production_code_changed": false,
+  "scope_confirmation": "Only engine/graph/graph_test.go added, matching the issue's stated impacted module exactly. No production file touched."
+}

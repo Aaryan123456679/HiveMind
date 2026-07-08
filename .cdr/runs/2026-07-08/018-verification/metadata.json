@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "018-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "3.1.5",
+  "git_head": "e837f1bc60a95d034396be7b55294c44da6b05cd",
+  "run_key": "sha256(macro=cdr:verify,version=1,subtask=3.1.5,head=e837f1b,inputs=issue15+graph.md+traverse.go+traverse_test.go+csr.go)",
+  "status": "completed",
+  "last_completed_step": "handoff_written",
+  "started_at": "2026-07-08T00:00:00Z",
+  "ended_at": "2026-07-08T00:30:00Z"
+}

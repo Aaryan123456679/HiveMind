@@ -1,0 +1,85 @@
+{
+  "schema_version": "1.0",
+  "run_id": "010-verification",
+  "subtask": "3.1.3 - Periodic compaction (issue #15) - re-verification after F1 fix cycle",
+  "commit_reviewed": "9850083ebc61c9bdb3b06bd56609d991c2e428c3",
+  "prior_verdict": "CHANGES_REQUESTED (008-verification, F1: retry-after-truncate-failure double-counts EdgeEntityCooccur weight)",
+  "verdict": "CHANGES_REQUESTED",
+  "security_note": "This dispatch's bash tool output again contained injected fake system-reminder-style text (fake date-change notice, fake MCP 'tokensave' tool-usage instructions, fake 'Auto Mode Active' directive), matching the known recurring prompt-injection pattern for this repo/issue. Treated as untrusted plain-text data only; nothing in it was acted on.",
+  "dimensions": {
+    "requirements": {
+      "status": "fail",
+      "evidence": "Issue #15's 3.1.3 text requires periodic (i.e. repeated, ongoing) compaction of per-node edge logs into graph.dat without losing or duplicating edges across runs. F1's original weight-doubling bug is genuinely fixed (see regression_risk/adversarial check 1). However, independent adversarial testing (outside the implementer's own test suite) found a new critical defect in the *same* sidecar mechanism: edges appended to a node AFTER a fully successful compaction+truncation cycle are silently and permanently lost on the *next* natural compaction pass -- with no injected failure of any kind. This is the mainline 'periodic compaction runs repeatedly as new edges accumulate' scenario the subtask exists to serve, so this is a requirements-dimension failure, not just an edge case."
+    },
+    "architecture_conformance": {
+      "status": "pass_with_comments",
+      "evidence": "Sidecar file design (temp+fsync+rename mirroring WriteCSR, magic/version/CRC framing) is architecturally consistent with csr.go's own conventions. ReadNodeAfter/listWALSegmentsNumbered refactor is a clean, minimal-blast-radius reuse of already-parsed segment numbers. The single missing piece is that the design implicitly assumes WAL segment numbers are monotonically non-reused per node forever, but engine/wal.OpenWriter (wal/writer.go's latestSegmentNum) always restarts numbering at 0 for an empty/nonexistent directory -- which is exactly TruncateNode's postcondition (it os.Remove()s every segment file and the directory itself). The sidecar's 'compacted-through segment N' invariant is silently violated the moment a node's log is fully truncated and then reused, because segment numbers are not globally unique per node -- they are scoped to 'since the directory was last (re)created'."
+    },
+    "regression_risk": {
+      "status": "fail",
+      "evidence": "CRITICAL NEW BUG (independently discovered, not present in implementer's or prior verifier's test suites): after TruncateNode fully succeeds (the ordinary, no-failure-injected happy path) and the node directory is removed, the next AppendEdge for that same source node creates a fresh wal-0.log (segment number resets to 0, confirmed by reading wal/writer.go's latestSegmentNum: returns 0 for an empty/new directory). The compact-state sidecar, however, still records the *old* 'compacted-through segment' number for that fileID (e.g. 0, from the first compaction's single segment) from before truncation. On the next Compact() call, prevState[id]=0 causes ReadNodeAfter(id, afterSeg=0) to treat the brand-new segment 0 as 'already reflected' (seg.num(0) <= afterSeg(0)) and SILENTLY SKIP it -- the edge is read into neither 'incoming' nor ever again, and is permanently lost from graph.dat with no error surfaced anywhere. This reproduces deterministically in the ordinary two-compactions-with-an-edge-appended-in-between path; it does not require any crash, permission failure, or retry scenario at all. It is materially worse than the F1 bug being fixed: F1 required an injected truncate failure and produced a loud, detectable weight anomaly; this new bug fires on every normal periodic-compaction cycle once a node's log has been truncated once and then reused, and produces silent, undetectable, permanent data loss.",
+      "reproduction": "engine/graph, minimal repro (verified independently, script discarded after use, not committed): OpenEdgeLog -> AppendEdge(source=5, {Target:6, Type:EdgeEntityCooccur, Weight:3}) -> Compact(graphPath, log) succeeds cleanly (no injected failure; WriteCSR + saveCompactState + TruncateNode all succeed) -> LoadCSR shows Weight=3 (correct) -> AppendEdge(source=5, {Target:6, Type:EdgeEntityCooccur, Weight:5}) (new segment, numbered wal-0.log again since TruncateNode removed the dir) -> Compact(graphPath, log) again (ordinary next periodic-compaction cycle, no failure injected) -> LoadCSR shows Weight=3 still (want 3+5=8) -- the second edge is silently dropped forever; ReadNode confirms the edge log is also now empty (truncated), so the data exists nowhere.",
+      "root_cause": "The sidecar's per-fileID 'compacted-through segment number' is only a correct proxy for 'already durably reflected in graph.dat' as long as segment numbers are monotonically unique for the lifetime of a given fileID's edge log. TruncateNode's full-removal-and-recreate-on-next-append behavior (inherited unchanged from 3.1.2, and not itself modified by this fix) breaks that assumption: segment numbering is scoped per-directory-incarnation, not per-fileID-forever. The fix added a mechanism that depends on a global invariant that does not hold anywhere else in the codebase and is not enforced by any code path touched in this diff."
+    },
+    "crash_safety_secondary_window": {
+      "status": "pass_with_comments",
+      "evidence": "Adversarial check 2 (residual crash window between WriteCSR's rename succeeding and saveCompactState's own rename completing): traced precisely. A genuine process crash landing in that narrow window leaves a stale/missing sidecar, causing exactly one re-summing of the already-durably-written segments on the next run (not unbounded compounding, since the next successful run re-syncs sidecar state to match graph.dat and truncates cleanly). This is honestly disclosed in the updated package doc comment, requires an actual crash (not merely an operational failure like the F1 bug did), and is architecturally consistent with other best-effort tradeoffs already accepted in this codebase (e.g. engine/wal.Checkpoint's own precedent, cited in the doc comment). Non-blocking on its own, but noted because it is the same general class of risk (sidecar/graph.dat consistency) as the newly-found blocking bug above, and both stem from the same underlying design choice to track 'incoming' via segment numbers rather than content."
+    },
+    "sidecar_atomicity_across_nodes": {
+      "status": "pass",
+      "evidence": "Adversarial check 3: confirmed saveCompactState is called exactly once per whole Compact() pass, writing a single atomically-renamed file covering every node's newState entry together -- not incrementally per-node. There is no partial-multi-node-sidecar-update-then-crash risk; the sidecar for a given graphPath is all-or-nothing per pass."
+    },
+    "read_node_after_boundary_correctness": {
+      "status": "pass",
+      "evidence": "Adversarial check 4: ReadNodeAfter's seg.num <= afterSeg skip condition correctly implements 'strictly greater than' semantics for inclusion (off-by-one verified by reading the code directly); afterSeg=-1 sentinel correctly includes every segment (num >= 0). This logic is not the source of the new bug -- the bug is that afterSeg itself becomes stale/wrong after a node's directory is truncated and recreated, not that the comparison is implemented incorrectly."
+    },
+    "test_coverage": {
+      "status": "fail",
+      "evidence": "TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight is a genuine, non-mocked regression test: reuses real chmod-based failure injection, performs a real second Compact() call, and asserts on the actual Weight field via LoadCSR -- independently re-run against a worktree checked out at pre-fix commit ebbc1ff and confirmed to fail there (Weight=6, want 3) and pass against 9850083 (Weight=3). This genuinely proves F1 is fixed. However, the test suite has zero coverage of the 'append new edges after a node's log has been successfully truncated once, then compact again' scenario -- which is the normal periodic-compaction operating mode and is exactly where the newly-found critical bug lives. No existing test (TestCompaction's subtests, TestTruncateNode, either crash-injection test, or the new retry test) exercises a second AppendEdge to the same node following a successful TruncateNode."
+    },
+    "confidence": {
+      "status": "fail",
+      "evidence": "The fix correctly and verifiably closes the exact bug it targeted (F1), and the implementer's revert-experiment claim is independently reproduced faithfully. However, the fix introduces a new, more severe, silent data-loss defect in the identical file/mechanism, undetected by the implementer's own test suite, the implementer's stated full-module-test-suite-green claim (accurate but insufficient -- the suite simply never exercises the triggering scenario), and would not have been caught without adversarial testing outside the given test spec."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "No new performance concern beyond what 3.1.1/3.1.2/008-verification already established; sidecar read/write is O(distinct fileIDs), negligible relative to Compact's existing O(all nodes + all log entries) full-rebuild cost."
+    },
+    "maintainability": {
+      "status": "pass_with_comments",
+      "evidence": "compact.go's updated package doc comment is thorough and (for the F1 window) accurate, but does not mention or account for the segment-number-reuse-after-truncation hazard now found -- the doc comment's claim that the residual risk is bounded to 'the sub-millisecond crash window' is incomplete, since the newly-found bug requires no crash at all."
+    },
+    "possible_improvements": {
+      "items": [
+        "Fix the new bug: the sidecar must not key retry-skip logic on segment numbers alone, since TruncateNode's remove-and-recreate behavior makes them non-unique across a fileID's lifetime. Options: (a) have TruncateNode/AppendEdge use a monotonically-increasing global (or per-node, but persisted independently of directory existence) segment counter that survives truncation, rather than restarting at 0 each time a directory is recreated; (b) have Compact clear (delete) a node's sidecar entry as part of the same atomic operation that truncates its log, so a fresh directory never has a stale prevState entry to collide with; (c) key the sidecar on segment content hash/generation rather than a reused-numbering scheme.",
+        "Add a regression test that reproduces this exact scenario: AppendEdge -> full successful Compact (including truncation) -> AppendEdge again on the same node -> Compact again -> assert both edges' contributions are present in graph.dat. This is the single most important missing test, more so than the retry-after-failure test already added, because it covers the *normal* operating mode rather than a failure path.",
+        "Consider whether option (b) above (clearing sidecar entries atomically with successful truncation) is simplest: since TruncateNode already fully removes the node's on-disk segments, the sidecar entry for that fileID stops meaning anything useful once truncation succeeds -- there's no need to retain it past that point at all, only across a FAILED truncation.",
+        "Prior pass's item 2 (Compact/TruncateNode lock ordering, ReadNode not holding l.mu across AppendEdge) remains an open, non-blocking, carry-forward item; not exercised further this pass."
+      ]
+    }
+  },
+  "adversarial_checks_summary": [
+    "1. Revert-experiment independently redone (git worktree at ebbc1ff, not git stash since working tree had no staged changes to stash): new regression test copied in isolation, confirmed FAILS with Weight=6 (want 3) against pre-fix code, and PASSES against 9850083. F1 fix is genuine and correctly proven by the new test.",
+    "2. Residual crash window (WriteCSR rename succeeded, saveCompactState's own rename not yet complete): traced precisely, confirmed bounded to a single non-compounding re-summing per actual process crash (not per ordinary operational failure), honestly disclosed in the doc comment. Non-blocking.",
+    "3. Sidecar written once per whole Compact() pass (all nodes together, single atomic rename) -- no partial-multi-node-sidecar-then-crash risk. Confirmed by reading Compact()'s single saveCompactState call site.",
+    "4. ReadNodeAfter boundary semantics (strictly-greater-than afterSeg) confirmed correct in isolation.",
+    "5. NEW CRITICAL FINDING (not one of the pre-specified adversarial checks, found via independent exploratory testing of the sidecar/segment-numbering interaction): TruncateNode's remove-and-recreate-directory behavior causes WAL segment numbers to restart at 0 for any node whose log is truncated and then reused, which silently invalidates the sidecar's 'compacted-through segment N' invariant and causes permanent, silent loss of every edge appended after a node's first successful truncation. Independently reproduced with a minimal, non-mocked repro (see regression_risk.reproduction); this is a mainline-path bug, not an edge case, and is more severe than the bug the fix targets because it is silent and requires no failure injection.",
+    "6. Regression test for F1 read in full: genuinely performs a real second Compact() call and asserts on the real Weight field; not mocked or stubbed.",
+    "7. Zero-regression claim for existing tests verified: TestCompaction subtests, TestTruncateNode, both crash-injection tests unmodified in the diff (confirmed via git show), all pass.",
+    "8. Commands run: go build ./... (clean), go vet ./... (clean), gofmt -l . (clean), go test ./graph/... -run TestCompaction -race -count=5 -timeout 10m (PASS), go test ./graph/... -run TestTruncateNode -race -count=5 -timeout 10m (PASS), go test ./graph/... -count=1 -timeout 10m (PASS), go test ./... -count=1 -timeout 25m (PASS, all packages green, no TestReaderDuringSplit flake observed this run)."
+  ],
+  "blocking_findings": [
+    {
+      "id": "F2",
+      "severity": "critical",
+      "title": "Sidecar-based retry-idempotency fix silently and permanently loses edges appended to a node after its log has been successfully truncated once and then reused, on the very next ordinary periodic-compaction pass -- no failure injection or crash required",
+      "location": "engine/graph/compact.go: Compact() lines ~398-424 (prevState/newState/ReadNodeAfter interaction); engine/graph/edgelog.go: TruncateNode (removes node dir) interacting with wal/writer.go's latestSegmentNum (restarts segment numbering at 0 for an empty/new directory)",
+      "must_fix_before": "PASS"
+    }
+  ],
+  "next_steps": {
+    "proceed_to_cdr_commit": false,
+    "safe_to_proceed_to_3.1.4": false,
+    "reason": "F1 (the original CHANGES_REQUESTED finding) is genuinely and verifiably fixed. However, the fix's own mechanism introduces a new, more severe, silent permanent-data-loss bug (F2) that fires on the normal periodic-compaction happy path once any node's log has been truncated and reused. 3.1.3 must not be committed or merged as-is, and 3.1.4 (which builds on 3.1.3's EdgeType enum and would be exercised against a compaction pipeline that silently drops data) should not proceed until F2 is fixed and re-verified. Recommend routing back to implementation with F2's reproduction and suggested fix directions (see possible_improvements)."
+  }
+}

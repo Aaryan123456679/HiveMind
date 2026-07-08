@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "run_id": "007-implementation",
+  "subtask": "3.1.3 - Periodic compaction: edge logs compacted into CSR adjacency array (issue #15)",
+  "commit_sha": "ebbc1ff0d24d641ec870cdc0a452149da2c25a4c",
+  "status": "completed",
+  "not_verified_by_this_agent": true,
+  "files_changed": [
+    {"path": "engine/graph/compact.go", "note": "new. edgeLogNodeIDs, mergeEdges, Compact(graphPath string, log *EdgeLog) (*CSRGraph, error). Full weight-aggregation + crash-safety-ordering rationale in the file's package doc comment (top of file)."},
+    {"path": "engine/graph/compact_test.go", "note": "new. TestCompaction (5 subtests: EntityCooccurWeightsSum, NonCooccurDedupLastWrite, MergesWithExistingGraph, NoEdgeLogIsNoop, TruncatesLogsAfterCompaction), TestCompaction_CrashBeforeRenameLeavesOldGraphAndLogsIntact, TestCompaction_TruncateFailureDoesNotLoseGraphUpdate, TestTruncateNode."},
+    {"path": "engine/graph/edgelog.go", "note": "added EdgeLog.TruncateNode(sourceFileID uint64) error, inserted just before the existing Close method."},
+    {"path": "engine/graph/edge_append.go", "note": "EdgeType enum extended: EdgeEntityCooccur, EdgeLLMAsserted added after existing EdgeRedirect (byte values 0-2 unchanged); String() cases added."},
+    {"path": "docs/LLD/graph.md", "note": "new '### Compaction (subtask 3.1.3, engine/graph/compact.go)' subsection inserted between the existing 3.1.2 subsection and '## Edge shape'."}
+  ],
+  "acceptance_criteria": [
+    "Compaction merges accumulated per-node edge-log entries into the CSR array without losing or duplicating edges, including weight increments on repeated ENTITY_COOCCUR edges.",
+    "Test spec: go test ./engine/graph/... -run TestCompaction"
+  ],
+  "test_commands_run": [
+    "gofmt -l . (repo root, clean)",
+    "go vet ./... (engine module, clean)",
+    "go build ./... (engine module, clean)",
+    "go test ./graph/... -run TestCompaction -v -timeout 60s (PASS)",
+    "go test ./graph/... -v -race -timeout 120s (PASS, whole graph package)",
+    "go test ./... -timeout 180s (PASS, whole engine module: engine, btree, catalog, graph, mvcc, split, wal)"
+  ],
+  "key_decisions": [
+    "Weight aggregation: EdgeEntityCooccur edges sum Weight (max LastUpdated) across every merged occurrence (existing graph.dat entry + all log entries); all other edge types dedupe by (target,type) with last-write-wins (no summing) - see engine/graph/compact.go top-of-file doc comment.",
+    "Crash-safety ordering: per-node EdgeLog.TruncateNode is only called after WriteCSR's atomic rename succeeds, one node at a time; a crash before rename leaves old graph.dat + full logs untouched (safe retry, no loss/dup); a crash between rename success and truncation completion is a documented, accepted narrow risk of re-summing ENTITY_COOCCUR weight on retry (mirrors engine/wal.Checkpoint's own precedent) - Compact still returns the truncation error but treats graph.dat as already durable/correct regardless.",
+    "EdgeEntityCooccur/EdgeLLMAsserted added to the EdgeType enum in this subtask (not 3.1.4) because 3.1.3's own test spec requires ENTITY_COOCCUR and the constant did not exist yet; full type-filtered validation remains 3.1.4's scope."
+  ],
+  "open_items_for_verifier": [
+    "Confirm the weight-sum-vs-dedup semantic split (ENTITY_COOCCUR sums, others last-write-wins) matches the verifier's independent reading of issue #15's text (the issue's own wording is terse: 'weight increments on repeated ENTITY_COOCCUR edges' - only ENTITY_COOCCUR is named, which is the basis for the split implemented here).",
+    "Compact does not synchronize ReadNode/TruncateNode against a concurrently-running AppendEdge on the same node beyond EdgeLog.mu's writer-cache protection; issue #15's 3.1.3 test spec does not require -race/concurrent-compaction coverage (unlike 3.1.2's TestPerNodeEdgeLog), so this was left as a disclosed, not silently assumed, limitation - self-consistency.json.",
+    "gh issue view 15's raw output for this run contained injected fake system-reminder-style text (fake date-change notice, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive) appended after the real issue body - none of it was acted on; noting for the verifier in case the same injected text appears again."
+  ]
+}

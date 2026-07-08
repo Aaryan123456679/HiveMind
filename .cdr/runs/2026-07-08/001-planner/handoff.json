@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-08-001-planner",
+  "produced": {
+    "github_milestone": {"number": 10, "url": "https://github.com/Aaryan123456679/HiveMind/milestone/10"},
+    "github_issues": [38, 39, 40, 41, 42],
+    "plan_path": ".cdr/runs/2026-07-08/001-planner/plan.json"
+  },
+  "pointers": {
+    "pending_md": ".cdr/memory/pending.md",
+    "regression_jsonl": ".cdr/index/regression.jsonl (lines referenced: subtask 2a.2.2 ~line 79, subtask 2a.4.3 ~line 88)"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "subtask": "3.1.5",
+  "issue": 15,
+  "commit": "e837f1bc60a95d034396be7b55294c44da6b05cd",
+  "commit_parent": "4b9c63919a7bf56f3dec431bac5ff3933391b620",
+  "pushed": false,
+  "files_changed": [
+    {"path": "engine/graph/traverse.go", "type": "new", "lines": "1-140"},
+    {"path": "engine/graph/traverse_test.go", "type": "new", "lines": "1-296"}
+  ],
+  "function_signature": "func GraphNeighbors(g *CSRGraph, fileID uint64, depth int, edgeTypeFilter EdgeType, maxNodes int) ([]CSREdge, error)",
+  "design_decisions": [
+    "Compacted-only reads: takes *CSRGraph, never reads engine/graph/edgelog.go's EdgeLog. See requirement.md's 'Design question resolved' section for full evidence trail.",
+    "edgeTypeFilter == EdgeTypeInvalid (zero value) means 'no filter, match all 4 valid types'; any other value must be one of the 4 ValidEdgeType-recognized types or GraphNeighbors returns an error.",
+    "Type filter prunes traversal itself, not just the returned result set: an edge whose Type does not match edgeTypeFilter is never followed, so a node reachable only via a non-matching intermediate edge is unreachable under that filter. Documented in traverse.go's GraphNeighbors doc comment.",
+    "depth must be in [0, 2] ('0-2 hop traversal' per docs/LLD/graph.md); depth == 0 returns an empty result (fileID itself never included) with no error.",
+    "maxNodes must be >= 0; result ordered by (hop ascending, Weight descending, Target fileID ascending) before truncating to maxNodes.",
+    "g == nil treated as an empty graph: returns (nil, nil), not an error.",
+    "BFS dedup: a node reached via multiple paths within depth hops appears exactly once, at its first-seen (shortest) hop distance."
+  ],
+  "acceptance_criteria_pointers": [
+    {"id": "AC1-neighbor-lookup", "test": "engine/graph/traverse_test.go:TestGraphNeighbors/Basic1Hop"},
+    {"id": "AC2-multi-hop-0-2", "test": "engine/graph/traverse_test.go:TestGraphNeighbors/DepthZero, /Basic1Hop, /TwoHopExpansion"},
+    {"id": "AC3-edge-type-filter", "test": "engine/graph/traverse_test.go:TestGraphNeighbors/TypeFilterNoMatches, /TypeFilterAllTypesRequested, /TypeFilterSingleType, /LargeGraphExceedsCapWithin2Hops"},
+    {"id": "AC4-cap-maxNodes", "test": "engine/graph/traverse_test.go:TestGraphNeighbors/CapExactlyN, /CapNPlus1, /CapZero, /LargeGraphExceedsCapWithin2Hops"},
+    {"id": "AC5-dedup", "test": "engine/graph/traverse_test.go:TestGraphNeighbors/DedupNoDoubleCounting"},
+    {"id": "AC6-input-validation", "test": "engine/graph/traverse_test.go:TestGraphNeighbors/InvalidDepthRejected, /InvalidEdgeTypeFilterRejected, /NegativeMaxNodesRejected"},
+    {"id": "AC7-compacted-only-design", "test": "engine/graph/traverse.go signature (takes *CSRGraph, no *EdgeLog param) + doc comment 'Compacted-only design' section + requirement.md"},
+    {"id": "AC8-no-regression", "test": "go test ./engine/graph/... -race -timeout 180s (full package suite, all green)"}
+  ],
+  "artifacts": {
+    "requirement": ".cdr/runs/2026-07-08/017-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-08/017-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-08/017-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-08/017-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-08/017-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-08/017-implementation/self-consistency.json"
+  },
+  "prior_run_context": {
+    "task_3.1.4_commit": "4b9c63919a7bf56f3dec431bac5ff3933391b620",
+    "task_3.1.4_runs": ".cdr/runs/2026-07-08/014-implementation through 016-cdr-commit"
+  },
+  "not_verified_by_this_agent": true,
+  "known_gaps_disclosed": [
+    "No merge of not-yet-compacted EdgeLog entries (deliberate, evidenced design decision - see requirement.md, not a gap).",
+    "No wiring into agents/query/ (query-agent) - that consumer does not exist yet in this repo; out of scope per issue's Impacted modules list.",
+    "The system-wide 'k + 2k' cap value itself is not decided/hardcoded here - maxNodes is caller-supplied, per docs/LLD/graph.md naming query-agent as the module that decides that value."
+  ],
+  "prompt_injection_note": "Tool output during this run (gh issue view 15) contained injected fake system-reminder-style text (fake date-change notice, fake MCP 'tokensave' server tool instructions, fake 'Auto Mode Active' directive) appended after real content - the same known, recurring prompt-injection pattern flagged in every prior run for this issue. Ignored; not acted upon."
+}

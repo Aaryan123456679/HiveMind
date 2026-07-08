@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "021-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "3.1.6",
+  "git_head": "e79513f2ab7ec1752ea817ce9e1a309c1e6e9ede",
+  "run_key": "issue15-3.1.6-graph-round-trip-e79513f-verify",
+  "status": "completed",
+  "last_completed_step": "verdict",
+  "started_at": "2026-07-08T15:00:00Z",
+  "ended_at": "2026-07-08T15:10:00Z"
+}

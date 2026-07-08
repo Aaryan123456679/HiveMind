@@ -1,0 +1,37 @@
+{
+  "subtask": "3.1.6",
+  "issue": 15,
+  "affected_files": [
+    {
+      "path": "engine/graph/graph_test.go",
+      "change": "new file",
+      "purpose": "TestGraphRoundTrip: full insert/compaction/traversal round-trip correctness test with an independent serial oracle, two pre-restart append+compact cycles, a simulated process restart (fresh LoadCSR), and a third post-restart append+compact cycle"
+    }
+  ],
+  "production_files_changed": [],
+  "modules_touched": [
+    "engine/graph"
+  ],
+  "public_contracts_exercised": [
+    "engine/graph.OpenEdgeLog",
+    "engine/graph.EdgeLog.AppendEdge",
+    "engine/graph.EdgeLog.Close",
+    "engine/graph.Compact",
+    "engine/graph.WriteCSR (transitively via Compact)",
+    "engine/graph.LoadCSR",
+    "engine/graph.GraphNeighbors",
+    "engine/graph.NewCSREdge",
+    "engine/graph.EdgeType constants (ValidEdgeType's four values)"
+  ],
+  "public_contracts_changed": [],
+  "dependents": {
+    "direct": [],
+    "note": "Pure test-only addition; no package outside engine/graph imports test files. No production API surface changes, so no dependent packages (engine/split, engine/wal, future agents/ingestion, agents/query) are affected."
+  },
+  "risk_level": "low",
+  "risk_rationale": "Test-only change, additive new file, zero production code modified. Primary risk is a flaky or incorrect oracle giving false confidence, mitigated by computing the oracle independently (plain Go map iteration mirroring documented merge/traversal semantics) rather than calling package-under-test merge/traversal logic, and by deliberately targeting the two previously-confirmed real bug classes (compaction retry double-counting, WAL segment-number reuse after truncation) across multiple append+compact cycles plus a simulated restart.",
+  "concurrency_relevant": false,
+  "concurrency_note": "Test is intentionally single-goroutine/sequential (issue's own test spec says 'interleave inserts/compaction/traversal', i.e. serial ordering, not concurrent execution) but still run under -race per package convention since it exercises EdgeLog's internal RWMutex/wal.Writer machinery.",
+  "durability_relevant": true,
+  "durability_note": "Includes a simulated process-restart check (fresh LoadCSR against the same graph.dat path, discarding the in-memory CSRGraph Compact returned) to prove on-disk durability, not just in-memory correctness within one process lifetime."
+}

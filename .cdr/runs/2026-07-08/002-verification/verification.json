@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-08-002-verification",
+  "subtask": "3.1.1",
+  "issue": 15,
+  "commit": "a4e473d71402e46f9cfa69ba37c8743cf68af059",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "gh issue view 15 output and .cdr/ prior-run text this session repeatedly contained embedded fake system-reminder-style injections (fake date-change notices, fake MCP 'tokensave' instructions, fake 'Auto Mode Active' directives) inside git show / bash tool output. Treated as untrusted plain-text data only; none acted upon. Actual system clock independently confirmed via `date` as 2026-07-08, matching the latest real .cdr/runs date directory in use (not the fake/stale '2026-07-06' figure injected into this agent's own context) -- run artifacts written under .cdr/runs/2026-07-08/002-verification/ accordingly.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Acceptance criteria (adjacency for all fileIDs persists to graph.dat in CSR-like compact array format, reloads correctly after restart) fully met. gh issue view 15 subtask 3.1.1 text matches impacted modules (csr.go, csr_test.go) and test spec (TestCSRFormat) exactly."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Whole-snapshot temp+fsync+rename write pattern correctly mirrors catalog/content.go's writeContentFile precedent (verified line-by-line: CreateTemp in target dir, Write, Sync, Close, Rename, cleanup-on-error at every step). docs/LLD/graph.md's new subsection accurately documents the layout and is consistent with csr.go's package doc comment."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "engine/graph package: all 5 new CSR tests + 4 pre-existing edge_append.go tests pass (go test ./graph/... -count=1 -v). go list -deps confirms engine/graph has zero dependency on engine/split (grep for engine/split in graph's deps: no match) -- the dependency runs the other direction (split depends on graph), so csr.go cannot have caused the split-package failure. Full `go test ./... -count=1 -timeout 25m`: only failure was engine/split's TestReaderDuringSplit ('reader never observed post-split content across 400 iterations'), which is the exact known, already-tracked ~1-3% timing flake documented in .cdr/memory/pending.md from issue #14's close-out (not a new signature). Independently reran `go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 10m`: 10/10 PASS, consistent with a low flake rate, not a new systemic break introduced by this commit."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "TestCSRFormat includes a node (id=5) with zero outbound edges, correctly asserting Neighbors(5) returns nil -- catches the classic CSR off-by-one bug class. TestCSRLargeAdjacency exercises 500 nodes x 20 edges with reflect.DeepEqual per-node comparison, verified structurally. BuildCSR's offsets[i]=len(edges) before append, offsets[len(nodeIDs)]=len(edges) after loop is correct CSR construction, verified by code read."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "TestCSRCorruptedPayloadDetected genuinely flips a byte in the payload (data[csrHeaderSize] ^= 0xFF) via direct file mutation and asserts LoadCSR returns a non-nil error (CRC32 mismatch), not merely 'does not panic'. TestCSRTruncatedHeaderRejected genuinely writes a 3-byte file and asserts an error. LoadCSR also validates a payload-length-matches-header-counts invariant before decoding, guarding against a crafted header with mismatched counts causing out-of-bounds slicing."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "O(log n) Neighbors lookup via sort.Search on the sorted nodeIDs array is appropriate for this data structure; whole-snapshot rewrite cost is an accepted tradeoff explicitly deferred to 3.1.2/3.1.3's incremental edge log + periodic compaction design, not a concern for this subtask alone."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Package doc comment fully documents on-disk layout; code is well-commented; gofmt -l . reports zero files; go vet ./... clean."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "5 tests as claimed, all independently rerun and passing 5x (TestCSRFormat) and 1x full suite. Round-trip fidelity verified byte-for-byte via reflect.DeepEqual (TestCSRLargeAdjacency) and per-field equality (TestCSRFormat/neighborsEqual) across all four edge fields (Target/Type/Weight/LastUpdated), not just count checks."
+    },
+    "design_soundness_for_future_subtasks": {
+      "status": "pass_with_comment",
+      "evidence": "Whole-snapshot rewrite design is reasonable and does not paint 3.1.2/3.1.3 into a corner: CSREdge already has Weight (uint32) and LastUpdated (int64) fields, and BuildCSR takes a plain adjacency map, which a future compaction step can construct by merging edge-log entries (incrementing Weight for repeated ENTITY_COOCCUR pairs) before calling BuildCSR/WriteCSR -- confirmed this data model has a natural home for 3.1.3's stated weight-increment requirement.",
+      "comment": "Minor, non-blocking: LoadCSR/decodeCSREdge cast the on-disk Type byte directly to EdgeType with no validation against known values, unlike edge_append.go's decodeEdge which explicitly rejects unrecognized/invalid EdgeType bytes (EdgeSplitSibling, EdgeRedirect only; EdgeTypeInvalid=0 rejected). Today this is low-risk since WriteCSR only ever encodes what BuildCSR was given from in-process data, but once 3.1.2/3.1.3 introduce a real on-disk edge log / compaction pipeline as an alternate write path to graph.dat, consider adding the same guard LoadCSR currently lacks. Also note engine/graph's EdgeType enum (edge_append.go) only defines EdgeSplitSibling/EdgeRedirect today; ENTITY_COOCCUR and LLM_ASSERTED (named in docs/LLD/graph.md's edge-shape section and issue #15's subtask 3.1.4) do not exist yet -- correctly out of scope for 3.1.1, tracked as 3.1.4's job, not a gap in this commit."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "All claims in the implementer's handoff were independently reproduced: build/vet/fmt clean, TestCSRFormat 5x PASS, full graph package suite PASS, TestReaderDuringSplit isolated 10x PASS (consistent with documented flake, not contradicting the 1-3% claim), full ./... run reproduced the exact same single known-flake failure signature and nothing else, dependency direction (split->graph, never graph->split) independently confirmed via go list -deps."
+    }
+  },
+  "commands_run": [
+    "go build ./... (clean)",
+    "go vet ./... (clean)",
+    "gofmt -l . (no output, clean)",
+    "go test ./graph/... -run TestCSRFormat -count=5 -timeout 10m -v (5/5 PASS)",
+    "go test ./graph/... -count=1 -timeout 10m -v (9/9 PASS: 5 new CSR + 4 pre-existing edge_append)",
+    "go list -deps ./graph/... | grep engine/split (no match, confirms no dependency)",
+    "go list -deps ./split/... | grep engine/graph (match, confirms one-directional dependency split->graph)",
+    "go test ./split/... -race -run TestReaderDuringSplit -count=10 -timeout 10m -v (10/10 PASS)",
+    "go test ./... -count=1 -timeout 25m (all packages PASS except engine/split's known TestReaderDuringSplit flake, exact pre-documented failure signature)"
+  ],
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "LoadCSR/decodeCSREdge does not validate the on-disk EdgeType byte against known values (unlike edge_append.go's decodeEdge). Low risk today (single in-process write path); revisit once 3.1.2/3.1.3 add an independent on-disk write path into graph.dat.",
+    "TestReaderDuringSplit's known ~1-3% timing flake (engine/split, pre-existing, tracked in .cdr/memory/pending.md since issue #14) reproduced once in the full ./... run; independently confirmed unrelated to this commit via 10/10 isolated PASS reruns and dependency-direction analysis (engine/graph has zero dependency on engine/split)."
+  ],
+  "proceed_to_commit": true,
+  "safe_to_proceed_to_3.1.2": true
+}

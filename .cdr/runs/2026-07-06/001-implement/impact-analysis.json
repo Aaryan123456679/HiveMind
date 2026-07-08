@@ -1,0 +1,28 @@
+{
+  "subtask": "3.1.1",
+  "new_files": [
+    "engine/graph/csr.go",
+    "engine/graph/csr_test.go"
+  ],
+  "modified_files": [],
+  "modified_docs": [
+    "docs/LLD/graph.md"
+  ],
+  "touched_but_unchanged_precedents": [
+    "engine/graph/edge_append.go",
+    "engine/wal/writer.go",
+    "engine/catalog/content.go"
+  ],
+  "downstream_consumers_deferred": [
+    "engine/graph/edgelog.go (3.1.2 - not yet created)",
+    "engine/graph/compact.go (3.1.3 - not yet created, will populate CSR from edge log)",
+    "engine/graph/traverse.go (3.1.5 - not yet created, will read CSR for GraphNeighbors)"
+  ],
+  "risk": "low - purely additive new package-internal file format; no existing production code path calls into engine/graph's CSR format yet (nothing to break), and edge_append.go/EdgeAppender is untouched",
+  "regression_surface": [
+    "engine/graph/edge_append_test.go must remain green (untouched code, but same package - verify no naming collisions)",
+    "engine/split, engine/catalog, engine/wal - untouched, full engine test suite re-run for regression confidence per workflow step 7"
+  ],
+  "backward_compat": "N/A - new format, no prior graph.dat readers/writers exist",
+  "concurrency_notes": "csr.go's Save/Load in this subtask are single-writer whole-file snapshot operations (temp+rename), no locking primitive added here; concurrent-safety of a shared CSR store across goroutines is out of scope for 3.1.1 and deferred to whichever later subtask wires this into a live read/write path"
+}

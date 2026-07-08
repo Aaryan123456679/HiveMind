@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0",
-  "run_id": "014-implementation",
+  "run_id": "020-implementation",
   "macro": "cdr:implement",
   "macro_version": "1",
   "agent": "implementation",
-  "subtask": "3.1.4",
-  "git_head": "4b9c63919a7bf56f3dec431bac5ff3933391b620",
-  "run_key": "7d2baabcaa0fceb0",
+  "subtask": "3.1.6",
+  "git_head": "e79513f2ab7ec1752ea817ce9e1a309c1e6e9ede",
+  "run_key": "issue15-3.1.6-graph-round-trip-e79513f",
   "status": "completed",
   "last_completed_step": "handoff",
   "started_at": "2026-07-08T00:00:00Z",
-  "ended_at": "2026-07-08T00:30:00Z"
+  "ended_at": "2026-07-08T00:00:00Z"
 }

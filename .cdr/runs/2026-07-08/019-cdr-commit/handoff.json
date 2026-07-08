@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-08-019-cdr-commit",
+  "subtask": "3.1.5",
+  "commit": "e837f1bc60a95d034396be7b55294c44da6b05cd",
+  "fix_commit": "369fd651c16dd7e92eb939abe943c341ee2d5b6e",
+  "verification_run": ".cdr/runs/2026-07-08/018-verification/verification.json",
+  "commit_doc": ".cdr/commits/task-3.1.5.md",
+  "index_updates": [".cdr/index/task.jsonl", ".cdr/index/feature.jsonl"],
+  "pending_items_added": [],
+  "issue_status": "open, 1 subtask remains (3.1.6)",
+  "pushed": false
+}

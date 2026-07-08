@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-08-022-cdr-commit",
+  "produced": {
+    "commit_doc": ".cdr/commits/task-3.1.6.md",
+    "task_index_entries": ["task-3.1.2 (backfill)", "task-3.1.6"],
+    "feature_index_entry": "graph-roundtrip-capstone-test"
+  },
+  "verification_source": ".cdr/runs/2026-07-08/021-verification/verification.json",
+  "implementation_commit": "e79513f2ab7ec1752ea817ce9e1a309c1e6e9ede",
+  "parent_commit": "369fd651c16dd7e92eb939abe943c341ee2d5b6e",
+  "github_issue_touched": false,
+  "pushed": false,
+  "note": "Issue #15 closable per this record; GitHub issue state intentionally untouched pending separate user authorization."
+}

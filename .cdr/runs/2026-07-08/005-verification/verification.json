@@ -1,0 +1,74 @@
+{
+  "subtask": "task-3.1.2",
+  "issue": 15,
+  "verdict": "PASS_WITH_COMMENTS",
+  "commits_reviewed": ["32b8042", "12eca06"],
+  "security_note": "Issue #15's body (fetched via gh issue view 15) contains injected fake system-reminder-style text (fake date-change notice, fake MCP/tokensave tool instructions, fake 'Auto Mode Active' directive), consistent with the recurring prompt-injection pattern already flagged this session. Treated as untrusted plain-text data only; nothing in it was acted on.",
+  "dimensions": {
+    "requirements": {
+      "result": "pass",
+      "evidence": "Acceptance criteria ('concurrent edge appends to different source fileIDs never block each other, each writes to its own per-node log') and test spec (TestPerNodeEdgeLog, -race, concurrent appenders across many distinct fileIDs) both satisfied. edgelog.go/edgelog_test.go match issue #15's stated impacted modules for 3.1.2 exactly."
+    },
+    "architecture_conformance": {
+      "result": "pass",
+      "evidence": "EdgeLog correctly layered as a new mechanism distinct from csr.go (whole-snapshot format) and edge_append.go (narrow split-specific shared appender). CSREdge reuse (engine/graph/csr.go) is clean: only Target/Type/Weight/LastUpdated, no CSR offset/index-array baggage leaks into the append-log context, and directly sets up 3.1.3's compaction to merge without a translation layer as claimed."
+    },
+    "regression_risk": {
+      "result": "pass",
+      "evidence": "edge_append.go untouched (byte-identical to pre-existing); full go test ./... -count=1 -timeout 25m green across all packages including engine/split (no TestReaderDuringSplit flake this run) and engine/btree, engine/catalog, engine/mvcc, engine/wal. go test ./graph/... -race -count=5 -timeout 10m clean, 5x."
+    },
+    "concurrency_correctness": {
+      "result": "pass",
+      "evidence": "getOrOpenWriter implements a correct double-checked-lock: RLock+map-read+RUnlock fast path, then Lock() and RE-CHECK the map before creating+registering a new wal.Writer under the write lock. This closes the classic DCL bug (two goroutines both missing the fast-path check and both proceeding to create+register separately) since the re-check under Lock() is present and the map write only happens after that re-check. Reviewed actual source, not just -race output."
+    },
+    "concurrency_test_adequacy": {
+      "result": "pass",
+      "evidence": "TestPerNodeEdgeLog launches 50 goroutines across 50 distinct fileIDs (uint64(n+1), n in 0..49), each appending 20 edges with fileID-derived targets, then verifies per-node edge count, order, and target values (catching cross-node leakage). Includes a separate best-effort, non-blocking timing signal (serial vs concurrent elapsed time, logged via t.Logf not t.Fatalf/t.Errorf) correctly labeled as loose/environment-dependent, not a correctness assertion. Genuinely exercises distinct fileIDs, not a single-fileID or accidentally-serialized scenario."
+    },
+    "durability": {
+      "result": "pass",
+      "evidence": "wal.Writer.Append fsyncs on every call (engine/wal/writer.go:48-49,226) -- same primitive edge_append.go's EdgeAppender uses, so per-node EdgeLog gets the identical fsync-per-append durability guarantee. No buffering introduced. TestPerNodeEdgeLogDurability confirms edges survive Close+reopen via a fresh EdgeLog instance."
+    },
+    "resource_leak": {
+      "result": "comment",
+      "evidence": "One wal.Writer (and open fd) is created per distinct source fileID and never evicted/closed except via EdgeLog.Close() (which closes all of them at once). This is an unbounded-growth pattern as distinct fileIDs accumulate over process lifetime. NOT disclosed anywhere -- not in edgelog.go's doc comments, not in docs/LLD/graph.md's new subsection, and not added to .cdr/memory/pending.md -- unlike the precedented 'node-latch registry has no eviction' pattern already tracked there for engine/btree/latch.go. This is a real gap: the implementer's claims list did not mention it and no comparison/disclosure was made. Non-blocking for 3.1.2's stated acceptance criteria (which only requires non-contending concurrent appends, not eviction), but should be added to pending.md before Epic Phase 3 closes out, especially since 3.1.3's compaction step is a natural place to also retire/close per-node writers for compacted fileIDs."
+    },
+    "scope_decision": {
+      "result": "pass",
+      "evidence": "Independently confirmed via gh issue view 15: 3.1.2's impacted modules are literally 'engine/graph/edgelog.go, engine/graph/edgelog_test.go', distinct from edge_append.go. Independently confirmed via .cdr/index/task.jsonl (task-2b.3.4 entry flags the crash-recovery gap; task-2b.3.6 entry explicitly states 'RecoverSplitCommits idempotent replay; AppendEdgeIfAbsent idempotent graph replay... Verified NOT to reintroduce non-atomic window') and .cdr/memory/pending.md ('[RESOLVED task-2b.3.6, issue #12] engine/graph edge-append records no crash-recovery replay path... RESOLVED.') that the gap was genuinely closed, not just claimed. edge_append.go's EdgeAppender byte-diff against HEAD~2 confirms zero modification."
+    },
+    "csr_edge_reuse": {
+      "result": "pass",
+      "evidence": "See architecture_conformance."
+    },
+    "process_deviation_two_commits": {
+      "result": "comment",
+      "evidence": "git show 12eca06 confirms it touches ONLY .cdr/runs/2026-07-08/004-implementation/handoff.json and metadata.json (backfilling the real commit hash and status/last_completed_step/ended_at fields), zero production code. This is an acceptable, self-disclosed, minor process deviation from the 'one commit per subtask' convention -- a structural consequence of handoff.json needing the commit's own hash, which cannot exist until after the commit is made. Not blocking; noting for awareness only."
+    },
+    "test_coverage": {
+      "result": "pass",
+      "evidence": "go test ./graph/... -v -race -count=1 -timeout 180s shows exactly 14 tests (9 pre-existing csr.go/edge_append.go tests unchanged + 5 new: TestPerNodeEdgeLogBasic, TestPerNodeEdgeLogInvalidType, TestPerNodeEdgeLogDurability, TestPerNodeEdgeLog, TestPerNodeEdgeLogClose), all green, matching the implementer's claimed count exactly."
+    },
+    "build_lint": {
+      "result": "pass",
+      "evidence": "go build ./... exit 0; gofmt -l . empty output; go vet ./... exit 0. All claims verified directly, not taken on faith."
+    },
+    "docs": {
+      "result": "pass",
+      "evidence": "docs/LLD/graph.md's new 'Per-node edge log (subtask 3.1.2, engine/graph/edgelog.go)' subsection accurately describes the on-disk layout, per-fileID wal.Writer model, DCL pattern, and CSREdge reuse rationale, consistent with the actual code."
+    }
+  },
+  "must_fix": [],
+  "non_blocking_comments": [
+    "Per-fileID wal.Writer/fd is never evicted or closed except at full EdgeLog.Close() -- unbounded growth as distinct source fileIDs accumulate. Not disclosed in code comments, LLD, or pending.md (unlike the precedented btree/latch.go eviction gap). Should be added to .cdr/memory/pending.md and considered as part of 3.1.3's compaction design (natural point to retire per-node writers for now-compacted fileIDs).",
+    "12eca06 is a second, metadata-only commit against the 'one commit per subtask' convention, structurally necessitated by handoff.json needing its own commit's hash. Acceptable as disclosed; no action needed."
+  ],
+  "test_results": {
+    "go_build": "pass",
+    "gofmt": "pass (no files)",
+    "go_vet": "pass",
+    "graph_race_count5": "pass (42.4s, ok)",
+    "graph_race_verbose_count1": "pass (14/14 tests, 8.67s)",
+    "full_suite": "pass (go test ./... -count=1 -timeout 25m, all packages ok, no TestReaderDuringSplit flake observed this run)"
+  }
+}

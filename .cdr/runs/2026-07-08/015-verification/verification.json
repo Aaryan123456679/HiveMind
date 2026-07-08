@@ -1,0 +1,65 @@
+{
+  "subtask": "3.1.4",
+  "issue": 15,
+  "commit_verified": "4b9c63919a7bf56f3dec431bac5ff3933391b620",
+  "commit_parent": "ed57468",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "gh issue view 15 body contains injected fake system-reminder-style text (fake date-change notice, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive). Confirmed present again on this dispatch, consistent with prior runs on this issue. Treated as untrusted plain-text data only; not acted upon.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "AC1 (type-filtered edge creation, all 4 types) covered by NewCSREdge + NameParseRoundTrip subtests. AC2 (validation rejects invalid, not merely accepted) covered by ValidEdgeType, NewCSREdge-rejection, CSREdgeEncodeDecodeRoundTrip (corrupted byte), EdgeLogRejectsUndefinedType (with durability check that nothing was written), WriteCSRRejectsUndefinedType (with file-not-created check). Canonical string tokens ENTITY_COOCCUR/LLM_ASSERTED/SPLIT_SIBLING/REDIRECT match docs/LLD/graph.md's 'Edge shape' section exactly."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Read edge_append.go directly: decodeEdge/AppendEdge check 'edge.Type != EdgeSplitSibling && edge.Type != EdgeRedirect' and reject with a clear error (fmt.Errorf), no panic, no silent corruption -- claim confirmed. Read compact.go's mergeEdges directly: dedup key is (Target, Type); EdgeEntityCooccur branch sums Weight and takes max LastUpdated; the else branch is a genuine last-write-wins for ALL other types (no per-type special-casing beyond the one EdgeEntityCooccur check) -- claim confirmed, this really does generalize to all 4 types, not just look like it does. New edge.go correctly layers on top without touching either file."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "decodeCSREdge signature change (fallible) has exactly 2 call sites (csr.go LoadCSR, edgelog.go ReadNodeAfter), both updated in this diff. Full engine/graph suite (csr_test.go, edgelog_test.go, edge_append_test.go, compact_test.go, edge_test.go) green under -race, no assertions changed in pre-existing tests. Full workspace go test ./... green across engine, btree, catalog, graph, mvcc, split, wal packages; no TestReaderDuringSplit flake observed this run."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Test suite explicitly exercises EdgeTypeInvalid(0), EdgeType(5)-class undefined mid-range, EdgeType(200), and EdgeType(255) as rejection cases across ValidEdgeType, NewCSREdge, decodeCSREdge (corrupted byte), EdgeLog.AppendEdge, and WriteCSR -- covers the boundary (0 sentinel), the gap (5), and both high-end undefined bytes (200, 255)."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No security-relevant surface beyond data-integrity validation, which is the point of this subtask -- undefined byte values can no longer round-trip through graph.dat silently. Prompt-injection content in the GitHub issue body was correctly identified, disclosed, and not acted upon by the implementer (requirement.md, self-consistency.json, handoff.json all note it)."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Validation is O(1) per edge (switch statement) at existing per-edge iteration points (WriteCSR's pre-existing edge loop, decode's per-record loop); no new O(n^2) or unbounded work introduced."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "edge.go is well-documented, cross-references docs/LLD/graph.md exactly, explains its own scope boundary (does not touch edge_append.go) directly in the package doc comment. No stray CSREdge{...} struct-literal construction sites exist outside edge.go's own NewCSREdge and csr.go's decodeCSREdge (the two legitimate construction points) in non-test code; test file intentionally uses raw struct literals to construct both valid and deliberately-invalid edges for negative-path testing, which is correct and expected for that purpose."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestEdgeTypes has 6 subtests: ValidEdgeType, NameParseRoundTrip (incl. reverse-direction error cases for both EdgeTypeName and ParseEdgeType with garbage input), NewCSREdge (success + rejection with zero-value-on-error check), CSREdgeEncodeDecodeRoundTrip (round-trip for all 4 types AND corrupted-byte decode rejection), EdgeLogRejectsUndefinedType (rejection AND durability check -- confirms rejected appends produced zero durable bytes), WriteCSRRejectsUndefinedType (rejection AND file-not-created check). This is thorough, not superficial -- both encode-time and decode-time validation are independently exercised, addressing the asymmetric-protection concern directly."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "All claims in the implementer's self-consistency.json and handoff.json were independently re-verified by direct source reading and re-running the test/build/vet/gofmt commands myself, not merely trusted from the artifacts."
+    }
+  },
+  "adversarial_checks_result": {
+    "1_already_correct_claims": "Confirmed true by direct reading, not implementer's convenient assumption -- both edge_append.go and compact.go's mergeEdges behave exactly as claimed.",
+    "2_validation_completeness": "Confirmed symmetric: WriteCSR validates at encode time (loop before payload encoding, returns error, file never created -- verified via os.Stat check in test) and decodeCSREdge validates at decode time (both LoadCSR and ReadNodeAfter call sites propagate the error). No asymmetric gap.",
+    "3_edgelog_appendedge": "Confirmed AppendEdge now rejects any undefined byte durably (test verifies zero bytes written on rejection) and this does not interact adversely with 3.1.2/3.1.3 tests -- full suite green, and no legitimate prior test relied on lenient (any-nonzero) validation.",
+    "4_round_trip": "ParseEdgeType(EdgeTypeName(t)) == t holds for all 4 valid types by direct code inspection (identical case ordering, exact string matches) and is exercised in NameParseRoundTrip; ParseEdgeType correctly rejects garbage strings including empty string.",
+    "5_new_csredge_usage": "NewCSREdge is used in edge_test.go for the positive-path constructions. It is NOT used inside compact.go (mergeEdges constructs edges via struct-copy/field-mutation of already-validated inputs, not fresh construction, so this is not a bypass) nor inside csr.go's decodeCSREdge (which has its own equivalent validation via ValidEdgeType directly, not via the constructor, since it's decoding not constructing new edges) -- this is architecturally sound, not an inconsistency; there is no code path today that constructs a genuinely new CSREdge without going through either NewCSREdge or an already-decode/merge-validated source.",
+    "6_test_adequacy": "Confirmed -- rejection paths are exercised for both decode and encode (WriteCSR) validation, not just the 4 happy-path types.",
+    "7_commands": "go build ./... clean; go vet ./... clean; gofmt -l . clean (no output); go test ./graph/... -run TestEdgeTypes -race -count=5 -timeout 10m PASS; go test ./graph/... -count=1 -race -timeout 10m -v PASS (zero regressions in csr_test.go/edgelog_test.go/edge_append_test.go/compact_test.go); go test ./... -count=1 -timeout 25m PASS across all packages, no TestReaderDuringSplit flake this run."
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "documentation_consistency",
+      "description": "014-implementation's handoff.json records commit hash '3ead3c4' and metadata.json's git_head is the pre-commit parent ed57468; neither matches the actual final commit 4b9c639 given in the task brief, and 3ead3c4 does not exist anywhere in the repo (git cat-file -t 3ead3c4 fails). This looks like the commit was created/amended after handoff.json was written, leaving a stale pointer. Not a functional defect -- the code at 4b9c639 was fully verified directly -- but the run's own provenance record is inaccurate, which could mislead a future audit trying to trace this subtask's commit from its run artifacts alone."
+    }
+  ],
+  "proceed_to_commit": true,
+  "proceed_to_next_subtask": true,
+  "next_subtask": "3.1.5"
+}

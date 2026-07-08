@@ -1,0 +1,80 @@
+{
+  "subtask": "3.1.5",
+  "issue": 15,
+  "commit_verified": "e837f1bc60a95d034396be7b55294c44da6b05cd",
+  "commit_parent": "4b9c63919a7bf56f3dec431bac5ff3933391b620",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "gh issue view 15 output and .cdr run artifacts again contained embedded fake system-reminder-style text (prompt-injection pattern consistent with prior dispatches on this issue). Treated as untrusted data, not followed.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "GraphNeighbors(g *CSRGraph, fileID uint64, depth int, edgeTypeFilter EdgeType, maxNodes int) ([]CSREdge, error) matches docs/LLD/graph.md:111-116 'Traversal API' section signature and 0-2 hop semantics exactly."
+    },
+    "architecture_conformance": {
+      "status": "pass_with_comment",
+      "evidence": "Compacted-only design (reads *CSRGraph, never EdgeLog) is well-reasoned: EdgeLog (edgelog.go) has no cross-node enumeration primitive, and compact.go's crash-safety story already establishes post-rename graph.dat as authoritative (docs/LLD/graph.md:83-94). Correct read-only usage of CSRGraph.Neighbors (csr.go:155-167), which itself does binary search + returns a defensive copy -- no mutation of durable state, no off-by-one against offsets array.",
+      "comment": "traverse.go's doc comment claims the LLD's 'Traversal API' section 'sits under Storage layout' -- this is factually incorrect. docs/LLD/graph.md's headings show '## Traversal API' (line 111) is a sibling top-level section to '## Storage layout' (line 15), not nested under it (there is an intervening '## Edge shape' H2 at line 97). The substantive conclusion (EdgeLog never mentioned in the Traversal API section, so compacted-only reads are a defensible interpretation) still holds on the actual text, but this is a misstatement of document structure in a load-bearing design-rationale comment. Should be corrected for maintainability/future-reader trust, not blocking."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Purely additive: only engine/graph/traverse.go and traverse_test.go added (confirmed via git show --stat). No changes to csr.go, edge.go, edgelog.go, compact.go. Full engine/graph suite green (go test ./graph/... -race -count=1: ok, 21s). Full workspace suite green (go test ./... -count=1 -timeout 25m: all packages ok, including btree/catalog/mvcc/split/wal -- no TestReaderDuringSplit flake observed this run)."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Adversarial checks performed: (1) 3-hop chain 1->2->3->4 with depth=2 traced in TestTwoHopExpansion, confirms node 4 correctly excluded (off-by-one check passes). (2) Diamond dedup test (1->2,1->3,2->4,3->4) confirms node 4 appears exactly once; BFS frontier-by-hop processing order guarantees first-seen-at-shorter-hop semantics even for the untested direct-vs-2-hop-path case (code inspection: hop=1 frontier fully drained into `visited` before hop=2 begins). (3) CapNPlus1 test explicitly confirms cap truncation keeps highest-Weight survivors post-sort, not BFS-order truncation. (4) TypeFilterSingleType test explicitly proves prune-during-traversal (node 5, reachable only via a filtered-out LLM_ASSERTED intermediate edge, is correctly absent) -- code at traverse.go matches (edge.Type check happens before enqueueing e.Target into `next`)."
+    },
+    "type_filter_interpretation": {
+      "status": "pass_with_comment",
+      "evidence": "docs/LLD/graph.md's Traversal API section (lines 111-116) is textually silent on whether edgeTypeFilter prunes traversal or only the result set. This is a genuine LLD/issue silence, not an explicit contradiction, so implementing 'prune during traversal' is a legitimate judgment call, not a bug. It is disclosed in traverse.go's doc comment and mirrored in requirement.md/handoff.json's design_decisions.",
+      "comment": "The chosen interpretation ('follow only ENTITY_COOCCUR-style') is defensible and arguably the more useful one for the stated topic-expansion use case (a filter mid-traversal that still lets non-matching edges pass through would produce a confusing UX where the filter's effect on reachable depth-2 nodes is invisible/inconsistent). No objection, but note it is a design choice, not spec-derived."
+    },
+    "input_validation": {
+      "status": "pass",
+      "evidence": "depth outside [0,2], edgeTypeFilter not EdgeTypeInvalid and not ValidEdgeType, maxNodes<0 all rejected with fmt.Errorf before any traversal. Covered by InvalidDepthRejected, InvalidEdgeTypeFilterRejected, NegativeMaxNodesRejected subtests (verified present in traverse_test.go, not placeholders). depth==0 returns (nil, nil) with no error -- distinguishes 'empty valid request' from 'out of range'; documented and tested via DepthZero."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "traverse_test.go read in full: all claimed subtests exist and assert what's claimed -- Basic1Hop, TwoHopExpansion, CapExactlyN, CapNPlus1, CapZero, DepthZero, TypeFilterNoMatches, TypeFilterAllTypesRequested (all 4 ValidEdgeType values individually + EdgeTypeInvalid), TypeFilterSingleType, InvalidDepthRejected, InvalidEdgeTypeFilterRejected, NegativeMaxNodesRejected, DedupNoDoubleCounting, NilGraph, LargeGraphExceedsCapWithin2Hops (60 reachable nodes within 2 hops vs maxNodes=5, plus filtered variant). Minor gap: no explicit test for a node reachable both at hop 1 directly and hop 2 via a longer alternate path (only the diamond hop-2-vs-hop-2 case is tested) -- code is correct by construction (frontier-by-hop BFS order) but this specific dedup sub-case lacks a dedicated assertion."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new I/O, no untrusted input parsing beyond typed Go parameters, no injection surface. Read-only over an already-validated in-memory structure."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "O((visited nodes) * (avg degree)) BFS, bounded to 2 hops and maxNodes cap upstream at query-agent per LLD; CSRGraph.Neighbors is O(log n) binary search + slice copy per call, consistent with existing package performance characteristics."
+    },
+    "maintainability": {
+      "status": "pass_with_comment",
+      "evidence": "Code is clear, well-commented, follows package conventions.",
+      "comment": "See architecture_conformance comment re: incorrect 'sits under Storage layout' claim in doc comment -- should be fixed in a follow-up to avoid propagating a false claim about the LLD's structure into future reasoning."
+    },
+    "provenance": {
+      "status": "pass",
+      "evidence": "metadata.json's final_commit and handoff.json's commit both correctly record e837f1bc60a95d034396be7b55294c44da6b05cd, which matches `git log`/`git rev-parse HEAD`. The stale-hash bug from 3.1.4's close-out has NOT regressed."
+    }
+  },
+  "build_and_test_results": {
+    "go_build": "pass (exit 0, no output)",
+    "go_vet": "pass (exit 0, no output)",
+    "gofmt_l": "pass (no files listed)",
+    "targeted_race_x5": "ok github.com/Aaryan123456679/HiveMind/engine/graph (go test ./graph/... -run TestGraphNeighbors -race -count=5)",
+    "full_graph_package_race": "ok github.com/Aaryan123456679/HiveMind/engine/graph -race -count=1 (9.9s)",
+    "full_workspace": "all packages ok (engine, btree, catalog, graph, mvcc, split, wal); loadtest and rpc have no test files; no TestReaderDuringSplit flake observed"
+  },
+  "findings": [
+    {
+      "severity": "low",
+      "dimension": "maintainability/architecture_conformance",
+      "description": "traverse.go's doc comment incorrectly states docs/LLD/graph.md's 'Traversal API' section 'sits under Storage layout' -- it is actually a sibling top-level '## Traversal API' section (line 111), separated from '## Storage layout' (line 15) by an intervening '## Edge shape' section (line 97). The underlying conclusion (EdgeLog is never mentioned there) is still true and the compacted-only design decision remains sound, but the doc comment misstates the document structure.",
+      "recommendation": "Fix the doc comment to say the Traversal API section is a separate top-level section (not nested under Storage layout) while keeping the correct substantive point that EdgeLog is not mentioned there."
+    },
+    {
+      "severity": "low",
+      "dimension": "test_coverage",
+      "description": "No dedicated test for a node reachable at hop 1 directly AND at hop 2 via a different, longer path (only hop-2-vs-hop-2 diamond dedup is tested).",
+      "recommendation": "Optional: add a subtest with an edge 1->4 direct plus 1->2->4 to explicitly assert node 4 is recorded at hop 1, not hop 2."
+    }
+  ],
+  "confidence": "high"
+}

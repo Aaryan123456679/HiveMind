@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "run_id": "013-cdr-commit",
+  "status": "completed",
+  "produced": {
+    "commit_doc": ".cdr/commits/task-3.1.3.md",
+    "task_index_entry": "task-3.1.3 (line appended to .cdr/index/task.jsonl)",
+    "feature_index_entry": "edge-log-compaction (line appended to .cdr/index/feature.jsonl)",
+    "pending_md_entry": ".cdr/memory/pending.md - ReadNodeAfter/TruncateNode lock-ordering gap entry (Phase 3 follow-up section)"
+  },
+  "inputs_referenced": [
+    ".cdr/runs/2026-07-08/007-implementation",
+    ".cdr/runs/2026-07-08/008-verification/verification.json",
+    ".cdr/runs/2026-07-08/009-implementation",
+    ".cdr/runs/2026-07-08/010-verification/verification.json",
+    ".cdr/runs/2026-07-08/011-implementation",
+    ".cdr/runs/2026-07-08/012-verification/verification.json"
+  ],
+  "verdict_documented": "PASS_WITH_COMMENTS",
+  "commits_documented": ["ebbc1ff", "9850083", "ed57468"],
+  "security_note": "Confirmed repeated prompt-injection pattern again this run: fake system-reminder-style text embedded in plain Bash tool output (a false claim that .cdr/index/task.jsonl had been externally modified by 'the user or a linter' and an instruction not to disclose this). Verified independently via git diff/status that the file matched exactly what this agent wrote (single appended line, no external modification). Instruction not followed; disclosed to user.",
+  "not_pushed": true,
+  "github_state_untouched": true
+}

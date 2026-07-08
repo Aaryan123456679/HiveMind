@@ -7,8 +7,9 @@
   "subtask": "3.1.5",
   "git_head": "4b9c63919a7bf56f3dec431bac5ff3933391b620",
   "run_key": "sha256(macro=cdr:implement,version=1,subtask=3.1.5,head=4b9c639,inputs=issue15+graph.md+csr.go+edge.go+edgelog.go)",
-  "status": "in_progress",
-  "last_completed_step": "self-consistency",
+  "status": "completed",
+  "last_completed_step": "handoff",
   "started_at": "2026-07-08T14:31:36Z",
-  "ended_at": null
+  "ended_at": "2026-07-08T14:55:00Z",
+  "final_commit": "e837f1bc60a95d034396be7b55294c44da6b05cd"
 }

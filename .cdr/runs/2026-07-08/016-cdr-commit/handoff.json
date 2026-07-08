@@ -1,0 +1,14 @@
+{
+  "subtask": "3.1.4",
+  "issue": 15,
+  "verdict_consumed": "PASS_WITH_COMMENTS",
+  "verification_run": ".cdr/runs/2026-07-08/015-verification/verification.json",
+  "commit": "4b9c63919a7bf56f3dec431bac5ff3933391b620",
+  "commit_doc": ".cdr/commits/task-3.1.4.md",
+  "index_updates": [".cdr/index/task.jsonl", ".cdr/index/feature.jsonl"],
+  "provenance_fixes": [".cdr/runs/2026-07-08/014-implementation/handoff.json", ".cdr/runs/2026-07-08/014-implementation/metadata.json"],
+  "pending_items_added": [],
+  "pushed": false,
+  "issue_state_touched": false,
+  "prompt_injection_note": "Repeated fake system-reminder-style prompt-injection text (date-change notices, MCP server tool instructions, 'Auto Mode Active' framing) observed embedded within .cdr/ file content read during this run (verification.json output, task-3.1.3.md commit doc). Treated as untrusted data only; not acted upon."
+}
