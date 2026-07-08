@@ -1,0 +1,23 @@
+{
+  "subtask": "3.1.5",
+  "note": "Internal sanity only (build green, matrix covered). This is NOT verification (invariant I4) - a separate agent independently verifies.",
+  "checks": [
+    {"cmd": "gofmt -l .", "cwd": "engine", "result": "clean, no output"},
+    {"cmd": "go vet ./...", "cwd": "engine", "result": "clean"},
+    {"cmd": "go build ./...", "cwd": "engine", "result": "clean"},
+    {"cmd": "go test ./graph/... -race -run TestGraphNeighbors -timeout 120s -v", "cwd": "engine", "result": "PASS, all 16 subtests green"},
+    {"cmd": "go test ./graph/... -race -timeout 180s -v", "cwd": "engine", "result": "PASS, full package suite green, no regressions (ok, 10.127s)"}
+  ],
+  "validation_matrix_coverage": {
+    "AC1-neighbor-lookup": "covered",
+    "AC2-multi-hop-0-2": "covered",
+    "AC3-edge-type-filter": "covered",
+    "AC4-cap-maxNodes": "covered",
+    "AC5-dedup": "covered",
+    "AC6-input-validation": "covered",
+    "AC7-compacted-only-design": "covered (signature inspection: GraphNeighbors(g *CSRGraph, ...) - no EdgeLog parameter)",
+    "AC8-no-regression": "covered"
+  },
+  "design_note_discovered_during_implementation": "The type filter prunes traversal itself (edges of a non-matching type are never followed), not just the final result set - a node reachable only through a non-matching intermediate edge is unreachable under that filter. This was surfaced by an initial test-fixture mismatch (a 2-hop LLM_ASSERTED-only target reachable solely via an EdgeEntityCooccur hop-1 edge returned empty under an EdgeLLMAsserted filter) and is now explicitly documented in traverse.go's GraphNeighbors doc comment and exercised directly by TestGraphNeighbors/TypeFilterSingleType and /LargeGraphExceedsCapWithin2Hops.",
+  "not_verified_by_this_agent": true
+}

@@ -1,0 +1,45 @@
+{
+  "subtask": "3.1.5",
+  "criteria": [
+    {
+      "id": "AC1-neighbor-lookup",
+      "description": "GraphNeighbors returns a source fileID's neighbors from the compacted CSR graph.dat",
+      "check": "engine/graph/traverse_test.go:TestGraphNeighbors/Basic1Hop"
+    },
+    {
+      "id": "AC2-multi-hop-0-2",
+      "description": "0-2 hop traversal semantics: depth=0 empty, depth=1 direct only, depth=2 expands one more hop, never beyond depth",
+      "check": "engine/graph/traverse_test.go:TestGraphNeighbors/DepthZero, /Basic1Hop, /TwoHopExpansion"
+    },
+    {
+      "id": "AC3-edge-type-filter",
+      "description": "Traversal respects an edge-type filter built on 3.1.4's ValidEdgeType/EdgeTypeName/ParseEdgeType",
+      "check": "engine/graph/traverse_test.go:TestGraphNeighbors/TypeFilterNoMatches, /TypeFilterAllTypesRequested, /TypeFilterSingleType"
+    },
+    {
+      "id": "AC4-cap-maxNodes",
+      "description": "Result size hard-capped at maxNodes when reachable-node count exceeds it",
+      "check": "engine/graph/traverse_test.go:TestGraphNeighbors/CapExactlyN, /CapNPlus1, /CapZero, /LargeGraphExceedsCapWithin2Hops (literal issue test-spec wording: >maxNodes reachable within 2 hops)"
+    },
+    {
+      "id": "AC5-dedup",
+      "description": "A node reachable via multiple BFS paths is never double-counted",
+      "check": "engine/graph/traverse_test.go:TestGraphNeighbors/DedupNoDoubleCounting"
+    },
+    {
+      "id": "AC6-input-validation",
+      "description": "Invalid depth (<0 or >2), invalid edgeTypeFilter (undefined byte), negative maxNodes all rejected with an error rather than silently misbehaving",
+      "check": "engine/graph/traverse_test.go:TestGraphNeighbors/InvalidDepthRejected, /InvalidEdgeTypeFilterRejected, /NegativeMaxNodesRejected"
+    },
+    {
+      "id": "AC7-compacted-only-design",
+      "description": "GraphNeighbors reads only the compacted CSRGraph (no EdgeLog merge) - documented design decision, not directly testable as an absence, verified by code review of traverse.go's signature/body (takes *CSRGraph, no *EdgeLog parameter)",
+      "check": "engine/graph/traverse.go signature inspection + requirement.md design-question section"
+    },
+    {
+      "id": "AC8-no-regression",
+      "description": "Full package suite remains green after adding traverse.go",
+      "check": "go test ./engine/graph/... -race -timeout 180s"
+    }
+  ]
+}

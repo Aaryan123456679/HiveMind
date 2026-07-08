@@ -1,0 +1,27 @@
+{
+  "subtask": "3.1.5",
+  "affected_files": [
+    {"path": "engine/graph/traverse.go", "type": "new", "reason": "GraphNeighbors BFS traversal API"},
+    {"path": "engine/graph/traverse_test.go", "type": "new", "reason": "TestGraphNeighbors + boundary-condition subtests"}
+  ],
+  "unmodified_dependencies_consumed": [
+    {"path": "engine/graph/csr.go", "symbols": ["CSRGraph", "CSRGraph.Neighbors", "CSREdge"]},
+    {"path": "engine/graph/edge.go", "symbols": ["EdgeType", "EdgeTypeInvalid", "ValidEdgeType"]}
+  ],
+  "contracts": [
+    {
+      "new_symbol": "GraphNeighbors(g *CSRGraph, fileID uint64, depth int, edgeTypeFilter EdgeType, maxNodes int) ([]CSREdge, error)",
+      "package": "engine/graph",
+      "breaking": false,
+      "consumers_today": "none in-repo yet (query-agent, agents/query/, is a future milestone per docs/LLD/graph.md's 'Interactions with other modules' section; not implemented yet)"
+    }
+  ],
+  "dependents": [],
+  "risk_level": "low",
+  "risk_rationale": "Purely additive new read-only file; does not modify csr.go, edge.go, edgelog.go, or compact.go. No concurrency surface of its own (CSRGraph is immutable once built/loaded, per csr.go's own doc comment) so no new lock-ordering seam is introduced, unlike 3.1.2/3.1.3's edge-log/compaction interaction which produced this package's two prior severe bugs. Primary risk is purely in traversal-logic correctness (BFS dedup, cap truncation, ordering) rather than durability/crash-safety, since this subtask never writes to disk.",
+  "out_of_scope": [
+    "No change to csr.go, edge.go, edgelog.go, compact.go, edge_append.go.",
+    "No merge of not-yet-compacted EdgeLog entries into traversal results (see requirement.md's resolved design question) - deliberately deferred/rejected, not a gap.",
+    "No wiring into agents/query/ (query-agent) - that consumer does not exist yet in this repo per docs/LLD/graph.md; out of scope for this subtask's Impacted modules list (engine/graph/traverse.go, engine/graph/traverse_test.go only)."
+  ]
+}
