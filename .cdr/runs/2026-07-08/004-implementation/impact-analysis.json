@@ -1,0 +1,47 @@
+{
+  "affected_files": [
+    {
+      "path": "engine/graph/edgelog.go",
+      "change": "new file",
+      "purpose": "EdgeLog: manager of per-source-fileID append-only edge logs, each backed by its own engine/wal.Writer instance, so concurrent appends to different fileIDs never contend on a shared lock."
+    },
+    {
+      "path": "engine/graph/edgelog_test.go",
+      "change": "new file",
+      "purpose": "TestPerNodeEdgeLog (-race): concurrent appenders across many distinct fileIDs; correctness + non-blocking checks. Plus supporting unit tests (open/close, invalid type rejection, multi-segment read-back)."
+    },
+    {
+      "path": "docs/LLD/graph.md",
+      "change": "edit",
+      "purpose": "Document 3.1.2's edgelog.go design under the existing 'per-node edge log' bullet, mirroring 3.1.1's CSR subsection style."
+    }
+  ],
+  "modules_not_touched": [
+    "engine/graph/edge_append.go (EdgeAppender, task-2b.3.4) - deliberately left untouched, distinct narrower mechanism for split edges; scope decision documented in architecture-discovery.md",
+    "engine/graph/csr.go (task-3.1.1) - read-only reuse of CSREdge type, no modification",
+    "engine/split/execute.go - no change; still uses EdgeAppender, not affected by this subtask"
+  ],
+  "dependents": [
+    "3.1.3 (compaction, future subtask) will read EdgeLog contents and merge into CSR array",
+    "engine/agents/ingestion (future, not yet built) will be the primary writer once implemented"
+  ],
+  "contracts": {
+    "new_exported_symbols": [
+      "graph.EdgeLog struct",
+      "graph.OpenEdgeLog(root string) (*EdgeLog, error)",
+      "graph.(*EdgeLog).AppendEdge(sourceFileID uint64, edge CSREdge) error",
+      "graph.(*EdgeLog).ReadNode(sourceFileID uint64) ([]CSREdge, error)",
+      "graph.(*EdgeLog).Close() error"
+    ],
+    "reused_types": [
+      "graph.CSREdge (from csr.go, unmodified) - reused verbatim as the per-node log entry shape",
+      "engine/wal.Writer / wal.OpenWriter / wal.ReadSegment (unmodified) - same low-level segment-writer primitive edge_append.go already uses"
+    ]
+  },
+  "risk_level": "low",
+  "risk_notes": [
+    "New, additive package-internal code; no existing exported API changed.",
+    "Concurrency-relevant: requires -race testing per mandate.",
+    "Directory-per-fileID layout means large numbers of distinct fileIDs create many small directories/files - acceptable for this subtask's scope (compaction, 3.1.3, is the mechanism that bounds long-term growth), flagged as a forward-looking note only, not a blocking concern here."
+  ]
+}

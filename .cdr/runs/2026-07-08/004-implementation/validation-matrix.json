@@ -1,0 +1,28 @@
+{
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "Concurrent edge appends to different source fileIDs never block each other because each writes to its own per-node log rather than a shared array.",
+      "planned_check": "TestPerNodeEdgeLog: many goroutines, each targeting a distinct fileID, appending concurrently under -race; assert correctness of per-node contents plus a soft timing-based non-blocking proxy check (concurrent wall time << serial-equivalent time).",
+      "status": "planned"
+    },
+    {
+      "id": "AC2",
+      "description": "Each fileID writes to its own per-node log (not a shared array).",
+      "planned_check": "TestPerNodeEdgeLogBasic: append to 2-3 distinct fileIDs, assert on-disk directory-per-fileID layout and zero cross-contamination when reading each node's log back independently.",
+      "status": "planned"
+    },
+    {
+      "id": "TEST_SPEC",
+      "description": "go test ./engine/graph/... -race -run TestPerNodeEdgeLog",
+      "planned_check": "Exact command run during self-consistency step with -timeout, output captured.",
+      "status": "planned"
+    },
+    {
+      "id": "GO_DISCIPLINE",
+      "description": "gofmt/go vet/go build clean; -race on concurrency-relevant test; explicit -timeout on every go test invocation.",
+      "planned_check": "gofmt -l engine/graph, go vet ./..., go build ./..., go test ./engine/graph/... -race -timeout 120s",
+      "status": "planned"
+    }
+  ]
+}

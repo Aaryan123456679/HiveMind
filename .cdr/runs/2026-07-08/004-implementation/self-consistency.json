@@ -1,0 +1,16 @@
+{
+  "note": "Internal sanity only (build green + matrix coverage). This is NOT verification (invariant I4) - a separate verification agent must independently verify.",
+  "checks": [
+    {"cmd": "gofmt -l engine/graph", "result": "clean, no output"},
+    {"cmd": "go vet ./...", "result": "clean, no output"},
+    {"cmd": "go build ./...", "result": "clean, no output"},
+    {"cmd": "go test ./graph/... -race -run TestPerNodeEdgeLog -v -timeout 120s", "result": "PASS - all 5 edgelog tests, including required TestPerNodeEdgeLog, race-clean"},
+    {"cmd": "go test ./graph/... -race -timeout 180s -v", "result": "PASS - full engine/graph package suite (14 tests: 5 CSR, 4 edge_append, 5 edgelog), race-clean"}
+  ],
+  "validation_matrix_status": {
+    "AC1": "covered - TestPerNodeEdgeLog",
+    "AC2": "covered - TestPerNodeEdgeLogBasic",
+    "TEST_SPEC": "covered - exact command run, PASS",
+    "GO_DISCIPLINE": "covered - gofmt/vet/build clean, -race used, all go test invocations have explicit -timeout"
+  }
+}

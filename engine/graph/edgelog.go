@@ -1,0 +1,222 @@
+// Package graph (this file): subtask 3.1.2's append-only, per-node edge log writer.
+//
+// This is a distinct mechanism from both existing files in this package:
+//
+//   - edge_append.go's EdgeAppender (task-2b.3.4, issue #12) is a single, shared
+//     append-only log rooted at one directory, used narrowly by engine/split/execute.go
+//     to durably record SPLIT_SIBLING/REDIRECT edges as part of the atomic split-commit
+//     WAL transaction. Its crash-recovery-replay gap was resolved by task-2b.3.6 (see
+//     .cdr/memory/pending.md); this subtask does not touch or supersede it.
+//   - csr.go's CSRGraph/WriteCSR/LoadCSR (task-3.1.1) is a whole-snapshot, read-optimized
+//     format for graph.dat, only ever rewritten wholesale.
+//
+// EdgeLog is the general, durable landing zone for newly discovered edges of *any* type
+// (ENTITY_COOCCUR with weight, LLM_ASSERTED, and future split edges), organized as one
+// append-only log per source fileID rather than one shared array/log. This is what lets
+// concurrent writers touching different fileIDs (e.g. two ingestion workers processing
+// different files at once) proceed without contending on a shared lock: each source
+// fileID gets its own engine/wal.Writer instance, and wal.Writer already guards its own
+// state with its own internal mutex. A later subtask (3.1.3) periodically compacts the
+// accumulated per-node log entries into csr.go's CSR array, merging/weight-incrementing
+// as needed; that compaction step is out of scope here. Edge-type creation/validation
+// support beyond rejecting the invalid zero-value sentinel is subtask 3.1.4's job
+// (engine/graph/edge.go) - this file only persists and reads back whatever CSREdge values
+// it is given, reusing that type verbatim since it already has exactly the entry shape
+// docs/LLD/graph.md specifies ({targetFileID, edgeType, weight, lastUpdated}).
+//
+// On-disk layout: <root>/<sourceFileID>/wal-<N>.log, one such directory per source
+// fileID that has ever had an edge appended, using engine/wal's own segment-rotation and
+// naming convention (mirrors edge_append.go's use of the same primitive, but with N
+// per-node directories instead of one shared directory).
+package graph
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+
+	"github.com/Aaryan123456679/HiveMind/engine/wal"
+)
+
+// EdgeLog manages a collection of per-source-fileID append-only edge logs rooted at a
+// single base directory. Each source fileID gets its own subdirectory and its own
+// engine/wal.Writer instance, so concurrent AppendEdge calls for different fileIDs never
+// contend on a shared lock. AppendEdge calls for the *same* fileID are serialized by that
+// fileID's own wal.Writer (matching "per-node log" semantics: a single node's log is
+// still an ordered, single-writer-at-a-time append log).
+//
+// EdgeLog is safe for concurrent use by multiple goroutines.
+type EdgeLog struct {
+	root string
+
+	mu      sync.RWMutex
+	writers map[uint64]*wal.Writer
+}
+
+// OpenEdgeLog opens (creating if necessary) an EdgeLog rooted at root. Per-node
+// subdirectories and their underlying wal.Writer instances are opened lazily, on first
+// AppendEdge/ReadNode call for that fileID, rather than eagerly enumerating every
+// pre-existing per-node subdirectory - this keeps OpenEdgeLog itself O(1) regardless of
+// how many distinct fileIDs already have logs under root.
+func OpenEdgeLog(root string) (*EdgeLog, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, fmt.Errorf("graph: creating edge log root %s: %w", root, err)
+	}
+	return &EdgeLog{
+		root:    root,
+		writers: make(map[uint64]*wal.Writer),
+	}, nil
+}
+
+// nodeDir returns the per-node subdirectory path for sourceFileID's edge log.
+func (l *EdgeLog) nodeDir(sourceFileID uint64) string {
+	return filepath.Join(l.root, strconv.FormatUint(sourceFileID, 10))
+}
+
+// getOrOpenWriter returns the wal.Writer for sourceFileID's per-node log, opening it (and
+// its subdirectory) on first use. The common case - the writer already exists - only
+// takes a brief RLock, so distinct, already-opened per-node logs do not contend with each
+// other on this manager-level lock either.
+func (l *EdgeLog) getOrOpenWriter(sourceFileID uint64) (*wal.Writer, error) {
+	l.mu.RLock()
+	w, ok := l.writers[sourceFileID]
+	l.mu.RUnlock()
+	if ok {
+		return w, nil
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// Re-check under the write lock: another goroutine may have opened this fileID's
+	// writer between our RUnlock above and taking the write lock here.
+	if w, ok := l.writers[sourceFileID]; ok {
+		return w, nil
+	}
+
+	dir := l.nodeDir(sourceFileID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("graph: creating edge log node dir %s: %w", dir, err)
+	}
+	w, err := wal.OpenWriter(dir, defaultMaxSegmentBytes)
+	if err != nil {
+		return nil, fmt.Errorf("graph: opening per-node edge log at %s: %w", dir, err)
+	}
+	l.writers[sourceFileID] = w
+	return w, nil
+}
+
+// AppendEdge durably appends edge to sourceFileID's own per-node log, fsyncing before it
+// returns (the same durability guarantee wal.Writer already provides catalog/btree
+// mutations and edge_append.go's EdgeAppender). It returns an error if edge.Type is the
+// EdgeTypeInvalid zero-value sentinel; no other type validation is performed here (that
+// is subtask 3.1.4's job - see this file's package doc comment).
+func (l *EdgeLog) AppendEdge(sourceFileID uint64, edge CSREdge) error {
+	if edge.Type == EdgeTypeInvalid {
+		return fmt.Errorf("graph: cannot append edge with invalid type %v", edge.Type)
+	}
+	w, err := l.getOrOpenWriter(sourceFileID)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, csrEdgeEncodedSize)
+	edge.encode(buf)
+	if _, err := w.Append(buf); err != nil {
+		return fmt.Errorf("graph: appending edge to node %d's log: %w", sourceFileID, err)
+	}
+	return nil
+}
+
+// ReadNode reads back every edge previously durably appended to sourceFileID's per-node
+// log (across all its segment files, in on-disk append order). It returns a nil slice,
+// nil error if sourceFileID has no log yet (never had an edge appended). ReadNode is not
+// a general query API: no filtering, indexing, or cross-node lookup is provided (that is
+// deferred to compaction, 3.1.3, and the traversal API, 3.1.5).
+func (l *EdgeLog) ReadNode(sourceFileID uint64) ([]CSREdge, error) {
+	dir := l.nodeDir(sourceFileID)
+	segmentPaths, err := listWALSegments(dir)
+	if err != nil {
+		return nil, err
+	}
+	var edges []CSREdge
+	for _, path := range segmentPaths {
+		records, err := wal.ReadSegment(path)
+		if err != nil {
+			return nil, fmt.Errorf("graph: reading edge log segment %s: %w", path, err)
+		}
+		for _, rec := range records {
+			if len(rec) != csrEdgeEncodedSize {
+				return nil, fmt.Errorf("graph: edge log segment %s has malformed record of %d bytes, want %d", path, len(rec), csrEdgeEncodedSize)
+			}
+			edges = append(edges, decodeCSREdge(rec))
+		}
+	}
+	return edges, nil
+}
+
+// Close closes every currently-open per-node wal.Writer this EdgeLog has opened,
+// collecting and returning any errors encountered along the way (via errors.Join) rather
+// than stopping at the first failure, so a single stuck writer does not prevent the
+// others from being closed cleanly.
+func (l *EdgeLog) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var errs []error
+	for fileID, w := range l.writers {
+		if err := w.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("graph: closing edge log for node %d: %w", fileID, err))
+		}
+	}
+	l.writers = make(map[uint64]*wal.Writer)
+	return errors.Join(errs...)
+}
+
+// listWALSegments returns dir's "wal-<N>.log" segment file paths, sorted ascending by
+// segment number, matching engine/wal's own segment-file naming convention. It returns
+// (nil, nil) if dir does not exist (i.e. sourceFileID has never had an edge appended).
+//
+// This intentionally duplicates edge_append.go's listEdgeSegments logic rather than
+// factoring out a shared helper: edge_append.go (task-2b.3.4, issue #12) is left
+// completely untouched by this subtask, matching 3.1.1's own precedent, so its behavior
+// cannot be accidentally affected by a change made here.
+func listWALSegments(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("graph: listing edge log dir %s: %w", dir, err)
+	}
+
+	type numberedSegment struct {
+		num  int
+		path string
+	}
+	var segments []numberedSegment
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "wal-") || !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		numStr := strings.TrimSuffix(strings.TrimPrefix(name, "wal-"), ".log")
+		num, err := strconv.Atoi(numStr)
+		if err != nil {
+			continue
+		}
+		segments = append(segments, numberedSegment{num: num, path: filepath.Join(dir, name)})
+	}
+	sort.Slice(segments, func(i, j int) bool { return segments[i].num < segments[j].num })
+
+	paths := make([]string, len(segments))
+	for i, s := range segments {
+		paths[i] = s.path
+	}
+	return paths, nil
+}

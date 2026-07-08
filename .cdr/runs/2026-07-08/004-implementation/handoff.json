@@ -1,0 +1,40 @@
+{
+  "subtask": "task-3.1.2",
+  "issue": 15,
+  "status": "implemented_pending_verification",
+  "commit": "PENDING_FILL_AFTER_COMMIT",
+  "new_files": [
+    "engine/graph/edgelog.go",
+    "engine/graph/edgelog_test.go"
+  ],
+  "modified_files": [
+    "docs/LLD/graph.md"
+  ],
+  "untouched_by_design": [
+    "engine/graph/edge_append.go"
+  ],
+  "acceptance_criteria": [
+    "Concurrent edge appends to different source fileIDs never block each other because each writes to its own per-node log rather than a shared array."
+  ],
+  "test_spec": "go test ./engine/graph/... -race -run TestPerNodeEdgeLog -timeout 120s",
+  "key_symbols": {
+    "EdgeLog": "engine/graph/edgelog.go",
+    "OpenEdgeLog": "engine/graph/edgelog.go",
+    "EdgeLog.AppendEdge": "engine/graph/edgelog.go",
+    "EdgeLog.ReadNode": "engine/graph/edgelog.go",
+    "EdgeLog.Close": "engine/graph/edgelog.go",
+    "listWALSegments": "engine/graph/edgelog.go (local helper, deliberately duplicates edge_append.go's listEdgeSegments rather than modifying that file)"
+  },
+  "tests_added": [
+    "TestPerNodeEdgeLogBasic",
+    "TestPerNodeEdgeLogInvalidType",
+    "TestPerNodeEdgeLogDurability",
+    "TestPerNodeEdgeLog (required by issue #15, -race)",
+    "TestPerNodeEdgeLogClose"
+  ],
+  "self_consistency_run": ".cdr/runs/2026-07-08/004-implementation/self-consistency.json",
+  "scope_decision_pointer": ".cdr/runs/2026-07-08/004-implementation/architecture-discovery.md (section: 'Scope question: edge_append.go's EdgeAppender vs. a new per-node writer')",
+  "pending_md_status": "the flagged edge_append.go crash-recovery-replay gap (task-2b.3.4) was already RESOLVED by task-2b.3.6 prior to this subtask; not reopened or touched here",
+  "next_step": "independent verification agent (/cdr:verify) - implementation agent has NOT verified its own work (invariant I4)",
+  "remaining_subtasks_under_issue_15": ["3.1.3", "3.1.4", "3.1.5", "3.1.6"]
+}

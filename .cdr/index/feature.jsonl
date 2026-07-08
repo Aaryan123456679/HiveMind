@@ -1,1 +1,2 @@
 {"feature": "canonical-docs-init", "module": "docs", "docs": ["README.md", "AGENT.md", "docs/HLD.md", "docs/LLD/*.md"], "subtask": "init", "commit": "699105baec69c1feff075a58e5ab8d2b054db317"}
+{"feature": "csr-adjacency-format", "module": "graph", "docs": ["docs/LLD/graph.md"], "subtask": "3.1.1", "commit": "a4e473d71402e46f9cfa69ba37c8743cf68af059"}

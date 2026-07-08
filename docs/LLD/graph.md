@@ -30,6 +30,34 @@ merges the edge log into this array (3.1.3, including `ENTITY_COOCCUR` weight in
 separate, later subtasks. See `engine/graph/csr.go`'s package doc comment for the full byte
 layout.
 
+### Per-node edge log (subtask 3.1.2, `engine/graph/edgelog.go`)
+
+`EdgeLog` is the durable landing zone for newly discovered edges of any type
+(`ENTITY_COOCCUR` with weight, `LLM_ASSERTED`, and future split edges), organized as one
+append-only log per source `fileID` rather than one shared array or log — this is what lets
+concurrent writers touching different `fileID`s (e.g. two ingestion workers processing
+different files at once) proceed without contending on a shared lock. On disk:
+`<root>/<sourceFileID>/wal-<N>.log`, one such subdirectory per source `fileID` that has ever
+had an edge appended, reusing `engine/wal`'s own segment-writer/rotation primitive (the same
+low-level building block `edge_append.go`'s `EdgeAppender` already uses, but with one
+`wal.Writer` instance per `fileID` instead of one shared writer). Each `fileID` gets its own
+`wal.Writer`, and `wal.Writer` already guards its own append/rotation state with its own
+internal mutex, so appends to different `fileID`s contend on different mutexes; appends to
+the *same* `fileID` are correctly serialized by that `fileID`'s own writer (a single node's
+log is still an ordered, single-writer-at-a-time append log). `EdgeLog`'s own map of
+`fileID -> *wal.Writer` uses a `sync.RWMutex` with a double-checked-lock pattern so opening
+new per-node writers doesn't bottleneck concurrent access to already-open ones. Log entries
+reuse `csr.go`'s `CSREdge` type verbatim (`{Target, Type, Weight, LastUpdated}`), since 3.1.3's
+compaction step needs to merge/increment `ENTITY_COOCCUR` weights from this log — the narrower
+`Edge` shape `edge_append.go`'s `EdgeAppender` uses (no weight/timestamp) cannot represent
+that. This is a distinct mechanism from `EdgeAppender`, which remains scoped to
+`SPLIT_SIBLING`/`REDIRECT` edges written by `engine/split/execute.go` as part of the atomic
+split-commit WAL transaction (task-2b.3.6); `edgelog.go` does not modify, replace, or route
+through `edge_append.go`. Edge-type creation/validation support beyond rejecting the
+`EdgeTypeInvalid` zero-value sentinel is subtask 3.1.4's job
+(`engine/graph/edge.go`) — this writer only persists and reads back whatever `CSREdge` values
+it is given.
+
 ## Edge shape
 
 ```
