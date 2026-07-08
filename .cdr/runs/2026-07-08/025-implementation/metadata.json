@@ -7,8 +7,9 @@
   "subtask": "task-3.2.1",
   "git_head": "8671635edd52306e81145d0511bc18d8aad14fe1",
   "run_key": "e705aad2a3ba318fe19339485bb11432622c62d02351287f74045134d8ac1b12",
-  "status": "in_progress",
-  "last_completed_step": "started",
+  "status": "completed",
+  "last_completed_step": "handoff",
   "started_at": "2026-07-08T00:00:00Z",
-  "ended_at": null
+  "ended_at": "2026-07-08T00:00:00Z",
+  "final_commit": "2fa5529b7ed5071bd9f2428b1f8b8a12da49e097"
 }
