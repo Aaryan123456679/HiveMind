@@ -100,7 +100,7 @@ message GraphNeighborsRequest {
 message Neighbor {
   uint64 target_file_id = 1;
   EdgeType type = 2;
-  float weight = 3;
+  uint32 weight = 3;
   int32 hop = 4;
 }
 

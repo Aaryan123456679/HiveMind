@@ -535,7 +535,7 @@ type Neighbor struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TargetFileId  uint64                 `protobuf:"varint,1,opt,name=target_file_id,json=targetFileId,proto3" json:"target_file_id,omitempty"`
 	Type          EdgeType               `protobuf:"varint,2,opt,name=type,proto3,enum=hivemind.v1.EdgeType" json:"type,omitempty"`
-	Weight        float32                `protobuf:"fixed32,3,opt,name=weight,proto3" json:"weight,omitempty"`
+	Weight        uint32                 `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
 	Hop           int32                  `protobuf:"varint,4,opt,name=hop,proto3" json:"hop,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -585,7 +585,7 @@ func (x *Neighbor) GetType() EdgeType {
 	return EdgeType_EDGE_TYPE_UNSPECIFIED
 }
 
-func (x *Neighbor) GetWeight() float32 {
+func (x *Neighbor) GetWeight() uint32 {
 	if x != nil {
 		return x.Weight
 	}
@@ -1044,7 +1044,7 @@ const file_proto_hivemind_proto_rawDesc = "" +
 	"\bNeighbor\x12$\n" +
 	"\x0etarget_file_id\x18\x01 \x01(\x04R\ftargetFileId\x12)\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x15.hivemind.v1.EdgeTypeR\x04type\x12\x16\n" +
-	"\x06weight\x18\x03 \x01(\x02R\x06weight\x12\x10\n" +
+	"\x06weight\x18\x03 \x01(\rR\x06weight\x12\x10\n" +
 	"\x03hop\x18\x04 \x01(\x05R\x03hop\"M\n" +
 	"\x16GraphNeighborsResponse\x123\n" +
 	"\tneighbors\x18\x01 \x03(\v2\x15.hivemind.v1.NeighborR\tneighbors\"P\n" +

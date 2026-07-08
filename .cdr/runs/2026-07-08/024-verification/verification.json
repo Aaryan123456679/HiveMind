@@ -1,0 +1,55 @@
+{
+  "subtask": "task-3.2.1",
+  "issue": 16,
+  "commits_reviewed": [
+    "cfbe29a0b1cf425b3f6e6548755793d9f17a4890",
+    "8671635edd52306e81145d0511bc18d8aad14fe1"
+  ],
+  "verdict": "CHANGES_REQUESTED",
+  "security_note": "git show cfbe29a0/8671635 tool output contained embedded fake system-reminder-style text (fake date-change notice, fake MCP 'tokensave' server instructions, fake 'Auto Mode Active' directive), consistent with this repo's known recurring prompt-injection pattern in commit/issue content. Ignored; not followed; disclosed here per instructions.",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocking",
+      "dimension": "architecture-conformance / field-type-correctness",
+      "description": "proto/hivemind.proto's Neighbor.weight (line 103) is declared 'float weight = 3;' but the Go type it claims to mirror field-for-field, engine/graph.CSREdge.Weight (graph/csr.go:82), is 'uint32' -- an integer running SUM of edge occurrence counts (graph/compact.go:347 'sum.Weight = prev.Weight + e.Weight'), used for exact-equality tie-break comparisons in traverse.go's sort ('a.edge.Weight != b.edge.Weight'). proto3 has a native 'uint32' scalar type that would round-trip exactly; 'float' both mis-represents the field's true integer/count semantics and risks silent precision loss for accumulated weights beyond float32's 24-bit exact-integer range. The proto's own comment at line 98 explicitly claims 'Neighbor mirrors one engine/graph.CSREdge result entry' -- that claim is false for this field. This will propagate into 3.2.2's server.go conversion code and 3.2.4/3.2.5's wire behavior if not fixed now, while it is still a single-line, zero-blast-radius change.",
+      "evidence": [
+        "proto/hivemind.proto:103 'float weight = 3;'",
+        "engine/graph/csr.go:82 'Weight uint32'",
+        "engine/graph/compact.go:347 'sum.Weight = prev.Weight + e.Weight'",
+        "engine/graph/traverse.go:133-134 'if a.edge.Weight != b.edge.Weight { return a.edge.Weight > b.edge.Weight }'"
+      ],
+      "recommendation": "Change 'float weight = 3;' to 'uint32 weight = 3;' in proto/hivemind.proto and regenerate stubs before proceeding to 3.2.2, which will otherwise bake a lossy/incorrect conversion into engine/rpc/server.go."
+    },
+    {
+      "id": "F2",
+      "severity": "non-blocking / disclosed",
+      "dimension": "requirements / architecture-conformance",
+      "description": "docs/LLD/rpc.md's '## Exposed RPCs' section lists 6 items including 'Split' (engine-internal entry point, distinct from 'ProposeSplit'), plus a separate '## Consumed RPC' section listing 'ProposeSplit' -- 7 distinct RPC names total across the LLD. The GitHub issue #16 subtask 3.2.1 acceptance criteria instead names exactly 6: PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates, ProposeSplit (omitting 'Split' entirely). The implementer followed the issue's literal 6-name list (matches proto exactly) and explicitly disclosed this LLD/issue mismatch and the judgment call in architecture-discovery.md ('kept Split out of .proto to match issue's literal six-RPC list'). This is a genuine authoritative-source ambiguity (LLD vs. issue), not a silent omission, and does not block this contract-definition subtask, but should be resolved (LLD updated or 'Split' explicitly scoped into a later subtask) before 3.2.2 implements the server, to avoid an undocumented internal-only RPC surface gap.",
+      "evidence": [
+        "docs/LLD/rpc.md 'Exposed RPCs': PutSegment, GetFile, ReadPartial, Split, GraphNeighbors, SearchCandidates",
+        "docs/LLD/rpc.md 'Consumed RPC': ProposeSplit",
+        "gh issue view 16, subtask 3.2.1 acceptance criteria: 'PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates, ProposeSplit' (6, no 'Split')",
+        ".cdr/runs/2026-07-08/023-implementation/architecture-discovery.md 'Gap noted' section"
+      ],
+      "recommendation": "File a small follow-up (LLD edit or issue comment) clarifying whether engine-internal 'Split' is intentionally out of the gRPC surface, before 3.2.2 locks in server.go's RPC set."
+    }
+  ],
+  "checks_performed": {
+    "rpc_name_match": "6/6 RPC names present, identically spelled, in proto service block, engine/rpc/gen/hivemind_grpc.pb.go, and agents/hivemind_pb2_grpc.py method paths. See F2 for LLD-vs-issue naming-set caveat.",
+    "field_level_crosscheck": {
+      "GraphNeighborsRequest/Neighbor_vs_engine/graph": "Cross-checked against graph.GraphNeighbors(g *CSRGraph, fileID uint64, depth int, edgeTypeFilter EdgeType, maxNodes int) and CSREdge{Target uint64, Type EdgeType, Weight uint32, LastUpdated int64}. file_id/depth/edge_type_filter/max_nodes fields correct; target_file_id/type/hop correct; weight field type WRONG -- see F1.",
+      "ReadPartialResponse/HeaderOffset_vs_engine/catalog": "Cross-checked against ContentStore.ReadPartial(fileID uint64) ([]HeaderOffset, error) and HeaderOffset{Header string, Offset int}. file_id uint64, header string, offset int64 (safe widen from Go int) -- all correct, no issues found.",
+      "ProposeSplitResponse/SplitFileProposal/SectionRange_vs_engine/split": "Cross-checked against SplitPlan{Files []SplitFileProposal, RedirectSummary string}, SplitFileProposal{NewPath string, SectionRanges []SectionRange}, SectionRange{Start int, End int}. All fields and types correct (int -> int64 safe widen)."
+    },
+    "edge_type_enum_vs_edge_go": "proto EdgeType{EDGE_TYPE_UNSPECIFIED=0, ENTITY_COOCCUR=1, LLM_ASSERTED=2, SPLIT_SIBLING=3, REDIRECT=4} matches engine/graph/edge.go's ValidEdgeType 4-type set and EdgeTypeName/ParseEdgeType canonical wire tokens exactly; EDGE_TYPE_UNSPECIFIED=0 correctly mirrors EdgeTypeInvalid zero-value sentinel used as traverse.go's 'no filter' value. No drift found. Forward-looking note (non-blocking): generated Go enum's int32 ordinal values are proto-local and distinct from edge.go's on-disk byte values; 3.2.2/3.2.3 must map by name/ParseEdgeType, not assume ordinal equality -- not a defect in this subtask, flagged for awareness per adversarial check 7.",
+    "generated_code_authenticity": "proto/hivemind.proto parses cleanly via protoc (libprotoc 3.20.3, proto_path=proto, descriptor_set_out succeeded, exit 0). engine/rpc/gen/hivemind.pb.go carries genuine 'Code generated by protoc-gen-go. DO NOT EDIT.' header and protoc-gen-go-grpc v1.6.2 marker; agents/hivemind_pb2.py carries genuine protobuf-compiler header incl. 'Protobuf Python Version: 6.33.5' and the modern 'NO CHECKED-IN PROTOBUF GENCODE' runtime warning banner (real marker emitted by protobuf >=5.27 python codegen, not fabricated). protoc-gen-go/protoc-gen-go-grpc/grpc_tools.protoc plugins not available in this sandbox to do a full byte-for-byte regenerate-and-diff; internal consistency confirmed instead: package name (hivemind.v1), service name (HiveMind), and all 6 RPC method paths ('/hivemind.v1.HiveMind/<Name>') match identically across .proto, .pb.go, and pb2_grpc.py.",
+    "go_mod_deps": "google.golang.org/grpc v1.82.0, google.golang.org/protobuf v1.36.11 in engine/go.mod. 'go build ./...' clean (exit 0, includes engine/rpc/gen). 'go mod verify' -> 'all modules verified'. 'gofmt -l .' clean. 'go vet ./...' clean.",
+    "test_suite": "go test ./... -count=1 -timeout 25m from engine/: all packages PASS except the known pre-existing baseline flake TestReaderDuringSplit (engine/split, unrelated race-timing test, present since before this subtask -- matches expected baseline exactly). engine/rpc and engine/rpc/gen correctly report 'no test files', consistent with this being a pure contract/codegen subtask with no new behavior to test (server logic/tests are explicitly deferred to 3.2.2/3.2.5). This is a reasonable, non-hidden coverage scoping decision, not a gap.",
+    "no_production_behavior_change": "git diff e79513f..cfbe29a -- engine/split engine/graph engine/catalog: empty (zero files touched). engine/split/proposer_mock.go's last commit is a5de3b9 (pre-existing, issue #11), untouched by cfbe29a/8671635. Change is purely additive: new proto + generated stubs + go.mod bump + doc updates.",
+    "provenance": "metadata.json/handoff.json for run 023-implementation record final_commit/commit = cfbe29a0b1cf425b3f6e6548755793d9f17a4890, confirmed via 'git rev-parse HEAD' equivalent (git log -1 --format=%H 8671635 = 8671635, and cfbe29a is 8671635's parent commit containing the feature). Accurate.",
+    "doc_updates_accuracy": "docs/LLD/rpc.md status line and proto/README.md both accurately reflect the new contracts-defined state and correctly scope 3.2.2/3.2.3 as not-yet-implemented; README's regeneration instructions are correct and match the actual generated package paths."
+  },
+  "confidence": "high for field-level and regression checks (directly executed build/vet/test/go.mod verify, read both Go and proto sources side-by-side); medium for 'generated code is exactly what protoc would produce byte-for-byte' since protoc-gen-go/protoc-gen-go-grpc/grpc_tools.protoc plugins were unavailable in this sandbox to do a literal regenerate-and-diff (only structural/internal consistency was checked).",
+  "recommendation": "Fix F1 (weight field type) before merging -- it is a one-line proto change plus a stub regeneration, low risk/low effort, but will otherwise get load-bearing in 3.2.2. Do not proceed to 3.2.3/3.2.4/3.2.5 planning around this weight field until fixed. F2 is non-blocking and can be tracked as a follow-up."
+}

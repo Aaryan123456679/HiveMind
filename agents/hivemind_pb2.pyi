@@ -90,9 +90,9 @@ class Neighbor(_message.Message):
     HOP_FIELD_NUMBER: _ClassVar[int]
     target_file_id: int
     type: EdgeType
-    weight: float
+    weight: int
     hop: int
-    def __init__(self, target_file_id: _Optional[int] = ..., type: _Optional[_Union[EdgeType, str]] = ..., weight: _Optional[float] = ..., hop: _Optional[int] = ...) -> None: ...
+    def __init__(self, target_file_id: _Optional[int] = ..., type: _Optional[_Union[EdgeType, str]] = ..., weight: _Optional[int] = ..., hop: _Optional[int] = ...) -> None: ...
 
 class GraphNeighborsResponse(_message.Message):
     __slots__ = ("neighbors",)

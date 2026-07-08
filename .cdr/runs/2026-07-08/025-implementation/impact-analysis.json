@@ -1,0 +1,23 @@
+{
+  "subtask": "task-3.2.1",
+  "issue": 16,
+  "fix_cycle_attempt": 1,
+  "files_changed": [
+    "proto/hivemind.proto",
+    "engine/rpc/gen/hivemind.pb.go",
+    "agents/hivemind_pb2.py",
+    "agents/hivemind_pb2.pyi",
+    "docs/LLD/rpc.md"
+  ],
+  "files_unchanged_confirmed": [
+    "engine/rpc/gen/hivemind_grpc.pb.go",
+    "agents/hivemind_pb2_grpc.py"
+  ],
+  "blast_radius": "Contract-definition only (task-3.2.1 scope). No server (server.go, 3.2.2) or client (proposer_grpc.go, 3.2.3) implementation exists yet to consume the corrected field type, so this change has zero production behavior impact today. It corrects the wire type before 3.2.2 bakes a conversion around it, matching verification's stated rationale.",
+  "downstream_consumers_checked": {
+    "engine/rpc/server.go": "does not exist yet (3.2.2, not started)",
+    "engine/split/proposer_grpc.go": "does not exist yet (3.2.3, not started)",
+    "agents/": "hivemind_pb2*.py regenerated; no other agents/ code references Neighbor.weight yet (grep confirmed no hits outside generated files)"
+  },
+  "risk": "low — single scalar field type correction on an unconsumed message field, regenerated via the documented toolchain, build+vet+test all clean"
+}

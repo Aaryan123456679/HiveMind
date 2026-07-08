@@ -24,7 +24,12 @@ and — for split proposals — acting as a gRPC *client* of the Python agent se
 - `ReadPartial` — section-level read using the markdown header-offset cache (see
   [catalog.md](catalog.md) staleness risk).
 - `Split` — engine-internal split entry point invoked when a threshold crossing is detected (see
-  [split.md](split.md)).
+  [split.md](split.md)). **Not** part of `proto/hivemind.proto`'s gRPC surface: issue #16's
+  task-3.2.1 acceptance criteria names exactly six RPCs (`PutSegment`, `GetFile`, `ReadPartial`,
+  `GraphNeighbors`, `SearchCandidates`, `ProposeSplit`) and intentionally omits `Split`, which is
+  invoked in-process within `engine/` rather than over the wire. This list stays 6-wide in the
+  proto by design; if `Split` is ever exposed cross-process it should be added as an explicit,
+  separately-scoped RPC in a later subtask, not folded silently into 3.2.2's server surface.
 - `GraphNeighbors` — graph traversal, delegates to [graph.md](graph.md).
 - `SearchCandidates` — non-LLM candidate topic search consumed by the Python
   [query-agent](query-agent.md)'s topic-selector.
