@@ -13,9 +13,11 @@
 // csr.go's BuildCSR/LoadCSR, or produced fresh by compact.go's Compact) and does not read
 // from edgelog.go's EdgeLog at all. This is a deliberate design decision, not an oversight:
 //
-//   - docs/LLD/graph.md's "Traversal API" section sits under "## Storage layout", which
-//     introduces graph.dat (the CSR snapshot) as the thing being queried; EdgeLog is never
-//     mentioned in that section.
+//   - docs/LLD/graph.md's "## Traversal API" section (line 111) is its own top-level
+//     section, a sibling of (not nested under) "## Storage layout" (line 15) - the two are
+//     separated by an intervening "## Edge shape" section. graph.dat (the CSR snapshot),
+//     introduced under Storage layout, is nonetheless the thing the Traversal API section
+//     describes querying; EdgeLog is never mentioned in that section.
 //   - EdgeLog has no cross-node enumeration primitive (only per-fileID ReadNode/
 //     ReadNodeAfter) - there is no efficient way for a BFS expansion touching many nodes to
 //     also check each one's uncompacted log without a per-hop, per-node extra read against
