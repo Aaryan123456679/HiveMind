@@ -6,9 +6,13 @@ last_synced_commit: 699105baec69c1feff075a58e5ab8d2b054db317
 
 Status: `.proto` contracts defined (`proto/hivemind.proto`, task-3.2.1, issue #16) with
 generated Go (`engine/rpc/gen/`) and Python (`agents/hivemind_pb2*.py`) stubs checked in.
-Server handler implementations (`engine/rpc/server.go`) and the real gRPC-backed
-`ProposeSplit` client (`engine/split/proposer_grpc.go`) are not yet implemented (task-3.2.2/
-3.2.3). See [HLD.md](../HLD.md) for system context.
+Server handler implementations for `PutSegment`/`GetFile`/`ReadPartial`/`GraphNeighbors`/
+`SearchCandidates` (`engine/rpc/server.go`, task-3.2.2) and the real gRPC-backed
+`ProposeSplit` *client* (`engine/split/proposer_grpc.go`, task-3.2.3) are implemented.
+`ProposeSplit`'s *server* side remains the generated `Unimplemented` stub: the real
+LLM-backed Python ingestion-agent service is out of scope for issue #16 (see issue #18).
+Per-call latency/cost interceptor (task-3.2.4) and the cross-process integration test
+(task-3.2.5) are not yet implemented. See [HLD.md](../HLD.md) for system context.
 
 ## Purpose
 
