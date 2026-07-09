@@ -1,0 +1,2 @@
+ticket_id,subject,description,status,priority,category,requester,created_at
+TCK-1002,Password reset email not arriving,I requested a password reset three times and never received the email.,pending,medium,account,john.smith@example.com,2026-07-02T14:30:00Z

@@ -1,0 +1,4 @@
+ticket_id,subject,description,status,priority,category,requester,assignee,created_at,comments
+TCK-1001,Login page returns 500 error,"Since this morning I can no longer log in.
+The login page shows a generic 500 error after submitting my credentials.
+This is blocking my whole team.",open,high,authentication,jane.doe@example.com,support-eng-1@example.com,2026-07-01T09:15:00Z,"[{""author"": ""support-eng-1@example.com"", ""body"": ""Thanks for the report, looking into it now.""}, {""author"": ""jane.doe@example.com"", ""body"": ""Any update? Still blocked.\nWould appreciate an ETA.""}]"
