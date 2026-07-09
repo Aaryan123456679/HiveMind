@@ -1,0 +1,33 @@
+{
+  "affected_files": [
+    {
+      "path": "engine/rpc/integration_test.go",
+      "change": "new file",
+      "reason": "task-3.2.5's named impacted module: cross-process gRPC integration test exercising all 5 implemented RPCs over a real net.Listener + grpc.Server with LatencyInterceptor wired in, plus GRPCSplitProposer against the same real server for ProposeSplit's Unimplemented path."
+    }
+  ],
+  "affected_modules": [
+    "engine/rpc (package rpc_test, external test package -- no production code changes)",
+    "engine/split (consumed as a black-box dependency: GRPCSplitProposer)",
+    "engine/catalog, engine/graph, engine/btree, engine/wal (consumed as real backing stores, no changes)"
+  ],
+  "contracts_touched": [],
+  "production_code_changes": "none -- this subtask is test-only per the issue's own text (\"integration test... Impacted modules: engine/rpc/integration_test.go\") and the task prompt's explicit instruction to keep any wiring minimal and test-scoped. No new grpc.Server construction helper is added to non-test code because no production call site (e.g. a cmd/ main) exists yet to host one; inlining server setup in the test's own helper is sufficient and avoids speculative production API surface.",
+  "dependents": [
+    "None -- this is a leaf test file. It does not change any exported API used elsewhere."
+  ],
+  "risk_level": "low",
+  "risk_notes": [
+    "Test-only change; cannot regress production behavior.",
+    "Uses a real net.Listener bound to 127.0.0.1:0 (OS-assigned ephemeral port) -- no fixed-port flakiness risk.",
+    "Server and client connection lifecycles are torn down via t.Cleanup (GracefulStop + conn.Close), matching engine/split/proposer_grpc_test.go's established -race-safe pattern.",
+    "ProposeSplit is intentionally left Unimplemented server-side; test asserts codes.Unimplemented rather than a successful split plan -- this is a correctness assertion about existing (already-verified) 3.2.2/3.2.3 behavior, not new behavior."
+  ],
+  "prior_decisions_reused": [
+    "task-3.2.2: Server field wiring / NewServer signature (cat, cs, idAlloc, g, btreeStore, btreeRootNodeID)",
+    "task-3.2.3: GRPCSplitProposer / NewGRPCSplitProposer(client, timeout) and its documented error-wrapping contract",
+    "task-3.2.4: LatencyInterceptor / WithRecorder option signatures",
+    "engine/rpc/server_test.go's newFixture: real catalog+content+btree+graph composition pattern",
+    "engine/split/proposer_grpc_test.go's startFixtureServer: grpc.NewClient + insecure.NewCredentials + t.Cleanup teardown pattern (adapted to a real net.Listener instead of bufconn)"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "note": "Internal sanity check only. This is NOT verification (invariant I4) -- a separate /cdr:verify agent independently verifies.",
+  "checks": [
+    {"check": "gofmt -l engine/rpc/integration_test.go", "result": "empty output (clean)"},
+    {"check": "go vet ./...", "result": "clean, no findings"},
+    {"check": "go build ./...", "result": "clean"},
+    {"check": "go test ./rpc/... -run TestRPCIntegration -race -timeout 60s -v", "result": "PASS, all 9 subtests pass"},
+    {"check": "go test ./rpc/... -race -timeout 120s -v (full package, includes 3.2.2/3.2.4/3.2.5 tests together)", "result": "PASS, no data races, no regressions to existing TestRPCServerHandlers/TestLatencyInterceptor/TestEdgeTypeConversionRoundTrip"},
+    {"check": "go test ./... -timeout 180s (full engine module)", "result": "PASS across all packages: engine, btree, catalog, graph, mvcc, rpc, split, wal"}
+  ],
+  "validation_matrix_coverage": "AC1-AC6 all covered by TestRPCIntegration's subtests, see validation-matrix.json",
+  "deviations_from_plan": [
+    "PutSegment_Append subtest originally planned to assert NewVersion==2 after append; corrected during implementation after observing ContentStore.Append does not bump CurrentVersion (append is a same-version content mutation), consistent with engine/rpc/server_test.go's existing PutSegment_Append subtest, which likewise makes no NewVersion assertion after append. No production code was changed to accommodate this -- test expectation was adjusted to match already-verified (task-3.2.2) production behavior."
+  ]
+}

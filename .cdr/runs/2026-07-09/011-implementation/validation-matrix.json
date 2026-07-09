@@ -1,0 +1,34 @@
+{
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "Real net.Listener-backed grpc.Server serving the real rpc.Server, with LatencyInterceptor wired via grpc.UnaryInterceptor.",
+      "check": "startRealServer helper uses net.Listen(\"tcp\", \"127.0.0.1:0\") + grpc.NewServer(grpc.UnaryInterceptor(rpc.LatencyInterceptor(...))); post-test assertion on the in-test Recorder confirms RPCMetric records were actually emitted for calls made."
+    },
+    {
+      "id": "AC2",
+      "description": "PutSegment (create+append)/GetFile/ReadPartial round-trip correctly against real catalog/content store over real gRPC.",
+      "check": "Subtests PutSegment_Create, PutSegment_Append, GetFile, ReadPartial assert response fields and cross-check via direct fixture.cs.Read/ContentStore state."
+    },
+    {
+      "id": "AC3",
+      "description": "GraphNeighbors returns correct results against a real graph.CSRGraph.",
+      "check": "Subtest GraphNeighbors seeds a real CSR edge via graph.BuildCSR and asserts the wire response's TargetFileId/Type/Weight match the seeded edge."
+    },
+    {
+      "id": "AC4",
+      "description": "SearchCandidates returns correct results against a real btree.NodeStore.",
+      "check": "Subtest SearchCandidates seeds real B+Tree entries and asserts the wire response matches a direct btree.PrefixScan call on the same store."
+    },
+    {
+      "id": "AC5",
+      "description": "GRPCSplitProposer.ProposeSplit against the real (unmodified) server returns codes.Unimplemented, wrapped correctly.",
+      "check": "Subtest ProposeSplit_Unimplemented builds split.NewGRPCSplitProposer over the real client conn, asserts non-nil error and status.FromError(err) code == codes.Unimplemented."
+    },
+    {
+      "id": "AC6",
+      "description": "Go discipline: gofmt/go vet/go build clean; -race; explicit -timeout.",
+      "check": "gofmt -l engine/rpc/integration_test.go (empty output); go vet ./...; go build ./...; go test ./engine/rpc/... -run TestRPCIntegration -race -timeout 60s -v."
+    }
+  ]
+}
