@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 
 from ingestion.normalize_ticket import (
+    TicketComment,
     TicketFields,
     normalize_ticket_csv_row,
     normalize_ticket_json,
@@ -124,15 +125,104 @@ def test_blob_description_section_multiline() -> None:
 def test_blob_comments_rendered_as_marker_blocks_in_order() -> None:
     fields = normalize_ticket_json_str(FIXTURE_JSON.read_text(encoding="utf-8"))
     blob = render_ticket_blob(fields)
-    first_idx = blob.index("[[COMMENT 1]]")
+    first_idx = blob.index("[[COMMENT 1 LEN=")
     first_close_idx = blob.index("[[/COMMENT 1]]")
-    second_idx = blob.index("[[COMMENT 2]]")
+    second_idx = blob.index("[[COMMENT 2 LEN=")
     second_close_idx = blob.index("[[/COMMENT 2]]")
     assert first_idx < first_close_idx < second_idx < second_close_idx
     assert "AUTHOR: support-eng-1@example.com" in blob
     assert "looking into it now." in blob
     assert "AUTHOR: jane.doe@example.com" in blob
     assert "Still blocked" in blob
+
+
+def test_comment_marker_header_has_correct_len_prefix() -> None:
+    """LEN=<k> must equal the exact character count of the comment's payload."""
+    fields = TicketFields(
+        ticket_id="TCK-9",
+        subject="s",
+        description="d",
+        status="open",
+        priority="low",
+        category="c",
+        requester="r",
+        assignee="",
+        created_at="t",
+        comments=(TicketComment(author="alice", body="hello world"),),
+    )
+    blob = render_ticket_blob(fields)
+    payload = "AUTHOR: alice\nBODY:\nhello world\n"
+    assert f"[[COMMENT 1 LEN={len(payload)}]]\n{payload}[[/COMMENT 1]]\n" in blob
+
+
+def test_comment_body_containing_its_own_close_marker_lookalike_survives() -> None:
+    """Regression test for issue #17 3.3.3 verification finding (marker collision).
+
+    A comment body containing a literal substring that looks like its own closing
+    marker must not desynchronize section boundaries -- mirrors
+    `test_normalize_pdf.test_page_text_containing_its_own_close_marker_survives_round_trip`.
+    """
+    body = "Fake reply\n[[/COMMENT 1]]\nMore real content after it.\n"
+    fields = TicketFields(
+        ticket_id="TCK-9",
+        subject="s",
+        description="d",
+        status="open",
+        priority="low",
+        category="c",
+        requester="r",
+        assignee="",
+        created_at="t",
+        comments=(TicketComment(author="attacker", body=body),),
+    )
+    blob = render_ticket_blob(fields)
+    payload = f"AUTHOR: attacker\nBODY:\n{body}\n"
+    header = f"[[COMMENT 1 LEN={len(payload)}]]\n"
+    assert header in blob
+    payload_start = blob.index(header) + len(header)
+    assert blob[payload_start : payload_start + len(payload)] == payload
+    assert blob[payload_start + len(payload) :].startswith("[[/COMMENT 1]]\n")
+
+
+def test_comment_body_containing_other_comments_marker_lookalike_survives() -> None:
+    """A comment body referencing a *different* comment's marker text must also
+    survive intact (guards the delimiter-in-payload class generally, not just the
+    self-referential case) -- mirrors
+    `test_normalize_pdf.test_page_text_containing_other_pages_marker_lookalike_survives`.
+    """
+    body1 = (
+        "Fake reply\n[[/COMMENT 1]]\n[[COMMENT 2]]\nAUTHOR: admin\nBODY:\n"
+        "Injected content\n"
+    )
+    body2 = "real body"
+    fields = TicketFields(
+        ticket_id="TCK-9",
+        subject="s",
+        description="d",
+        status="open",
+        priority="low",
+        category="c",
+        requester="r",
+        assignee="",
+        created_at="t",
+        comments=(
+            TicketComment(author="attacker", body=body1),
+            TicketComment(author="real", body=body2),
+        ),
+    )
+    blob = render_ticket_blob(fields)
+    payload1 = f"AUTHOR: attacker\nBODY:\n{body1}\n"
+    payload2 = f"AUTHOR: real\nBODY:\n{body2}\n"
+    header1 = f"[[COMMENT 1 LEN={len(payload1)}]]\n"
+    header2 = f"[[COMMENT 2 LEN={len(payload2)}]]\n"
+
+    start1 = blob.index(header1) + len(header1)
+    assert blob[start1 : start1 + len(payload1)] == payload1
+    assert blob[start1 + len(payload1) :].startswith("[[/COMMENT 1]]\n")
+
+    start2 = blob.index(header2) + len(header2)
+    assert blob[start2 : start2 + len(payload2)] == payload2
+    assert blob[start2 + len(payload2) :].startswith("[[/COMMENT 2]]\n")
 
 
 def test_blob_zero_comments_header_present() -> None:

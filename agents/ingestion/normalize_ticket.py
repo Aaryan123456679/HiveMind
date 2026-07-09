@@ -4,11 +4,13 @@ Given a single structured support-ticket record -- either a parsed JSON object o
 CSV row (as produced by :class:`csv.DictReader`) -- this module normalizes it into a
 common :class:`TicketFields` dataclass, then renders that into a "labeled text blob":
 plain text with one ``LABEL: value`` line per scalar field, a verbatim multi-line
-``DESCRIPTION:`` section, and an explicit marker-delimited block per comment/reply
-(mirroring the ``[[PAGE n]]``/``[[/PAGE n]]`` marker precedent set by
-`agents/ingestion/normalize_pdf.py`), so downstream consumers (e.g. the future
-`RawDocument` builder in `agents/ingestion/dispatch.py`, issue 3.3.4) can reliably
-parse the labeled sections back out and so no structured field is silently dropped.
+``DESCRIPTION:`` section, and an explicit, length-prefixed marker-delimited block per
+comment/reply (mirroring the ``[[PAGE n LEN=k]]``/``[[/PAGE n]]`` length-prefixed
+marker format used by `agents/ingestion/normalize_pdf.py`), so downstream consumers
+(e.g. the future `RawDocument` builder in `agents/ingestion/dispatch.py`, issue 3.3.4)
+can reliably locate the labeled sections without a comment body's own text (which may
+contain marker-lookalike substrings) desynchronizing section boundaries, and so no
+structured field is silently dropped.
 
 Ticket schema -- disclosed judgment call
 -----------------------------------------
@@ -51,12 +53,12 @@ Labeled blob format
     Since this morning I can no longer log in.
     The login page shows a generic 500 error after submitting my credentials.
     COMMENTS: 2
-    [[COMMENT 1]]
+    [[COMMENT 1 LEN=84]]
     AUTHOR: support-eng-1@example.com
     BODY:
     Thanks for the report, looking into it now.
     [[/COMMENT 1]]
-    [[COMMENT 2]]
+    [[COMMENT 2 LEN=62]]
     AUTHOR: jane.doe@example.com
     BODY:
     Any update? Still blocked.
@@ -67,6 +69,19 @@ string (missing optional fields render as ``LABEL: `` rather than being omitted)
 downstream parser can always find every labeled section. ``COMMENTS: <n>`` is always
 present (``n`` may be ``0``) so the comment count is discoverable without scanning for
 marker blocks. Comment blocks are 1-indexed and emitted in input order.
+
+Each comment block's ``LEN=<k>`` header is the exact character count (Unicode code
+points) of the payload between the opening marker's trailing newline and the closing
+``[[/COMMENT n]]`` marker -- i.e. the ``AUTHOR: ...\\nBODY:\\n<body>\\n`` text. This
+mirrors `agents/ingestion/normalize_pdf.py`'s ``[[PAGE n LEN=k]]`` format: a comment
+body containing a literal marker-lookalike substring (e.g. its own or another
+comment's ``[[/COMMENT n]]``) cannot desynchronize section boundaries, because a
+parser slices exactly `k` characters rather than scanning the payload for a closing
+delimiter. No parser for this format exists yet -- nothing downstream consumes ticket
+blobs today (that lands with `agents/ingestion/dispatch.py`, issue 3.3.4) -- but the
+length prefix is embedded at render time regardless, so the checked-in format itself
+is unambiguous and safe to build a parser against later, rather than deferring
+correctness to a not-yet-written parser.
 """
 
 from __future__ import annotations
@@ -215,11 +230,25 @@ def normalize_ticket_csv_row(row: dict) -> TicketFields:
 
 
 def _comment_block(index: int, comment: TicketComment) -> str:
-    """Wrap a single comment in its ``[[COMMENT n]]``/``[[/COMMENT n]]`` marker pair."""
+    """Wrap a single comment in its ``[[COMMENT n LEN=k]]``/``[[/COMMENT n]]`` marker pair.
+
+    Mirrors the length-prefixed framing `agents/ingestion/normalize_pdf.py` uses for
+    its ``[[PAGE n LEN=k]]``/``[[/PAGE n]]`` markers (see that module's docstring for
+    the full rationale). ``LEN=<k>`` is the exact character count of the payload
+    between the opening marker's trailing newline and the closing marker (i.e. the
+    ``AUTHOR: ...\\nBODY:\\n<body>\\n`` text), so a comment body containing a literal
+    marker-lookalike substring (e.g. its own or another comment's ``[[/COMMENT n]]``)
+    cannot desynchronize section boundaries: a parser slices exactly `k` characters
+    instead of scanning the payload for a closing delimiter. No parser for this format
+    exists yet (nothing downstream consumes ticket blobs today -- see module
+    docstring), but the length prefix is embedded now, at render time, so the format
+    itself is unambiguous and future-proof rather than deferring correctness to a
+    not-yet-written parser.
+    """
+    payload = f"AUTHOR: {comment.author}\nBODY:\n{comment.body}\n"
     return (
-        f"[[COMMENT {index}]]\n"
-        f"AUTHOR: {comment.author}\n"
-        f"BODY:\n{comment.body}\n"
+        f"[[COMMENT {index} LEN={len(payload)}]]\n"
+        f"{payload}"
         f"[[/COMMENT {index}]]\n"
     )
 
