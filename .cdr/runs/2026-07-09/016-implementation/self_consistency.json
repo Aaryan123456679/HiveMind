@@ -1,0 +1,22 @@
+{
+  "reproduction_before_fix": {
+    "method": "throwaway script /tmp/repro_f1.py constructing page 1 text containing literal '[[/PAGE 1]]' plus real trailing content, wrapped with the pre-fix _page_marker/PAGE_MARKER_RE format",
+    "result_before_fix": "PAGE_MARKER_RE matched page 1's content as only 'This spec discusses the marker syntax ' -- the trailing 'More real content after it.' was silently dropped, while match count stayed correct at 2 (matching page count) -- exactly the F1 failure mode described in 015-verification"
+  },
+  "reproduction_after_fix": {
+    "method": "same repro script logic, re-run against new _page_marker (length-prefixed) + iter_pages()",
+    "result_after_fix": "iter_pages() returns the full untruncated page 1 text including 'More real content after it.'; confirmed via test_page_text_containing_its_own_close_marker_survives_round_trip"
+  },
+  "test_results": {
+    "command": "agents/.venv/bin/python -m pytest ingestion/test_normalize_pdf.py -v (run from agents/)",
+    "runs": 3,
+    "outcome": "9 passed, 9 passed, 9 passed (3/3 consistent, no flakiness observed)"
+  },
+  "lint_results": {
+    "command": "agents/.venv/bin/python -m ruff check ingestion/normalize_pdf.py ingestion/test_normalize_pdf.py",
+    "outcome": "All checks passed"
+  },
+  "build_status": "green (no compiled build step for this Python module; pytest + ruff are the relevant gates)",
+  "scope_check": "Only agents/ingestion/normalize_pdf.py, agents/ingestion/test_normalize_pdf.py, and .cdr/index/regression.jsonl were modified. No files deleted or moved. No other repo areas touched.",
+  "note": "This is self-consistency (internal sanity: build/tests green, validation matrix covered) only, per invariant I4 -- this agent does NOT verify its own work. A separate /cdr:verify run is required next."
+}

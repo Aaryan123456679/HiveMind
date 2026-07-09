@@ -1,0 +1,20 @@
+{
+  "run_id": "2026-07-09-018-cdr-commit",
+  "subtask": "task-3.3.1",
+  "status": "completed",
+  "outputs": {
+    "commit_doc": ".cdr/commits/task-3.3.1.md",
+    "feature_index_entry": ".cdr/index/feature.jsonl (last line)",
+    "task_index_entry": ".cdr/index/task.jsonl (last line)",
+    "pending_md_entries": ".cdr/memory/pending.md (F3, F4 entries appended)"
+  },
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_run_id": ".cdr/runs/2026-07-09/017-verification",
+  "commits": [
+    "73310f1da5d01ab632c7b9cf5a5ad311b0ade51e",
+    "462b1831b795788965380bfc6b3201821e4b95ca",
+    "259f9b85d9e3ebf07200071e3c54345bdcb36ed7",
+    "360496321433e14209af44956cccdcdb74a7004d"
+  ],
+  "pushed": false
+}

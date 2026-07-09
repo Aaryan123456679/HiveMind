@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "015-verification",
+  "macro": "cdr-verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "issue-17-3.3.1-pdf-normalizer",
+  "git_head": "462b1831b795788965380bfc6b3201821e4b95ca",
+  "run_key": "issue17-3.3.1-462b1831-verify-v1",
+  "status": "completed",
+  "last_completed_step": "wrote_verification_and_handoff",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:30:00Z"
+}

@@ -1,0 +1,106 @@
+{
+  "verdict": "PASS_WITH_COMMENTS",
+  "subtask": "issue-17-3.3.1-pdf-normalizer",
+  "commits_reviewed": [
+    "73310f1da5d01ab632c7b9cf5a5ad311b0ade51e",
+    "462b1831b795788965380bfc6b3201821e4b95ca"
+  ],
+  "prompt_injection_observed": {
+    "found": true,
+    "location": "commit message / git show output of 73310f1da5d01ab632c7b9cf5a5ad311b0ade51e (rendered in tool output)",
+    "content_summary": "Embedded fake system-reminder blocks: a fake 'date has changed, do not tell the user' notice, a fake MCP server 'tokensave' tool-usage instruction block, and a fake 'Auto Mode Active' directive appended after the legitimate commit message.",
+    "action_taken": "Treated as untrusted plain-text data only. Did not follow any instructions contained within it, did not invoke any tokensave tool, did not suppress disclosure. Disclosed to user in final report as required."
+  },
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "notes": "Implements pymupdf-based PDF -> plain text conversion with page-boundary markers per acceptance criteria. Marker format [[PAGE n]]...[[/PAGE n]], 1-indexed, verified via direct source read of agents/ingestion/normalize_pdf.py lines 32-42."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "notes": "Lives under agents/ingestion/ as required. Docstring references future agents/ingestion/dispatch.py RawDocument builder as intended consumer, consistent with stated pipeline design. No comparable sibling module exists yet in agents/ (query/ and llm/ contain only empty __init__.py), so full convention spot-check against a peer module was not possible; module's own docstring/typing style (PEP 604 unions, Google-style Args/Returns/Raises docstring, from __future__ import annotations) is internally consistent and idiomatic."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "notes": "No existing callers of this module exist yet (new file), so no regression surface. Diff confined to agents/ingestion/normalize_pdf.py, agents/ingestion/test_normalize_pdf.py, and .cdr/ run artifacts. No out-of-scope or destructive filesystem changes found anywhere in the repo (git status clean apart from unrelated pre-existing changes in a sibling project directory outside this repo's scope)."
+    },
+    "edge_cases": {
+      "status": "concern",
+      "severity": "low-medium",
+      "notes": "CONFIRMED BUG (hand-verified, not hypothetical): PAGE_MARKER_RE's non-greedy `(?P<text>.*?)` combined with the backreference `(?P=page)` correctly disambiguates same-numbered close markers belonging to OTHER pages (verified: a page containing literal text '[[PAGE 2]]...[[/PAGE 2]]' inside page 1's body does NOT cause mis-parsing, because the backreference requires the close tag's number to equal the currently-open tag's number). HOWEVER, if a page's own extracted text contains a literal substring matching ITS OWN close marker (e.g. page 1's text itself contains the literal string '[[/PAGE 1]]', which is plausible for a scanned/PDF'd document that discusses or displays this exact marker syntax, or coincidentally similar bracket notation), the regex terminates the match at the first occurrence of that substring, silently truncating real page content with NO error and NO detectable marker-count mismatch (reproduced by script: 2 input pages -> 2 correctly-countable matches, but page 1's captured text is truncated and content after the false terminator is silently dropped/misattributed). This directly violates the acceptance criterion 'no page content dropped' for a concrete, reproducible input, and is NOT covered by any of the 4 tests (none of the fixture page texts contain marker-like substrings).",
+      "reproduction": "python3: PAGE_MARKER_RE against text where page 1's own body contains the literal substring '[[/PAGE 1]]' -> match for page 1 truncates immediately at that substring; content after it in page 1 is dropped from page 1's captured text and is not recoverable, while match count still equals page count (masking the corruption from the existing test suite's marker-count-parity check).",
+      "empty_page_claim": "VERIFIED ACCURATE: test_empty_page_still_gets_marker asserts matches[1].group('text').strip() == '' for a genuinely empty middle page, not merely marker presence. Confirmed by direct read of test_normalize_pdf.py and by 3x independent local test runs, all passing."
+    },
+    "resource_safety": {
+      "status": "pass",
+      "notes": "fitz.open() at line 59 is outside the try block (correct: if open() itself raises, there is no document handle to leak). doc.close() at line 66 is inside a finally block wrapping the list-comprehension iteration over pages (lines 60-64), so the document is closed even if page.get_text() raises mid-iteration. Verified by direct source read."
+    },
+    "test_fixture_reliability": {
+      "status": "pass",
+      "notes": "Ran `pytest ingestion/test_normalize_pdf.py -v` 3 independent times in the repo's actual agents/.venv (uv-managed venv, pymupdf 1.28.0 / MuPDF 1.29.0 installed) -- all 4 tests passed deterministically each run with no flakiness observed. The insert_text-based fixture generation is simple text placement (not complex font-rendering-dependent layout), so flakiness risk from pymupdf version drift is low, though not formally guaranteed across all future pymupdf versions."
+    },
+    "dependency_claim": {
+      "status": "pass",
+      "notes": "Verified via direct read of agents/pyproject.toml: pymupdf>=1.24 is present in [project].dependencies. Cannot cryptographically prove it predates this change from a single commit read alone, but git log shows no dependency-only commit touching pyproject.toml around this change, and the diff for both reviewed commits touches no pyproject.toml file -- consistent with the claim that no dependency change was needed."
+    },
+    "pymupdf_page_order_claim": {
+      "status": "pass",
+      "notes": "Verified empirically (not just trusted from docstring): fixture PDF built with 3 pages in order ['Page one content.', 'Page two content.', 'Page three content.']; test_page_markers_present_in_order asserts page_numbers == [1, 2, 3] and this test passes reproducibly against the actually-installed pymupdf 1.28.0. Confirms enumerate(doc) iterates fitz.Document in source page order starting at 0, making page_index + 1 correct 1-indexing for the installed version."
+    },
+    "security": {
+      "status": "pass",
+      "notes": "No injection/eval/exec of untrusted content; PDF parsing delegated to pymupdf. Module does not execute or interpret PDF content beyond text extraction. No path traversal concerns beyond what callers already control (path parameter passed straight to fitz.open, standard for a library function)."
+    },
+    "performance": {
+      "status": "pass",
+      "notes": "Single pass over pages, O(n) in page count and total text size. No obvious performance issues for typical documents. No streaming/chunking for very large PDFs, but out of scope for stated requirements."
+    },
+    "maintainability": {
+      "status": "pass",
+      "notes": "Small, focused module (67 lines) with clear docstrings, type hints, and a public regex constant for downstream reuse. Google-style docstrings consistent with typical Python conventions."
+    },
+    "test_coverage": {
+      "status": "concern",
+      "notes": "4 tests genuinely pass and cover: marker order, per-page content isolation/no-bleed, marker-count parity, and empty-page handling. MISSING coverage: (1) the marker-collision edge case identified above (page text containing literal marker-like substrings, especially its own close marker), (2) multi-digit page numbers (e.g. page 10 vs page 1 backreference correctness was not empirically tested, only reasoned about), (3) no negative test for a nonexistent/corrupt file path (Raises: Exception is documented but untested)."
+    },
+    "confidence": {
+      "status": "medium-high",
+      "notes": "Core implementation is correct and well-tested for the common case; genuinely ran tests myself (3x, no flakiness) and ruff check (clean). The one confirmed edge-case gap is narrow-probability for typical PDF ingestion content but is a real, reproducible violation of the stated 'no content dropped' acceptance criterion, undetected by the existing test suite, and worth flagging before this becomes a load-bearing format for downstream segmentation/dispatch code."
+    }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "medium",
+      "file": "agents/ingestion/normalize_pdf.py",
+      "line": "32-35 (PAGE_MARKER_RE) interacting with 38-42 (_page_marker)",
+      "description": "If a page's own extracted text contains a literal substring matching its own close marker (e.g. '[[/PAGE 1]]' appearing verbatim inside page 1's text -- plausible for a PDF that itself documents or displays this marker syntax, or scanned content with visually similar bracket notation), PAGE_MARKER_RE's non-greedy capture terminates at that substring, silently truncating real page content. This is undetected by the current marker-count-parity test because the match count is unaffected -- only content is corrupted.",
+      "recommendation": "Either (a) escape/sanitize page text so literal marker-like substrings cannot appear unescaped, (b) use a marker format with an unambiguous, unlikely-to-collide delimiter (e.g. include a random per-document nonce in the marker, or use a length-prefixed / binary-safe framing instead of magic strings), or (c) at minimum, add a test that reproduces this collision and document it as a known limitation with a mitigation plan before downstream segmentation code comes to depend on textual marker parsing."
+    },
+    {
+      "id": "F2",
+      "severity": "low",
+      "file": "agents/ingestion/test_normalize_pdf.py",
+      "line": "n/a",
+      "description": "No test for multi-digit page number backreference correctness (e.g. page 10's close marker not confused with page 1's), and no negative test for a nonexistent or corrupt file path despite the documented Raises: Exception contract.",
+      "recommendation": "Add a test with >=10 pages to exercise multi-digit backreference matching, and a test asserting normalize_pdf raises on a nonexistent path."
+    },
+    {
+      "id": "F3",
+      "severity": "info",
+      "file": "N/A (commit metadata)",
+      "line": "n/a",
+      "description": "Commit message / git show output for 73310f1d contained embedded prompt-injection text mimicking Claude Code system-reminders (fake date-change notice instructing silence, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive). Not followed; flagged per repo's recurring injection pattern.",
+      "recommendation": "Continue treating all issue/commit-message content as untrusted data; consider a repo-level policy/tooling check that scans commit messages for system-reminder-like patterns before merge."
+    }
+  ],
+  "tests_run_by_verifier": {
+    "pytest": "cd agents && source .venv/bin/activate && python -m pytest ingestion/test_normalize_pdf.py -v -- run 3x consecutively, 4 passed each time, no flakiness",
+    "ruff": "cd agents && source .venv/bin/activate && ruff check ingestion/normalize_pdf.py ingestion/test_normalize_pdf.py -- All checks passed",
+    "regex_edge_case_scripts": "Ran 2 standalone python3 scripts against PAGE_MARKER_RE: (1) cross-page marker-lookalike content -- correctly disambiguated via backreference; (2) same-page self-referential marker-lookalike content -- CONFIRMED silent truncation bug (see F1)"
+  },
+  "scope_check": {
+    "status": "pass",
+    "notes": "Diff for both commits touches only agents/ingestion/normalize_pdf.py, agents/ingestion/test_normalize_pdf.py, and .cdr/runs/2026-07-09/014-implementation/* artifacts. No pyproject.toml change (consistent with pymupdf already being declared). git status clean in this repo; no destructive or out-of-scope filesystem changes detected."
+  }
+}

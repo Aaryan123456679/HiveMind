@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-implementation",
+  "macro": "cdr:implement (fix-cycle)",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-17-3.3.1-pdf-normalizer (fix cycle attempt 1 of 3, addressing 015-verification finding F1)",
+  "git_head": "462b1831b795788965380bfc6b3201821e4b95ca",
+  "run_key": "issue17-3.3.1-F1-fixcycle-attempt1-462b183",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-09T10:57:02Z",
+  "ended_at": "2026-07-09T11:15:00Z"
+}

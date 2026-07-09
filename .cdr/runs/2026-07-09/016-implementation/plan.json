@@ -1,0 +1,21 @@
+{
+  "requirement": "Fix finding F1 from .cdr/runs/2026-07-09/015-verification (verdict PASS_WITH_COMMENTS, medium severity): PAGE_MARKER_RE's non-greedy backreference-based parsing silently truncates a page's real content when that content contains a literal substring matching its own closing marker (e.g. literal '[[/PAGE 1]]' inside page 1's own extracted text). This directly violates subtask 3.3.1's literal acceptance criterion 'no page content dropped'. Marker-pair count parity is unaffected, so the existing count-based test does not catch it.",
+  "architecture_discovery": "agents/ingestion/normalize_pdf.py is a standalone module with no other consumers yet (grep-confirmed: no other .py file in agents/ references PAGE_MARKER_RE, normalize_pdf, or the [[PAGE marker format). Free to change the wire format without breaking call sites; only agents/ingestion/test_normalize_pdf.py needs updating in lockstep.",
+  "impact_analysis": "Blast radius limited to agents/ingestion/normalize_pdf.py and its test file. Future consumer (agents/ingestion/dispatch.py, not yet built per module docstring) will need to use the new iter_pages() API instead of a content-scanning regex -- documented in the module docstring to steer future implementers away from re-introducing the same bug class.",
+  "plan": [
+    "1. Reproduce F1 with a throwaway script before any fix, using page text containing a literal '[[/PAGE 1]]' substring, to confirm the exact silent-truncation failure mode.",
+    "2. Replace the [[PAGE n]]...[[/PAGE n]] content-scanning format with a length-prefixed [[PAGE n LEN=k]]...[[/PAGE n]] format: the header declares the exact character count of the payload, so a parser slices exactly k characters instead of scanning payload content for a closing marker -- eliminating the delimiter-in-payload collision class entirely (not just the reproduced case).",
+    "3. Add iter_pages() as the new public parsing API; keep PAGE_MARKER_RE (now header-only) for boundary-location use cases, but document it as unsafe for content extraction.",
+    "4. Update agents/ingestion/test_normalize_pdf.py: switch existing tests from PAGE_MARKER_RE.finditer content extraction to iter_pages(); add regression tests for F1 (self-referential marker-lookalike content, and a second test for a different page's marker-lookalike content) proving round-trip content integrity.",
+    "5. Add cheap F2 coverage: multi-digit page numbers (>=10), nonexistent-path negative test, corrupt-file negative test.",
+    "6. Run pytest 3x for flakiness; run ruff check on both changed files.",
+    "7. Commit locally (no push), update .cdr/index/regression.jsonl to mark F1 resolved, write this run's artifacts and handoff.json with confirmed final commit hash."
+  ],
+  "validation_matrix": [
+    {"criterion": "No page content dropped, even when page text contains its own literal close-marker substring", "test": "test_page_text_containing_its_own_close_marker_survives_round_trip", "status": "covered"},
+    {"criterion": "No page content dropped when page text contains a different page's marker-lookalike substring", "test": "test_page_text_containing_other_pages_marker_lookalike_survives", "status": "covered"},
+    {"criterion": "Existing behavior preserved: markers present in order, content preserved, marker count matches page count, empty pages still marked", "test": "test_page_markers_present_in_order / test_page_content_preserved / test_marker_count_matches_page_count / test_empty_page_still_gets_marker (all updated to use iter_pages where content is asserted)", "status": "covered"},
+    {"criterion": "F2: multi-digit page numbers parse correctly", "test": "test_multi_digit_page_numbers_parse_correctly", "status": "covered"},
+    {"criterion": "F2: nonexistent/corrupt file negative cases raise", "test": "test_normalize_pdf_raises_on_nonexistent_path / test_normalize_pdf_raises_on_corrupt_file", "status": "covered"}
+  ]
+}

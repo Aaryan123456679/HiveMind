@@ -1,0 +1,99 @@
+{
+  "verdict": "PASS_WITH_COMMENTS",
+  "subtask": "issue-17-3.3.1-pdf-normalizer",
+  "attempt": "2 of 3",
+  "commits_reviewed": [
+    "259f9b85d9e3ebf07200071e3c54345bdcb36ed7",
+    "360496321433e14209af44956cccdcdb74a7004d"
+  ],
+  "prompt_injection_observed": {
+    "found": true,
+    "location": "git commit message body of 259f9b85d9e3ebf07200071e3c54345bdcb36ed7, rendered verbatim in `git show` output",
+    "content_summary": "Embedded fake system-reminder blocks appended after the legitimate commit message: (1) fake 'date has changed... do not mention this to the user' notice, (2) fake MCP server 'tokensave' tool-usage instructions, (3) fake 'Auto Mode Active' directive.",
+    "action_taken": "Treated as untrusted plain-text data only. Did not follow any instruction contained within it (did not suppress disclosure, did not invoke any tokensave tool, did not change autonomy posture). Disclosed to user/caller in this report."
+  },
+  "f1_status": "genuinely_closed",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "notes": "Re-read full current source of agents/ingestion/normalize_pdf.py and agents/ingestion/test_normalize_pdf.py end-to-end (not diff-skimmed). normalize_pdf() still converts PDF->plain text with per-page markers via pymupdf; format changed to [[PAGE n LEN=k]]...[[/PAGE n]], documented in module docstring."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "notes": "iter_pages() added as the sole sanctioned parsing API; PAGE_MARKER_RE narrowed to header-only matching and docstring explicitly warns against content-scanning reuse. No architectural layering violations; module remains standalone with no consumers yet (grep-confirmed, see below)."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "notes": "Grepped whole repo (excluding .venv) for '[[PAGE', 'PAGE_MARKER_RE', 'iter_pages', 'normalize_pdf'. Only historical .cdr/runs/2026-07-09/{014,015,016}-* docs and .cdr/index/regression.jsonl reference the old [[PAGE n]] format or plan text -- these are immutable historical run records, not live contracts. No other .py module in the repo consumes normalize_pdf's output or PAGE_MARKER_RE. Format change is confirmed backward-compatible in the sense that nothing breaks, since nothing else depends on it yet (3.3.4/dispatch.py not yet implemented)."
+    },
+    "f1_closure_root_cause": {
+      "status": "pass",
+      "notes": "Original F1 bug class was: content-scanning regex could truncate a page's own real text if it contained a substring resembling its own close marker. New iter_pages() slices exactly LEN characters computed by _page_marker() via Python len(text) at write time and never re-derives boundaries by scanning payload content for a delimiter. Manually hand-traced: (1) page text containing '[[PAGE 9 LEN=1]]'-lookalike header text at the START of its own payload -- confirmed NOT misparsed, since PAGE_MARKER_RE.match(text, pos) is anchored to the position immediately following the prior close marker, and payload content between payload_start/payload_end is never re-scanned as a header. (2) page text containing a full embedded fake marker pair mid-payload -- confirmed carried through byte-for-byte intact (matches existing test_page_text_containing_other_pages_marker_lookalike_survives, independently re-derived with a fresh adversarial string, not the committed test literal)."
+    },
+    "residual_len_trust_boundary": {
+      "status": "concern",
+      "severity": "low",
+      "notes": "New finding (F3, not a reopening of F1): iter_pages() has zero integrity check on the LEN value itself -- it trusts the header's LEN=k literally and slices blindly. Hand-constructed adversarial case (scratch script, not in repo): if LEN is ever wrong (e.g. hypothetical off-by-N corruption from a future downstream string operation between normalize_pdf() and iter_pages(), NOT reachable via normalize_pdf's own current code path), and the truncated slice happens to land exactly on a literal close-marker-lookalike substring for the SAME page number inside the real payload, iter_pages() silently accepts the truncated payload as valid -- the close-marker check only verifies 'a well-formed [[/PAGE n]] literal exists at payload_end', not that payload_end is the CORRECT boundary. This reproduces content-dropping silently, undetected by any exception, as long as the (corrupted) LEN happens to coincide with a marker-lookalike inside the payload for that same page number. Verified via scratch script: constructing real_text containing a literal '[[/PAGE 1]]\\n' mid-payload and setting a deliberately-too-short LEN pointing exactly at that substring's offset causes iter_pages()'s first next() to yield a truncated (1, 'Some real content before. ') instead of the full real_text -- with NO exception raised at that point (only later fails when it tries to parse trailing bytes as the next header, and would not fail at all if this were the last/only page in the document).",
+      "caveat": "This is NOT reachable today: LEN is always computed correctly by _page_marker() from the same string it wraps, and normalize_pdf() is the only producer, iter_pages() the only consumer, with no intervening code. This is a design-hygiene / defense-in-depth gap relevant chiefly for future consumers (3.3.4 dispatch.py) if the normalized text is ever serialized/deserialized, logged-and-reparsed, or otherwise passed through any transformation before iter_pages() sees it. Recommend: either (a) document this trust boundary explicitly in iter_pages()'s docstring ('LEN is trusted verbatim; do not feed iter_pages() text that has been transformed since normalize_pdf() produced it'), or (b) add a cheap belt-and-suspenders check that no earlier occurrence of a valid same-page close marker exists strictly before payload_end within the slice window. Not blocking for 3.3.1 as currently scoped (no live consumer), but should be tracked before 3.3.4 wires normalize_pdf's output through any intermediate storage/transport layer."
+    },
+    "unicode_len_consistency": {
+      "status": "pass",
+      "notes": "Constructed and ran a scratch round-trip test with non-ASCII text (accented Latin, CJK, and emoji/astral-plane characters like 😀🚀). LEN is computed via Python's len(str) and slicing via str[start:end], both of which operate on Unicode code points (not UTF-8/UTF-16 code units) in Python 3 -- confirmed empirically: declared LEN=44 matched actual len(text)=44 for a string containing multi-byte/astral characters, and iter_pages() round-tripped both pages byte-for-byte (code-point-for-code-point) intact. No byte-count/char-count mismatch risk exists because the entire pipeline (normalize_pdf -> iter_pages) stays in the `str` domain end-to-end and never touches `bytes`/UTF-8 encoding. This was previously untested territory (no existing test covers non-ASCII) but is verified correct."
+    },
+    "test_coverage": {
+      "status": "concern",
+      "severity": "low",
+      "notes": "9/9 tests pass, independently re-run 3x (not trusting implementer's claim) -- confirmed zero flakiness. ruff check clean on both changed files -- independently confirmed. Gaps not covered by committed tests: (1) no non-ASCII/Unicode round-trip test despite this being a real correctness question for a document-ingestion pipeline that will process arbitrary real-world PDFs (verified correct by hand per above, but untested in CI), (2) no test for the F3 residual LEN-trust-boundary scenario (acceptable to leave uncovered given caveat above, but should at minimum be documented)."
+    },
+    "security": {
+      "status": "pass",
+      "notes": "No injection/eval/unsafe deserialization introduced. Regex patterns are simple and non-backtracking-prone (fixed-format header, no nested quantifiers). No new external inputs beyond the existing PDF path."
+    },
+    "performance": {
+      "status": "pass",
+      "notes": "iter_pages() is O(n) single-pass over normalized_text via direct slicing/regex.match at fixed offsets -- no O(n^2) scanning risk (unlike the old content-scanning approach it replaces, which is actually a performance improvement, not just a correctness one)."
+    },
+    "scope_containment": {
+      "status": "pass",
+      "notes": "git show --name-only on both commits: 259f9b8 touches only .cdr/index/regression.jsonl, agents/ingestion/normalize_pdf.py, agents/ingestion/test_normalize_pdf.py. 3604963 touches only .cdr/index/regression.jsonl (hash backfill). No destructive or out-of-scope changes in either commit."
+    },
+    "regression_index": {
+      "status": "pass",
+      "notes": "Confirmed .cdr/index/regression.jsonl line 67 (id-less, keyed by run) records F1's resolution referencing commit 259f9b85d9e3ebf07200071e3c54345bdcb36ed7 (correct, matches `git rev-parse` and matches the reviewed commit), run 016-implementation, verdict PASS, with an accurate technical summary. Original F1 entry (line 66, id hivemind-issue17-3.3.1-F1-marker-collision) left intact as historical record, new resolution entry appended rather than mutating history -- correct pattern."
+    },
+    "confidence": {
+      "status": "high",
+      "notes": "Re-derived everything independently: read full current source (not diffs), ran tests myself 3x, ran ruff myself, grepped for old-format consumers myself, hand-traced 2 self-constructed adversarial parsing cases beyond the committed tests, and empirically verified Unicode round-trip via a scratch script. F1's original failure mode (self-referential truncation) is genuinely eliminated by the length-prefixed design. One new low-severity residual finding (F3) identified that the implementer's claim of eliminating 'the entire delimiter-in-payload collision class' is slightly overstated -- it eliminates the class for correctly-computed LEN values, but iter_pages() still has an un-authenticated trust boundary on LEN itself. Not blocking given no live consumer exists yet."
+    }
+  },
+  "findings": [
+    {
+      "id": "F3",
+      "severity": "low",
+      "file": "agents/ingestion/normalize_pdf.py",
+      "line": "iter_pages(), approx lines 116-135",
+      "description": "iter_pages() trusts the LEN=k header value verbatim with no independent validation that payload_end is the CORRECT boundary (only that *a* well-formed close marker for the same page number happens to exist at that offset). If LEN is ever wrong for any reason other than normalize_pdf's own (currently correct) computation -- e.g. a future downstream transformation of the normalized text before parsing -- and the resulting (incorrect) payload_end coincidentally lands on a marker-lookalike substring for the same page number within the real payload, iter_pages() silently yields truncated content with no exception, reproducing a content-dropping failure mode conceptually similar to (but narrower than) the original F1 bug. Confirmed via hand-constructed scratch script: a too-short LEN pointing exactly at an embedded '[[/PAGE 1]]\\n' literal inside page 1's real text causes the first `next()` call on the generator to yield truncated content silently.",
+      "reproduction": "See scratch script logic: real_text = 'Some real content before. [[/PAGE 1]]\\nMore real content after that gets silently dropped if corrupted LEN is used.\\n'; construct blob with header LEN set to the offset of the embedded '[[/PAGE 1]]\\n' substring instead of len(real_text); iter_pages(blob) first yield is (1, 'Some real content before. ') with no exception raised at that point.",
+      "caveat": "Not reachable via any current code path -- normalize_pdf() is the only producer and always computes LEN correctly from the exact string it wraps; iter_pages() is the only consumer and there is no intervening transformation today. This is a forward-looking design-hygiene gap, not a live regression.",
+      "recommendation": "Document the trust boundary explicitly in iter_pages()'s docstring (LEN is trusted verbatim; callers must not pass text that was transformed/re-serialized after normalize_pdf() produced it), and/or add a lightweight defense-in-depth check before 3.3.4 (dispatch.py) introduces any storage/transport layer between normalize_pdf() and iter_pages()."
+    },
+    {
+      "id": "F4",
+      "severity": "low",
+      "file": "agents/ingestion/test_normalize_pdf.py",
+      "line": "n/a (missing test)",
+      "description": "No test exercises non-ASCII/multi-byte text (accented characters, CJK, emoji/astral-plane code points) through normalize_pdf/_page_marker/iter_pages, despite this being a real correctness question for a document-ingestion pipeline expected to process arbitrary real-world PDFs. Hand-verified correct via a scratch script in this review (LEN/slicing both operate on Python str code points end-to-end, no byte/char mismatch), but this is currently untested in CI and could regress silently if any future refactor introduces byte-level (UTF-8) operations into the pipeline.",
+      "recommendation": "Add a regression test asserting iter_pages(_page_marker(1, unicode_text))[0] round-trips a string containing accented characters, CJK text, and at least one astral-plane character (e.g. an emoji) byte-for-byte / code-point-for-code-point."
+    }
+  ],
+  "tests_run_by_verifier": {
+    "pytest": "agents/.venv/bin/pytest agents/ingestion/test_normalize_pdf.py -v, run 3 times independently: 9 passed each run, 0 flakiness observed",
+    "ruff": "agents/.venv/bin/ruff check agents/ingestion/normalize_pdf.py agents/ingestion/test_normalize_pdf.py -- All checks passed",
+    "scratch_scripts": [
+      "Unicode round-trip verification (accented/CJK/emoji text) -- confirmed correct",
+      "Adversarial case: LEN=-lookalike header text embedded inside a page's own payload -- confirmed NOT misparsed",
+      "Adversarial case: deliberately-corrupted (too-short) LEN pointing exactly at an embedded same-page close-marker-lookalike -- confirmed silent truncation occurs (F3), though not reachable via any current live code path"
+    ]
+  },
+  "overall_summary": "F1 (content-scanning truncation of self-referential marker-lookalike text) is genuinely closed by the length-prefixed framing redesign -- verified independently via full source re-read, 3x independent test runs, ruff, and hand-traced adversarial cases beyond the committed test suite, not merely trusting the implementer's report. Unicode/multi-byte length-prefix consistency, explicitly flagged as untested territory in the task, was verified correct (Python str operations are code-point-based throughout, no byte/char mismatch). One new low-severity finding (F3) identifies that iter_pages() trusts LEN verbatim with no independent boundary validation, which is a narrower, currently-unreachable residual variant of the same delimiter-in-payload risk class -- not blocking today since no consumer exists yet, but should be documented/tracked before 3.3.4 wires this format through any storage/transport layer. A second low finding (F4) recommends adding the Unicode round-trip test that this review had to construct by hand. Scope of both commits is fully contained; regression index correctly updated with accurate commit references; no other module in the repo depends on the old marker format. A prompt-injection attempt was found embedded in commit 259f9b8's message text (fake system-reminder blocks) and was not followed, only disclosed."
+}

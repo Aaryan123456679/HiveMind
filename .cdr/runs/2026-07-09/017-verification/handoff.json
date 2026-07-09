@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "run_id": "017-verification",
+  "subtask": "issue-17-3.3.1-pdf-normalizer",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification_output": ".cdr/runs/2026-07-09/017-verification/verification.json",
+    "source_reviewed": [
+      "agents/ingestion/normalize_pdf.py",
+      "agents/ingestion/test_normalize_pdf.py"
+    ],
+    "commits_reviewed": [
+      "259f9b85d9e3ebf07200071e3c54345bdcb36ed7",
+      "360496321433e14209af44956cccdcdb74a7004d"
+    ],
+    "prior_verification": ".cdr/runs/2026-07-09/015-verification/verification.json",
+    "regression_index_entries": [
+      ".cdr/index/regression.jsonl:66 (original F1)",
+      ".cdr/index/regression.jsonl:67 (F1 resolution, commit 259f9b8)"
+    ],
+    "new_findings": ["F3 (low, LEN trust boundary in iter_pages)", "F4 (low, missing Unicode round-trip test)"]
+  },
+  "next_steps": "F1 closed, no re-fix required. F3/F4 are low-severity, non-blocking; recommend tracking before issue 3.3.4 (dispatch.py) integration but not required for 3.3.1 closure."
+}

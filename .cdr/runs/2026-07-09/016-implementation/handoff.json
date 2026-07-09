@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-implementation",
+  "status": "completed",
+  "subtask": "issue-17-3.3.1-pdf-normalizer (fix cycle attempt 1 of 3, addressing 015-verification finding F1)",
+  "final_commit": "360496321433e14209af44956cccdcdb74a7004d",
+  "fix_commit": "259f9b85d9e3ebf07200071e3c54345bdcb36ed7",
+  "commits": [
+    {
+      "hash": "259f9b85d9e3ebf07200071e3c54345bdcb36ed7",
+      "summary": "fix: replace ambiguous page marker regex with length-prefixed framing"
+    },
+    {
+      "hash": "360496321433e14209af44956cccdcdb74a7004d",
+      "summary": "docs: record final commit hash for fix-cycle 016-implementation (back-fills regression.jsonl commit field)"
+    }
+  ],
+  "changed_files": [
+    "agents/ingestion/normalize_pdf.py",
+    "agents/ingestion/test_normalize_pdf.py",
+    ".cdr/index/regression.jsonl"
+  ],
+  "finding_addressed": "hivemind-issue17-3.3.1-F1-marker-collision (from .cdr/runs/2026-07-09/015-verification/verification.json)",
+  "fix_summary": "Switched normalize_pdf's marker format from content-scanning [[PAGE n]]...[[/PAGE n]] to length-prefixed [[PAGE n LEN=k]]...[[/PAGE n]], with a new iter_pages() public parser that slices exactly k characters as payload instead of scanning for a closing marker in content. This closes the whole delimiter-in-payload collision class, not just the reproduced self-referential case.",
+  "regression_tests_added": [
+    "test_page_text_containing_its_own_close_marker_survives_round_trip",
+    "test_page_text_containing_other_pages_marker_lookalike_survives",
+    "test_multi_digit_page_numbers_parse_correctly",
+    "test_normalize_pdf_raises_on_nonexistent_path",
+    "test_normalize_pdf_raises_on_corrupt_file"
+  ],
+  "test_status": "9/9 passed, run 3x for flakiness, all consistent",
+  "lint_status": "ruff check clean",
+  "self_verification_performed": false,
+  "next_step": "Requires independent re-verification via /cdr:verify before this fix cycle can be closed (invariant I4 -- this agent does not verify its own work)."
+}
