@@ -1,0 +1,13 @@
+{
+  "subtask": "issue-18-3.4.1-llmclient-ollama",
+  "note": "Internal sanity only per invariant I4 -- NOT independent verification. /cdr:verify must still run.",
+  "checks": [
+    {"check": "pytest agents/llm/ -v", "result": "13 passed, 0 failed"},
+    {"check": "pytest agents/ (full suite, regression check)", "result": "67 passed, 0 failed"},
+    {"check": "ruff check agents/llm/", "result": "All checks passed"},
+    {"check": "validation-matrix.json rows all covered by an actual test", "result": "10/10 rows covered"},
+    {"check": "rg -i ollama outside agents/llm/ (post-change)", "result": "no matches -- no other module calls Ollama directly"}
+  ],
+  "build_green": true,
+  "matrix_covered": true
+}

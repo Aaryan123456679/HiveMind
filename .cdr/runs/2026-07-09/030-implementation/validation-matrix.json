@@ -1,0 +1,55 @@
+{
+  "subtask": "issue-18-3.4.1-llmclient-ollama",
+  "rows": [
+    {
+      "requirement": "common LLMClient interface/protocol defined",
+      "test": "test_llmclient_is_abstract_and_cannot_be_instantiated",
+      "covered": true
+    },
+    {
+      "requirement": "OllamaClient satisfies LLMClient interface",
+      "test": "test_ollama_client_is_instance_of_llmclient",
+      "covered": true
+    },
+    {
+      "requirement": "complete() call shape -- correct endpoint",
+      "test": "test_complete_posts_to_api_generate_endpoint",
+      "covered": true
+    },
+    {
+      "requirement": "complete() call shape -- correct payload (model, prompt, stream=false)",
+      "test": "test_complete_request_payload_shape",
+      "covered": true
+    },
+    {
+      "requirement": "response parsing -- extracts completion text",
+      "test": "test_complete_parses_response_text",
+      "covered": true
+    },
+    {
+      "requirement": "configurable base URL and model",
+      "test": "test_complete_uses_configured_base_url_and_default_model / test_complete_model_override_per_call",
+      "covered": true
+    },
+    {
+      "requirement": "HTTP failure raises, does not swallow",
+      "test": "test_complete_raises_on_http_error_status",
+      "covered": true
+    },
+    {
+      "requirement": "malformed JSON response raises, does not swallow",
+      "test": "test_complete_raises_on_malformed_json",
+      "covered": true
+    },
+    {
+      "requirement": "response missing expected key raises, does not swallow",
+      "test": "test_complete_raises_on_missing_response_key",
+      "covered": true
+    },
+    {
+      "requirement": "no real network calls in shipped test suite",
+      "test": "all tests use httpx.MockTransport injected via OllamaClient(transport=...)",
+      "covered": true
+    }
+  ]
+}

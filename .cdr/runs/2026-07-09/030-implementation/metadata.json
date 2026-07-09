@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "030-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-18-3.4.1-llmclient-ollama",
+  "git_head": "15b3b2889e8594b9719e39737fe02735c079cd45",
+  "run_key": "issue18-3.4.1-15b3b28-implementation",
+  "status": "in_progress",
+  "last_completed_step": "plan",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": null
+}

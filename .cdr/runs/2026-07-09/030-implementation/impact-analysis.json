@@ -1,0 +1,26 @@
+{
+  "subtask": "issue-18-3.4.1-llmclient-ollama",
+  "new_files": [
+    "agents/llm/client.py",
+    "agents/llm/ollama_client.py",
+    "agents/llm/test_ollama_client.py"
+  ],
+  "modified_files": [],
+  "new_dependencies": [],
+  "dependency_note": "httpx>=0.27 already present in agents/pyproject.toml; used for both the real HTTP call and the test's httpx.MockTransport. No pyproject.toml change needed.",
+  "existing_callers_migrated": [],
+  "existing_callers_migrated_note": "rg -i ollama across agents/ (pre-change) returned zero matches -- no existing call sites to migrate.",
+  "downstream_consumers_not_implemented_here": [
+    "agents/ingestion/segment.py (3.4.3)",
+    "agents/ingestion/propose_split.py (3.4.5)"
+  ],
+  "public_api_added": [
+    "agents.llm.client.LLMClient (ABC)",
+    "agents.llm.client.LLMError (exception)",
+    "agents.llm.ollama_client.OllamaClient (concrete impl)",
+    "agents.llm.ollama_client.OllamaClientError (exception)"
+  ],
+  "breaking_changes": false,
+  "docs_touched": [],
+  "docs_touched_note": "docs/LLD/llm-provider.md already describes this shape at scaffold level; not modified by this subtask (doc updates are commit/verification-stage concerns, not implementation)."
+}
