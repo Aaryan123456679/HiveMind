@@ -1,0 +1,40 @@
+{
+  "criteria": [
+    {
+      "criterion": "PutSegment delegates to catalog/content, returns correct results for fixture request",
+      "check": "TestRPCServerHandlers/PutSegment_Create and /PutSegment_Append: assert response file_id/new_version match direct catalog.Get + ContentStore.Read results"
+    },
+    {
+      "criterion": "GetFile delegates to catalog/content, returns correct results for fixture request",
+      "check": "TestRPCServerHandlers/GetFile: assert response content/version match direct ContentStore.Read + Catalog.Get results for a pre-created fixture file"
+    },
+    {
+      "criterion": "ReadPartial delegates to catalog/content, returns correct results for fixture request",
+      "check": "TestRPCServerHandlers/ReadPartial: assert response headers match direct ContentStore.ReadPartial results for fixture markdown content with headers"
+    },
+    {
+      "criterion": "GraphNeighbors delegates to graph, returns correct results for fixture request",
+      "check": "TestRPCServerHandlers/GraphNeighbors: build a fixture CSRGraph with known edges, assert response neighbors match direct graph.GraphNeighbors results (target/type/weight); TestEdgeTypeConversion covers the proto<->graph enum mapping explicitly"
+    },
+    {
+      "criterion": "SearchCandidates delegates to btree, returns correct results for fixture request",
+      "check": "TestRPCServerHandlers/SearchCandidates: build a fixture B+Tree with known paths, assert response candidates match direct btree.PrefixScan results for a given prefix query"
+    },
+    {
+      "criterion": "Errors map to appropriate gRPC status codes",
+      "check": "TestRPCServerHandlers/NotFound_* subtests assert codes.NotFound for unknown fileID across PutSegment(append)/GetFile/ReadPartial; TestRPCServerHandlers/InvalidArgument_* asserts codes.InvalidArgument for out-of-range GraphNeighbors depth/maxNodes"
+    },
+    {
+      "criterion": "ProposeSplit correctly out of scope for 3.2.2",
+      "check": "TestRPCServerHandlers/ProposeSplit_Unimplemented: assert calling ProposeSplit on the Server returns codes.Unimplemented (generated default, unmodified)"
+    },
+    {
+      "criterion": "gRPC server handling concurrent requests against shared engine state is race-safe",
+      "check": "TestRPCServerHandlers/Concurrent: N goroutines issuing GetFile/GraphNeighbors concurrently against the same Server, run with -race"
+    },
+    {
+      "criterion": "Go discipline: gofmt/go vet/go build clean",
+      "check": "self-consistency.json records gofmt -l (empty), go vet ./..., go build ./... all clean"
+    }
+  ]
+}

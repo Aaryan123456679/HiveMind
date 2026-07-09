@@ -1,0 +1,16 @@
+{
+  "note": "Internal sanity only, NOT verification (invariant I4: implementer must not verify own work). A separate agent will independently verify.",
+  "checks": [
+    {"check": "gofmt -l .", "result": "empty output (clean)"},
+    {"check": "go vet ./...", "result": "clean, no output"},
+    {"check": "go build ./...", "result": "clean, no output"},
+    {"check": "go test ./rpc/... -run . -v -race -timeout 60s", "result": "all subtests PASS, TestRPCServerHandlers (15 subtests) + TestEdgeTypeConversionRoundTrip", "duration": "2.977s"}
+  ],
+  "validation_matrix_coverage": "all 9 entries in validation-matrix.json have a corresponding implemented test/check",
+  "known_documented_gaps_not_hidden": [
+    "Neighbor.hop always 0 (engine/graph.GraphNeighbors return type does not expose hop) -- documented in server.go doc comment + impact-analysis.json",
+    "CandidateTopic.score is a constant placeholder (no relevance-scoring primitive exists anywhere in the codebase) -- documented in server.go doc comment + impact-analysis.json",
+    "SearchCandidates query is a literal prefix match (btree.PrefixScan), not general/fuzzy search -- documented",
+    "PutSegment cannot populate CatalogRecord.PathHash or insert into the B+Tree (PutSegmentRequest proto has no path field) -- documented"
+  ]
+}

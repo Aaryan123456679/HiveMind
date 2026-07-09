@@ -1,0 +1,64 @@
+{
+  "affected_files": [
+    {
+      "path": "engine/rpc/server.go",
+      "change": "new file: HiveMind gRPC server struct + 5 in-scope handlers",
+      "risk": "medium"
+    },
+    {
+      "path": "engine/rpc/server_test.go",
+      "change": "new file: TestRPCServerHandlers (+ subtests), fixture-populated store per issue's test spec",
+      "risk": "low"
+    }
+  ],
+  "affected_modules": ["engine/rpc"],
+  "dependency_modules_read_only": [
+    "engine/catalog (ContentStore.Create/Append/Read/ReadPartial, Catalog.Get, IDAllocator.Next)",
+    "engine/graph (GraphNeighbors, EdgeType constants)",
+    "engine/btree (PrefixScan)",
+    "engine/wal (OpenWriter, used only for fixture setup, not new usage)"
+  ],
+  "contracts": {
+    "implements": "hivemindv1.HiveMindServer (engine/rpc/gen/hivemind_grpc.pb.go), 5 of 6 methods",
+    "not_implemented_here": "ProposeSplit -- left as generated UnimplementedHiveMindServer default (codes.Unimplemented); real wiring is task-3.2.3, a separate subtask/commit"
+  },
+  "dependents": [
+    "api/ (HTTP gateway) -- future client of this server, not yet built",
+    "agents/query/ (Python query-agent) -- future client of GraphNeighbors/SearchCandidates, not yet built",
+    "engine/rpc/interceptor.go (task-3.2.4) -- will wrap this server, not yet built",
+    "engine/rpc/integration_test.go (task-3.2.5) -- will exercise this server cross-process, not yet built"
+  ],
+  "risk_level": "medium",
+  "risks": [
+    {
+      "risk": "EdgeType numeric mismatch between proto and engine/graph enums",
+      "detail": "graph.EdgeType iota order (Invalid=0,SplitSibling=1,Redirect=2,EntityCooccur=3,LLMAsserted=4) does not match hivemindv1.EdgeType (Unspecified=0,EntityCooccur=1,LLMAsserted=2,SplitSibling=3,Redirect=4). Implementation uses explicit name-based conversion functions (protoEdgeTypeToGraph/graphEdgeTypeToProto), not a numeric cast, to avoid silently wrong edge-type filtering. Covered by a dedicated unit test.",
+      "mitigation": "explicit switch-based conversion + round-trip test",
+      "severity": "would have been silent-wrong-results if unaddressed; now closed"
+    },
+    {
+      "risk": "GraphNeighbors's hop distance is not exposed by engine/graph.GraphNeighbors's return type ([]CSREdge has no hop field)",
+      "detail": "Proto's Neighbor.hop field cannot be faithfully populated without either (a) re-implementing BFS/hop-tracking inside the RPC handler (forbidden: 'no new business logic, thin adapter, reuse what exists') or (b) extending engine/graph's public API to also return hop (out of this subtask's scope -- would touch engine/graph, not engine/rpc, and 3.1.5/graph.md's public traversal API is already committed/frozen for this subtask).",
+      "mitigation": "Neighbor.hop is left at 0 (proto zero value) for every result, with an explicit doc comment on the handler explaining why. This is a genuine cross-package API gap, disclosed here rather than invented around.",
+      "severity": "acceptance-criteria-adjacent gap, flagged for follow-up; does not block the 5 acceptance criteria as literally written (which name 'delegates to the correct underlying module... returns correct results', not 'hop is populated')",
+      "flagged_as_pending": true
+    },
+    {
+      "risk": "SearchCandidates' backing implementation is real (btree.PrefixScan exists and issue text explicitly names 'btree SearchCandidates'), but is prefix-match only, not general-query/relevance search, and CandidateTopic.score has no real backing computation in btree",
+      "detail": "Confirmed NOT a missing-dependency scope gap (btree.PrefixScan exists and is exactly what the issue names) -- unlike the hypothetical 'Phase 4 search pipeline doesn't exist yet' concern raised in the task brief, PrefixScan is a real, already-built, already-tested (engine/btree/scan_test.go) primitive. The only real adaptation needed is: (1) treating SearchCandidatesRequest.query as a literal string prefix rather than a general query, and (2) assigning a constant placeholder score (documented in code) since no relevance-scoring exists anywhere in the codebase yet.",
+      "mitigation": "implemented against real PrefixScan; query-as-prefix and constant-score documented explicitly in server.go's SearchCandidates doc comment; not fabricated as if it were real relevance search",
+      "severity": "low -- matches issue's literal 'btree SearchCandidates' delegation instruction"
+    },
+    {
+      "risk": "PutSegmentRequest proto shape has no path field",
+      "detail": "engine/catalog.CatalogRecord.PathHash cannot be populated by PutSegment (left as zero value on Create); no B+Tree path index insert happens as part of PutSegment either, since there's no path to insert. This is a proto-level (task-3.2.1, already committed) design choice, not something 3.2.2 introduces or can fix by itself.",
+      "mitigation": "documented in server.go's PutSegment doc comment; SearchCandidates' btree root is therefore a constructor-injected dependency populated by test fixtures/some future caller outside this RPC surface, never by PutSegment itself",
+      "severity": "informational, not a defect in this subtask's own scope"
+    }
+  ],
+  "scope_confirmed": {
+    "in_scope_rpcs": ["PutSegment", "GetFile", "ReadPartial", "GraphNeighbors", "SearchCandidates"],
+    "out_of_scope_rpcs": ["ProposeSplit (task-3.2.3)"],
+    "excluded_from_proto_entirely": ["Split (per docs/LLD/rpc.md F2 note)"]
+  }
+}
