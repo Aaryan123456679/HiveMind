@@ -1,0 +1,55 @@
+{
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "rows": [
+    {
+      "criterion": "JSON ticket record fields extracted correctly",
+      "test": "test_json_scalar_fields_extracted",
+      "covered": true
+    },
+    {
+      "criterion": "CSV ticket row fields extracted correctly",
+      "test": "test_csv_scalar_fields_extracted",
+      "covered": true
+    },
+    {
+      "criterion": "Labeled blob contains one labeled section per scalar field",
+      "test": "test_blob_contains_all_labeled_scalar_sections",
+      "covered": true
+    },
+    {
+      "criterion": "Description body preserved verbatim (multi-line safe)",
+      "test": "test_blob_description_section_multiline",
+      "covered": true
+    },
+    {
+      "criterion": "Nested/list comments field rendered as marker-delimited blocks, order preserved",
+      "test": "test_blob_comments_rendered_as_marker_blocks_in_order",
+      "covered": true
+    },
+    {
+      "criterion": "COMMENTS: 0 header present when no comments (no silent omission)",
+      "test": "test_blob_zero_comments_header_present",
+      "covered": true
+    },
+    {
+      "criterion": "Missing optional fields (assignee, comments) do not raise, render as empty sections",
+      "test": "test_csv_missing_optional_fields_does_not_raise",
+      "covered": true
+    },
+    {
+      "criterion": "JSON and CSV input for the same logical record produce identical blob output (format parity across both input forms)",
+      "test": "test_json_and_csv_produce_identical_blob_for_same_record",
+      "covered": true
+    },
+    {
+      "criterion": "All structured input fields are present somewhere in the output blob (nothing silently dropped)",
+      "test": "test_all_input_field_values_present_in_blob",
+      "covered": true
+    },
+    {
+      "criterion": "normalize_ticket_json_str convenience wrapper parses raw JSON text fixture correctly",
+      "test": "test_normalize_ticket_json_str_from_fixture_file",
+      "covered": true
+    }
+  ]
+}

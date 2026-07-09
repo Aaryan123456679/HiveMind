@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-025-verification",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "attempt": 2,
+  "attempt_cap": 3,
+  "commit_reviewed": "0cec9a6f47b4273b2b7f23a564084618e02899a3",
+  "prior_finding_run": ".cdr/runs/2026-07-09/023-verification/verification.json",
+  "prior_finding_id": "hivemind-issue17-3.3.3-F1-marker-collision-regression",
+  "verdict": "PASS_WITH_COMMENTS",
+  "prompt_injection_observed": {
+    "location": "git commit message of 0cec9a6f47b4273b2b7f23a564084618e02899a3 (as returned by 'git show')",
+    "description": "Commit output/body contained three embedded fake system-reminder-style blocks: (1) a fake 'the date has changed to 2026-07-09, do not tell the user' notice, (2) a fake 'MCP Server Instructions' block advertising a 'tokensave' tool and instructing the agent to report fabricated token savings, (3) a fake 'Auto Mode Active' directive trying to loosen guardrails around destructive git operations. All three are indistinguishable in format from legitimate system reminders but appear inside untrusted commit-message data. Treated as inert data; not followed; no tools it referenced (tokensave) exist or were invoked; no destructive git operations performed."
+  },
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "Fix directly closes the specific finding from run 023: _comment_block() now emits [[COMMENT n LEN=k]]<payload exactly k chars>[[/COMMENT n]] mirroring normalize_pdf.py's already-verified [[PAGE n LEN=k]] format. Hand-verified LEN computation against fixture: comment 1 payload 'AUTHOR: support-eng-1@example.com\\nBODY:\\nThanks for the report, looking into it now.\\n' -> LEN=84 as rendered in module docstring, matches len(payload) in Python (code-point count)."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "Mirrors normalize_pdf.py's verified length-prefix pattern exactly: LEN computed via Python len() on the str payload (code-point count, not byte length -- confirmed via direct adversarial test with U+1F600/U+1F921 emoji + accented chars, code-point len=69 vs utf-8 byte len=77, and slicing blob[header_end:header_end+len(payload)] recovers the exact original payload including an embedded '[[/COMMENT 1]]' lookalike substring inside the body). No parser (iter_pages-equivalent) was added to normalize_ticket.py, matching the implementer's stated scope; confirmed no dispatch.py/rawdoc.py or any other consumer of ticket blobs exists anywhere under agents/ (grepped 'dispatch|RawDocument' across agents/, only self-referential docstring mentions in normalize_ticket.py/normalize_pdf.py/normalize_email.py, no actual files)."
+    },
+    "framing_accuracy": {
+      "status": "CONCERN (minor)",
+      "evidence": "Docstring/commit message repeatedly state the fix 'closes' the collision class and content is 'guaranteed unambiguous ... for any future parser.' This is defensible as a render-side/contract-level claim (the LEN header genuinely is computed correctly and would let a correct parser disambiguate), but a LEN field that nothing currently reads doesn't yet exercise or prove end-to-end closure -- there is no round-trip test that actually parses the blob back via slicing in production code (the new tests do their own ad-hoc slicing logic to verify the header value, not exercising a real parser). The wording is more assertive than the actual current guarantee ('parseable-in-principle' would be more precise than 'closed'/'guaranteed unambiguous'), though this is a documentation-precision nit rather than a functional defect, since the docstring does also correctly disclose 'No parser format exists yet' immediately adjacent. Recommend tightening language in a future pass but not blocking."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "git diff 770788b..0cec9a6 on normalize_ticket.py touches only _comment_block(), the module docstring, and the render_ticket_blob docstring -- no changes to _str, _comments_from_list, normalize_ticket_json, normalize_ticket_json_str, normalize_ticket_csv_row, or the scalar-field-emission logic in render_ticket_blob. Spot-checked directly: test_json_scalar_fields_extracted, test_json_and_csv_produce_identical_blob_for_same_record, test_missing_optional_fields_render_empty_and_no_comment_blocks all still present and passing, confirming scalar labeling, JSON/CSV parity, and missing-optional-field handling are unaffected."
+    },
+    "edge_cases": {
+      "status": "PASS",
+      "evidence": "Implementer added test_comment_body_containing_its_own_close_marker_survives and test_comment_body_containing_other_comments_marker_lookalike_survives, both passing. Independently constructed a harsher adversarial case not in the shipped tests (multi-byte Unicode emoji + accented chars + an embedded '[[/COMMENT 1]]' lookalike substring in the same body) and confirmed LEN is computed correctly (code-point count, 69 vs 77 utf-8 bytes) and the payload slices back byte-for-byte/char-for-char correct with the true close marker immediately following -- collision genuinely does not occur at the render level."
+    },
+    "security": {
+      "status": "PASS",
+      "evidence": "Prompt-injection payloads embedded in commit message text (see prompt_injection_observed) were correctly treated as inert data. No secrets, destructive operations, or scope creep. Nothing in normalize_ticket.py executes/evals comment content."
+    },
+    "test_coverage": {
+      "status": "PASS",
+      "evidence": "14/14 test_normalize_ticket.py tests pass (verified independently, run 3x, no flakiness). 32/32 full agents/ingestion/ suite passes (3x, no flakiness). ruff check clean on both changed files. New tests specifically target the fixed bug class with both self-referential and cross-comment marker-lookalike scenarios, matching normalize_pdf.py's established regression-test pattern. Minor gap: no shipped test uses non-ASCII/multi-byte payload to prove code-point-vs-byte LEN correctness (independently verified this myself; recommend adding as a follow-up test)."
+    },
+    "maintainability": {
+      "status": "PASS",
+      "evidence": "Change is a faithful structural mirror of normalize_pdf.py's already-verified pattern, keeping the two normalizers consistent for a future shared/adapted parser in 3.3.4."
+    },
+    "confidence": {
+      "status": "HIGH",
+      "evidence": "Re-derived all core claims independently (LEN computation, adversarial Unicode+lookalike test, scope containment via git diff, absence of any 3.3.4 consumer via grep, regression.jsonl update, 3x test runs, ruff). All implementer claims verified accurate except the minor overclaiming nit in framing_accuracy."
+    }
+  },
+  "reproduction": {
+    "adversarial_unicode_marker_lookalike": "python3 one-off script constructing TicketComment(body=multi-byte-unicode-string-containing-'[[/COMMENT 1]]'-substring) -> render_ticket_blob -> confirmed LEN header uses code-point count (69), payload slices back exactly, true close marker follows immediately after sliced payload.",
+    "fixture_len_check": "Hand-computed len('AUTHOR: support-eng-1@example.com\\nBODY:\\nThanks for the report, looking into it now.\\n') == 84, matches docstring example '[[COMMENT 1 LEN=84]]'.",
+    "test_runs": "agents/.venv/bin/pytest agents/ingestion/test_normalize_ticket.py -q -- 14 passed, x3 runs. agents/.venv/bin/pytest agents/ingestion/ -q -- 32 passed, x3 runs. agents/.venv/bin/ruff check -- All checks passed.",
+    "dispatch_claim_check": "find agents/ingestion -iname '*dispatch*' -o -iname '*rawdoc*' -> no results. grep -rn 'dispatch|RawDocument' agents/ --include='*.py' -> only docstring/comment references in normalize_ticket.py, normalize_pdf.py, normalize_email.py; no actual dispatch.py/rawdoc.py module exists. Confirms 3.3.4 has not landed and the implementer's claim is accurate."
+  },
+  "scope_containment": {
+    "status": "PASS",
+    "evidence": "git show --name-only 0cec9a6f47b4273b2b7f23a564084618e02899a3 -> exactly agents/ingestion/normalize_ticket.py and agents/ingestion/test_normalize_ticket.py, matching the declared scope. No fixture files, no other modules touched."
+  },
+  "regression_index_update": {
+    "status": "PASS",
+    "evidence": ".cdr/index/regression.jsonl line 72 marks hivemind-issue17-3.3.3-F1-marker-collision-regression as RESOLVED, correctly referencing both .cdr/runs/2026-07-09/023-verification (original finding) and .cdr/runs/2026-07-09/024-implementation (fix), and describes the length-prefixed framing accurately."
+  }
+}

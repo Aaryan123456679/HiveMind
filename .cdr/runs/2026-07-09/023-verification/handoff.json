@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-023-verification",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "verdict": "CHANGES_REQUESTED",
+  "pointers": {
+    "source_file": "agents/ingestion/normalize_ticket.py",
+    "vulnerable_function": "agents/ingestion/normalize_ticket.py:217-224 (_comment_block)",
+    "sibling_fixed_reference": "agents/ingestion/normalize_pdf.py:52-65,101-131 (PAGE_MARKER_RE with LEN=, _PAGE_CLOSE_RE)",
+    "sibling_regression_tests_reference": "agents/ingestion/test_normalize_pdf.py (test_page_text_containing_its_own_close_marker_survives_round_trip, test_page_text_containing_other_pages_marker_lookalike_survives)",
+    "test_file": "agents/ingestion/test_normalize_ticket.py",
+    "fixtures": [
+      "agents/ingestion/testdata/ticket_sample_1.json",
+      "agents/ingestion/testdata/ticket_sample_1.csv",
+      "agents/ingestion/testdata/ticket_sample_2_minimal.csv"
+    ],
+    "verification_report": ".cdr/runs/2026-07-09/023-verification/verification.json"
+  },
+  "regression_index_entry_key": "marker-collision-3.3.3-comments"
+}

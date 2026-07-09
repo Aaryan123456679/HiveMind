@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-025-verification",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit_reviewed": "0cec9a6f47b4273b2b7f23a564084618e02899a3",
+  "pointers": {
+    "verification_report": ".cdr/runs/2026-07-09/025-verification/verification.json",
+    "prior_finding_run": ".cdr/runs/2026-07-09/023-verification/verification.json",
+    "fix_commit": ".cdr/runs/2026-07-09/024-implementation",
+    "regression_index_entry": ".cdr/index/regression.jsonl:72",
+    "source_files": [
+      "agents/ingestion/normalize_ticket.py",
+      "agents/ingestion/test_normalize_ticket.py"
+    ],
+    "key_function": "agents/ingestion/normalize_ticket.py:_comment_block (approx lines 232-253)"
+  },
+  "open_items_for_next_agent": [
+    "Minor doc-precision nit: tighten 'closed/guaranteed unambiguous' framing in normalize_ticket.py docstring to 'parseable-in-principle, full closure pending a consuming parser in 3.3.4' -- non-blocking.",
+    "Optional: add a non-ASCII/multi-byte-Unicode fixture test to test_normalize_ticket.py proving code-point-vs-byte LEN correctness explicitly (currently only independently verified by this verification agent, not checked into the test suite)."
+  ]
+}

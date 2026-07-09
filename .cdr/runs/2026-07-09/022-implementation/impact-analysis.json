@@ -1,0 +1,24 @@
+{
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "new_files": [
+    "agents/ingestion/normalize_ticket.py",
+    "agents/ingestion/test_normalize_ticket.py",
+    "agents/ingestion/testdata/ticket_sample_1.json",
+    "agents/ingestion/testdata/ticket_sample_1.csv",
+    "agents/ingestion/testdata/ticket_sample_2_minimal.csv"
+  ],
+  "modified_files": [],
+  "deleted_files": [],
+  "new_dependencies": [],
+  "downstream_consumers": [
+    {
+      "module": "agents/ingestion/dispatch.py (subtask 3.3.4, not yet implemented)",
+      "impact": "Will call normalize_ticket_json/normalize_ticket_csv_row and wrap the returned blob as RawDocument.text; no code exists there yet to break."
+    }
+  ],
+  "risk_notes": [
+    "No existing code depends on agents/ingestion/normalize_ticket.py yet (new module, package currently only exports normalize_pdf and normalize_email); zero regression risk to 3.3.1/3.3.2.",
+    "CSV row cannot natively express a nested list field; comments modeled as a JSON-encoded string column in CSV input, which is a disclosed judgment call, not a silent behavior difference between JSON and CSV code paths.",
+    "No real support-ticket dataset exists in data/ yet (issue #19 scope) -- schema is an original disclosed design, flagged for possible revision once a real dataset lands."
+  ]
+}

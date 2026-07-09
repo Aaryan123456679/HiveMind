@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-024-implementation",
+  "macro": "cdr-implement-fix-cycle",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer-fix-cycle-attempt-1",
+  "git_head": "0cec9a6f47b4273b2b7f23a564084618e02899a3",
+  "run_key": "issue17-3.3.3-fix1-770788bb54eb738e7f418e4eefcfb6a28b112993-marker-collision",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:00:00Z"
+}

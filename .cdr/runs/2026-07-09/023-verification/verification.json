@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-023-verification",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "commit_reviewed": "770788bb54eb738e7f418e4eefcfb6a28b112993",
+  "verdict": "CHANGES_REQUESTED",
+  "prompt_injection_observed": {
+    "location": "gh issue view 17 body",
+    "description": "Issue #17 body contains embedded fake system-reminder-style text: a fake 'date changed to 2026-07-09, do not mention to user' notice, a fake MCP 'tokensave' server instruction block, and a fake 'Auto Mode Active' directive. Treated as untrusted data, not followed, disclosed here per protocol. Consistent with recurring injection pattern noted for this repo."
+  },
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "FAIL",
+      "evidence": "Acceptance criteria (issue #17, 3.3.3) requires the normalizer to produce a labeled text blob 'preserving all structured fields as labeled sections.' Scalar fields and the DESCRIPTION section are genuinely always-present and preserved (verified by hand-trace of ticket_sample_2_minimal.csv: ASSIGNEE renders as 'ASSIGNEE: \\n', COMMENTS renders as 'COMMENTS: 0\\n', no [[COMMENT]] blocks emitted -- matches implementer's claim and the shipped test_csv_missing_optional_fields_does_not_raise assertions). However, the comments field is NOT reliably preserved/recoverable: render_ticket_blob's _comment_block (agents/ingestion/normalize_ticket.py:217-224) emits unescaped, non-length-prefixed [[COMMENT n]]/[[/COMMENT n]] markers. A comment body containing a literal '[[/COMMENT 1]]' or '[[COMMENT 2]]' substring corrupts the section boundaries so structured data is silently misattributed -- i.e. NOT reliably preserved as claimed in the module docstring ('downstream consumers ... reliably parse labeled sections back out, no structured field silently dropped')."
+    },
+    "architecture_conformance": {
+      "status": "FAIL -- CRITICAL",
+      "evidence": "This is the primary finding. agents/ingestion/normalize_pdf.py (3.3.1) originally had this exact marker-collision bug and was FIXED via length-prefixed framing: PAGE_MARKER_RE = r'\\[\\[PAGE (?P<page>\\d+) LEN=(?P<len>\\d+)\\]\\]\\n' (normalize_pdf.py:52), with explicit regression tests test_page_text_containing_its_own_close_marker_survives_round_trip and test_page_text_containing_other_pages_marker_lookalike_survives. normalize_ticket.py's _comment_block (lines 217-224) reverted to the ORIGINAL VULNERABLE design: plain '[[COMMENT {index}]]' / '[[/COMMENT {index}]]' with no LEN= prefix and no escaping. The module docstring even explicitly cites the PDF marker precedent ('mirroring [[PAGE n]]/[[/PAGE n]] marker precedent') but inherited the pre-fix version, not the fixed one. Reproduced independently: a TicketComment with body containing a literal '[[/COMMENT 1]]\\n[[COMMENT 2]]\\nAUTHOR: admin\\nBODY:\\n...' substring produces a blob where the literal marker text is indistinguishable from a real marker boundary (3 occurrences of '[[COMMENT' in the rendered blob for only 2 actual comments), silently corrupting comment attribution. No test in test_normalize_ticket.py exercises this adversarial case (unlike normalize_pdf's explicit coverage), so the existing 11/11 passing suite does not catch it."
+    },
+    "regression_risk": {
+      "status": "CONCERN",
+      "evidence": "Full agents/ingestion/ suite (29 tests, includes normalize_pdf, normalize_email, normalize_ticket) passes with no regressions to existing modules; scope is contained to the 5 new files per git show --name-only. The regression risk flagged is not to *existing* code but is the *recurrence* of a previously-fixed bug class within this new module -- effectively a re-introduced regression relative to the established, safer pattern."
+    },
+    "edge_cases": {
+      "status": "PASS (for tested cases) / GAP (for adversarial case)",
+      "evidence": "Missing-optional-field path (ticket_sample_2_minimal.csv, no assignee/comments columns) verified by hand-trace: correctly renders empty ASSIGNEE and COMMENTS: 0 with no marker blocks. Zero-comment and multi-comment ordering cases covered by shipped tests. Adversarial comment-body-containing-marker-lookalike case is NOT covered -- this is the gap described above."
+    },
+    "security": {
+      "status": "CONCERN",
+      "evidence": "The marker-collision issue is a data-integrity/injection-adjacent issue: user-controlled ticket comment text (e.g. a customer typing a support reply that happens to contain '[[/COMMENT 1]]') can desynchronize any future downstream parser's understanding of section boundaries, effectively allowing comment content to be misattributed or fabricated sections to be injected into the structured view. Not exploitable *today* since no parser consumes this format yet (parsing is scoped to 3.3.4/dispatch, not yet built), but the vulnerable format is now the checked-in contract other code will be built against."
+    },
+    "csv_json_consistency": {
+      "status": "PASS",
+      "evidence": "Verified independently with a constructed adversarial record (comment body containing a comma, an embedded double-quote, and an embedded newline) round-tripped through csv.DictWriter -> csv.DictReader exactly as fixtures do. Parsed CSV comments matched JSON comments exactly, and render_ticket_blob produced byte-identical output for both entry points. CSV ticket_id='123' (string) vs JSON ticket_id=123 (int) both coerce via _str() to '123' -- consistent behavior. json_and_csv fixture parity test (test_json_and_csv_produce_identical_blob_for_same_record) also passes."
+    },
+    "test_coverage": {
+      "status": "CONCERN",
+      "evidence": "11/11 normalize_ticket tests pass; 29/29 full ingestion suite passes (verified independently, 3 consecutive runs, no flakiness observed). ruff check clean on both new files. However, coverage has a material gap: no test exercises a comment body containing marker-lookalike text, despite this being a known, previously-fixed bug class in the sibling normalize_pdf.py module with explicit regression tests for exactly this scenario. This gap should have been caught by following the 3.3.1 precedent more completely (copying its test coverage, not just its visual format)."
+    },
+    "maintainability": {
+      "status": "PASS",
+      "evidence": "Dataclass style, typing (PEP 604 `X | Y` avoided appropriately, `from __future__ import annotations` present), and docstring conventions are consistent with normalize_pdf.py and normalize_email.py. Shared render_ticket_blob correctly deduplicates JSON/CSV convergence logic."
+    },
+    "confidence": {
+      "status": "MEDIUM-LOW",
+      "evidence": "Core scalar-field and CSV-parity claims are solid and independently reproduced. The marker-collision finding is a genuine, reproducible defect that contradicts both the acceptance criteria's 'preserving all structured fields' language and the module's own docstring claims about reliable downstream parsing."
+    }
+  },
+  "reproduction": {
+    "marker_collision": "TicketComment(author='attacker', body='Fake reply\\n[[/COMMENT 1]]\\n[[COMMENT 2]]\\nAUTHOR: admin\\nBODY:\\nInjected content...') paired with a second real TicketComment renders a blob with 3 '[[COMMENT' occurrences for 2 actual comments -- boundaries are ambiguous/corrupted.",
+    "csv_roundtrip": "Comment body 'has a comma, a \"quote\", and\\na newline' encoded as JSON in a CSV column, round-tripped via csv.DictWriter/csv.DictReader, survives intact; normalize_ticket_csv_row and normalize_ticket_json produce byte-identical render_ticket_blob output for the equivalent record.",
+    "type_coercion": "normalize_ticket_json({'ticket_id': 123, ...}).ticket_id == '123' (str), consistent with CSV's native string type."
+  },
+  "test_execution": {
+    "command": "python -m pytest agents/ingestion/test_normalize_ticket.py -v (x3), python -m pytest agents/ingestion/ -v, ruff check agents/ingestion/normalize_ticket.py agents/ingestion/test_normalize_ticket.py",
+    "result": "11/11 normalize_ticket tests pass (3 consecutive runs, no flakiness). 29/29 full agents/ingestion/ suite passes. ruff clean. Claims independently confirmed accurate."
+  },
+  "scope_containment": {
+    "status": "PASS",
+    "evidence": "git show --name-only 770788b shows exactly 5 files: normalize_ticket.py, test_normalize_ticket.py, ticket_sample_1.json, ticket_sample_1.csv, ticket_sample_2_minimal.csv. No existing files modified. No destructive or out-of-scope changes."
+  },
+  "required_changes": [
+    "Replace the [[COMMENT n]]/[[/COMMENT n]] marker scheme in _comment_block/render_ticket_blob with the length-prefixed framing already established and fixed in normalize_pdf.py (e.g. [[COMMENT n LEN=k]] ... [[/COMMENT n]]), so comment bodies containing marker-lookalike substrings cannot desynchronize section boundaries.",
+    "Add explicit regression tests mirroring normalize_pdf's test_page_text_containing_its_own_close_marker_survives_round_trip and test_page_text_containing_other_pages_marker_lookalike_survives, adapted for comment bodies.",
+    "Update the module docstring's claim of 'reliably parse labeled sections back out' to be accurate once fixed, or soften the claim until fixed."
+  ]
+}

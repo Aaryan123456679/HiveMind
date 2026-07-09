@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-025-verification",
+  "macro": "cdr-verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer-fix-cycle-2",
+  "git_head": "0cec9a6f47b4273b2b7f23a564084618e02899a3",
+  "run_key": "issue17-3.3.3-verify-attempt2-0cec9a6f",
+  "status": "completed",
+  "last_completed_step": "wrote_verification_and_handoff",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:20:00Z"
+}

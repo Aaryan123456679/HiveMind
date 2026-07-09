@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-022-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "git_head": "1d29544cac740c9039bd359c26014868070ea3d9",
+  "run_key": "issue17-3.3.3-support-ticket-normalizer-v1-1d29544c",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-09T11:19:12Z",
+  "ended_at": "2026-07-09T11:40:00Z"
+}

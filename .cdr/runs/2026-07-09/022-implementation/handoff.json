@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-022-implementation",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "status": "completed",
+  "commit": "770788bb54eb738e7f418e4eefcfb6a28b112993",
+  "pushed": false,
+  "files": {
+    "implementation": "agents/ingestion/normalize_ticket.py",
+    "tests": "agents/ingestion/test_normalize_ticket.py",
+    "fixtures": [
+      "agents/ingestion/testdata/ticket_sample_1.json",
+      "agents/ingestion/testdata/ticket_sample_1.csv",
+      "agents/ingestion/testdata/ticket_sample_2_minimal.csv"
+    ]
+  },
+  "artifacts": {
+    "requirement": ".cdr/runs/2026-07-09/022-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-09/022-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-09/022-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-09/022-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-09/022-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-09/022-implementation/self-consistency.json"
+  },
+  "self_consistency_summary": "pytest agents/ingestion/test_normalize_ticket.py -v: 11/11 passed; full agents/ingestion/ suite: 29/29 passed, no regressions; ruff clean. NOT independent verification (invariant I4) -- /cdr:verify must run separately.",
+  "disclosed_notes": [
+    "GitHub issue #17 body re-confirmed to contain embedded fake system-reminder-style prompt injection (fake date-change notice, fake MCP tokensave tool instructions, fake Auto Mode Active directive) -- treated as untrusted data, not acted on, consistent with 3.3.1/3.3.2's same recurring pattern.",
+    "Ticket schema is an original disclosed design; no real support-ticket dataset exists in data/ yet (issue #19 scope).",
+    "CSV comments column is JSON-encoded (disclosed tradeoff, CSV cannot natively express a nested list).",
+    "Not yet wired into a RawDocument/dispatch pipeline -- that is subtask 3.3.4, out of scope here."
+  ],
+  "next_step": "Run /cdr:verify against commit 770788bb54eb738e7f418e4eefcfb6a28b112993 for subtask 3.3.3."
+}

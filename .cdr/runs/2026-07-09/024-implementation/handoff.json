@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-024-implementation",
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer-fix-cycle-attempt-1",
+  "status": "completed",
+  "commit": "0cec9a6f47b4273b2b7f23a564084618e02899a3",
+  "responds_to_run": ".cdr/runs/2026-07-09/023-verification/verification.json",
+  "regression_index_entry": ".cdr/index/regression.jsonl (last line, resolves_id=hivemind-issue17-3.3.3-F1-marker-collision-regression)",
+  "files_changed": [
+    "agents/ingestion/normalize_ticket.py",
+    "agents/ingestion/test_normalize_ticket.py"
+  ],
+  "pointers": {
+    "fix_location": "agents/ingestion/normalize_ticket.py:_comment_block (now emits [[COMMENT n LEN=k]] header)",
+    "reference_pattern": "agents/ingestion/normalize_pdf.py:_page_marker / PAGE_MARKER_RE",
+    "new_tests": [
+      "agents/ingestion/test_normalize_ticket.py:test_comment_marker_header_has_correct_len_prefix",
+      "agents/ingestion/test_normalize_ticket.py:test_comment_body_containing_its_own_close_marker_lookalike_survives",
+      "agents/ingestion/test_normalize_ticket.py:test_comment_body_containing_other_comments_marker_lookalike_survives"
+    ]
+  },
+  "test_results": {
+    "test_normalize_ticket.py": "14/14 passed x3 (no flakiness)",
+    "agents/ingestion full suite": "32/32 passed x3 (no flakiness)",
+    "ruff": "clean"
+  },
+  "no_parser_added": true,
+  "no_parser_added_reason": "Nothing downstream consumes ticket blobs yet (RawDocument builder / dispatch.py is issue 3.3.4, not yet built), unlike 3.3.1 which added iter_pages() because a consumer already existed. LEN prefix embedded at render time regardless, closing the rendering-level correctness/collision issue; a parser can be added safely later against this now-unambiguous format.",
+  "self_verification_performed": false,
+  "next_step": "re-verification by /cdr:verify against commit 0cec9a6f47b4273b2b7f23a564084618e02899a3"
+}

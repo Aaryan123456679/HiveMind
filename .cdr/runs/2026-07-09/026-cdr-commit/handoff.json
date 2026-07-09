@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-026-cdr-commit",
+  "produced": {
+    "commit_doc": ".cdr/commits/task-3.3.3.md",
+    "task_index_entry": ".cdr/index/task.jsonl (task-3.3.3, appended)",
+    "feature_index_entry": ".cdr/index/feature.jsonl (hivemind-ticket-normalizer, appended)"
+  },
+  "verified_against": [
+    ".cdr/runs/2026-07-09/023-verification/verification.json",
+    ".cdr/runs/2026-07-09/025-verification/verification.json"
+  ],
+  "regression_index": {
+    "status": "already_present_not_duplicated",
+    "id": "hivemind-issue17-3.3.3-F1-marker-collision-regression",
+    "location": ".cdr/index/regression.jsonl"
+  },
+  "next_subtask": "3.3.4 (RawDocument + dispatch, final subtask of issue #17)"
+}

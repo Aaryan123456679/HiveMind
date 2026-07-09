@@ -1,0 +1,19 @@
+{
+  "subtask": "issue-17-3.3.3-support-ticket-normalizer",
+  "note": "Internal sanity only -- NOT independent verification (invariant I4); a separate /cdr:verify agent must independently verify.",
+  "checks": [
+    {
+      "check": "pytest agents/ingestion/test_normalize_ticket.py -v (via agents/.venv)",
+      "result": "11 passed"
+    },
+    {
+      "check": "pytest agents/ingestion/ -v (full package, regression check against 3.3.1/3.3.2)",
+      "result": "29 passed (11 new + 18 pre-existing), no regressions"
+    },
+    {
+      "check": "ruff check agents/ingestion/normalize_ticket.py agents/ingestion/test_normalize_ticket.py",
+      "result": "All checks passed"
+    }
+  ],
+  "validation_matrix_coverage": "10/10 rows covered, see validation-matrix.json"
+}
