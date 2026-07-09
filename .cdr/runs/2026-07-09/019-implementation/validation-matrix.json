@@ -1,0 +1,10 @@
+[
+  {"criterion": "Sender extracted correctly from raw Enron-format email", "test": "test_sender_extracted", "status": "covered"},
+  {"criterion": "Subject extracted correctly, including Re:-prefixed subject", "test": "test_subject_extracted / test_reply_subject_extracted", "status": "covered"},
+  {"criterion": "Thread id: fallback tier (no In-Reply-To/References) derives normalized-subject key", "test": "test_thread_fallback_from_subject", "status": "covered"},
+  {"criterion": "Thread id: In-Reply-To header takes priority when present", "test": "test_thread_uses_in_reply_to_when_present", "status": "covered"},
+  {"criterion": "Body extracted correctly, matches fixture body text", "test": "test_body_extracted", "status": "covered"},
+  {"criterion": "Missing optional headers (Cc/Bcc/X-*) handled gracefully, core fields still populate", "test": "test_minimal_headers_no_optional_fields", "status": "covered"},
+  {"criterion": "Subject-normalization fallback groups Re:/case/whitespace variants into same thread key", "test": "test_subject_normalization_groups_variants", "status": "covered"},
+  {"criterion": "Nonexistent file path raises rather than silently returning empty fields", "test": "test_normalize_email_raises_on_nonexistent_path", "status": "covered"}
+]

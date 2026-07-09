@@ -1,0 +1,30 @@
+{
+  "blast_radius": {
+    "new_files": [
+      "agents/ingestion/normalize_email.py",
+      "agents/ingestion/test_normalize_email.py",
+      "agents/ingestion/testdata/enron_sample_1.txt",
+      "agents/ingestion/testdata/enron_sample_2_reply.txt",
+      "agents/ingestion/testdata/enron_sample_3_no_optional_headers.txt"
+    ],
+    "modified_files": [],
+    "no_dependency_changes": "stdlib email.parser used; agents/pyproject.toml unchanged",
+    "no_other_consumers": "grep-confirmed no other .py file in agents/ references normalize_email, EmailFields, or any Enron-specific symbol; agents/ingestion/dispatch.py (3.3.4) not yet built. Purely additive change, zero risk to existing 3.3.1 code or any other module."
+  },
+  "risks": [
+    {
+      "risk": "Thread-id derivation is a judgment call (no native corpus field) and could be interpreted differently by a future 3.3.4/dispatch consumer or by a verifier.",
+      "mitigation": "Explicitly documented in module docstring and plan.md: primary signal is In-Reply-To/References when present (RFC-defensible, standard thread-linking headers); fallback is a normalized-subject-based grouping key (case-folded, Re:/Fwd:/Fw: prefixes stripped, whitespace collapsed) when those headers are absent, which is a documented, common approach in email-normalization/threading literature. Both paths are unit-tested."
+    },
+    {
+      "risk": "Hand-authored fixtures might not faithfully represent real Enron corpus quirks (e.g. missing headers, folded header lines, non-UTF-8 bytes in real corpus).",
+      "mitigation": "Fixtures modeled directly on documented real Enron maildir header conventions (Message-ID, Date, From, To, Subject, Cc, Bcc, X-From, X-To, X-cc, X-bcc, X-Folder, X-Origin, X-FileName) per public knowledge of the corpus format. One fixture intentionally omits optional headers (Cc/Bcc/In-Reply-To) to test the corpus's common case. Real-corpus byte-level edge cases (charset issues) are out of scope for this subtask's acceptance criteria and better addressed under issue #19 (real dataset ingestion) if/when real files are staged."
+    }
+  ],
+  "out_of_scope_confirmed": [
+    "RawDocument wrapping / dispatch.py (3.3.4)",
+    "Support-ticket normalizer (3.3.3)",
+    "Directory/corpus-level batch ingestion of a full maildir tree",
+    "Staging real Enron dataset files under data/ (issue #19)"
+  ]
+}

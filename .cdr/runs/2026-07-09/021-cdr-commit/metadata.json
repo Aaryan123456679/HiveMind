@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "021-cdr-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "commit",
+  "subtask": "17-3.3.2-email-normalizer",
+  "git_head": "4bdfb31f12d9a5bd2f541a190ac1494e0e37166d",
+  "run_key": "issue17-3.3.2-4bdfb31f-commit",
+  "status": "completed",
+  "last_completed_step": "indexes_and_pending_updated",
+  "started_at": "2026-07-09T11:20:00Z",
+  "ended_at": "2026-07-09T11:26:00Z"
+}

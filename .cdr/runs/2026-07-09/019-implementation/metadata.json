@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "019-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "3.3.2 - agents/ingestion/normalize_email.py Enron-specific email normalizer (issue #17)",
+  "git_head": "d0b3d5575d136aaa35acbcc9f31dc183f00a7775",
+  "run_key": "issue17-3.3.2-email-normalizer-d0b3d55",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-09T11:08:17Z",
+  "ended_at": "2026-07-09T11:30:00Z"
+}

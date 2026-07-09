@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "run_id": "019-implementation",
+  "subtask": "issue-17-3.3.2-email-normalizer",
+  "final_commit": "4bdfb31f12d9a5bd2f541a190ac1494e0e37166d",
+  "commits": [
+    {
+      "hash": "4bdfb31f12d9a5bd2f541a190ac1494e0e37166d",
+      "summary": "feat: add Enron-format email normalizer (agents/ingestion, issue #17 3.3.2)"
+    }
+  ],
+  "changed_files": [
+    "agents/ingestion/normalize_email.py",
+    "agents/ingestion/test_normalize_email.py",
+    "agents/ingestion/testdata/enron_sample_1.txt",
+    "agents/ingestion/testdata/enron_sample_2_reply.txt",
+    "agents/ingestion/testdata/enron_sample_3_no_optional_headers.txt"
+  ],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-09/019-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-09/019-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-09/019-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-09/019-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-09/019-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-09/019-implementation/self-consistency.json",
+    "prior_precedent_run": ".cdr/runs/2026-07-09/014-implementation (3.3.1 normalize_pdf, conventions carried forward)"
+  },
+  "key_judgment_calls_for_verifier": [
+    "Thread-id derivation is a two-tier fallback (In-Reply-To/References verbatim, else normalized-subject key with 'subject:' prefix) since the real Enron corpus has no native thread-id header -- documented in normalize_email.py module docstring and plan.md, not silently invented.",
+    "Fixtures are hand-authored (not real corpus data or programmatic generation) since no real Enron sample files exist anywhere in this repo (confirmed via find/grep; data/ only has a planning README for issue #19) and Enron format is plain-text (unlike 3.3.1's binary PDF, where programmatic generation was necessary).",
+    "Sender field prefers bare address (via email.utils.parseaddr) over full 'Display Name <addr>' text when an address is parseable."
+  ],
+  "test_status": "9/9 passed via agents/.venv/bin/python -m pytest agents/ingestion/test_normalize_email.py -v, run 3x for flakiness, all consistent",
+  "lint_status": "ruff check clean",
+  "self_verification_performed": false,
+  "next_step": "Requires independent verification via /cdr:verify (invariant I4 -- this agent does not verify its own work)."
+}

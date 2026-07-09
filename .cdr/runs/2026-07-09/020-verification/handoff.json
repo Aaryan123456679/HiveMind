@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "run_id": "020-verification",
+  "subtask": "17-3.3.2-email-normalizer",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "source": "agents/ingestion/normalize_email.py",
+    "tests": "agents/ingestion/test_normalize_email.py",
+    "fixtures": [
+      "agents/ingestion/testdata/enron_sample_1.txt",
+      "agents/ingestion/testdata/enron_sample_2_reply.txt",
+      "agents/ingestion/testdata/enron_sample_3_no_optional_headers.txt"
+    ],
+    "reference_convention_file": "agents/ingestion/normalize_pdf.py",
+    "requirements_source": "gh issue view 17 (subtask 3.3.2)",
+    "verification_report": ".cdr/runs/2026-07-09/020-verification/verification.json"
+  },
+  "key_findings": [
+    "Multi-prefix subject stripping (Re: Re: FW: ...) verified correct via regex quantifier +; hand-traced, not in repo's own fixtures.",
+    "Display-name From, multipart, and quoted-printable bodies handled correctly but NOT covered by shipped fixtures/tests -- coverage gap flagged.",
+    "9/9 tests pass x3, ruff clean, scope contained to 5 declared files.",
+    "No real Enron dataset in repo; data/README.md confirms future 'Enron email subsample' dataset-prep work is out of this subtask's scope."
+  ],
+  "status": "completed"
+}

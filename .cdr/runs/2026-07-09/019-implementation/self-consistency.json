@@ -1,0 +1,11 @@
+{
+  "note": "Internal sanity check only -- NOT independent verification (invariant I4). A separate /cdr:verify run must independently verify this work.",
+  "test_command": "agents/.venv/bin/python -m pytest agents/ingestion/test_normalize_email.py -v",
+  "test_status": "9/9 passed, run 3x consecutively for flakiness, all consistent (0.01-0.04s each)",
+  "lint_status": "ruff check clean on agents/ingestion/normalize_email.py and agents/ingestion/test_normalize_email.py",
+  "validation_matrix_coverage": "8/8 criteria in validation-matrix.json covered by name-matched tests",
+  "no_new_dependencies": "stdlib email module only; agents/pyproject.toml unchanged",
+  "out_of_scope_untouched": "no changes to normalize_pdf.py, dispatch.py, rawdoc.py, or any other module",
+  "self_verification_performed": false,
+  "next_step": "Requires independent verification via /cdr:verify before this subtask can be closed (invariant I4 -- this agent does not verify its own work)."
+}

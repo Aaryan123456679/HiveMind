@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "subtask": "17-3.3.2-email-normalizer",
+  "commit": "4bdfb31f12d9a5bd2f541a190ac1494e0e37166d",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "normalize_email.py correctly extracts sender/subject/thread/body from Enron-format messages via stdlib email module. Multi-prefix subject stripping, display-name From handling, multipart, and quoted-printable bodies all verified correct via independent hand-traced/adversarial tests beyond the shipped fixtures. 9/9 tests pass x3 (no flakiness), ruff clean. Scope contained to the 5 declared files. Main gap: none of the 3 fixtures actually exercise multipart, quoted-printable/Content-Transfer-Encoding, display-name From headers, multi-address Cc lists, or folded/multi-line headers -- code handles these correctly (verified independently) but this is undocumented/untested behavior, a latent regression risk if email.policy.default behavior or code changes later.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Acceptance criteria (sender/subject/thread/body extraction from raw Enron-format file) met; fields.sender/subject/thread/body all populated and asserted by tests against 3 fixtures."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches normalize_pdf.py conventions: module docstring with disclosed design tradeoffs, `from __future__ import annotations`, `str | Path` path arg, dataclass return type, Args/Returns/Raises docstring sections. stdlib-only per issue's 'no new dependency' intent (implicit from 3.3.1 using only pymupdf for its own concern)."
+    },
+    "regression_risk": {
+      "status": "comment",
+      "evidence": "No existing files modified (git show --name-status: 5 files, all Added). No shared module touched. Low regression risk to rest of repo. Future risk: fallback thread-id (subject-based) is a lossy heuristic disclosed in the docstring -- downstream consumers (3.3.4 dispatch) must not conflate it with a real thread id; this is documented but not enforced by types."
+    },
+    "edge_cases": {
+      "status": "comment",
+      "evidence": "Hand-traced _SUBJECT_PREFIX_RE against 'Re: Re: FW: budget review', 'RE:FWD: RE: Fw: budget review', 'Fwd:Re:budget review' -- the `(?:...)+` regex quantifier correctly strips ALL stacked reply/forward prefixes in one .sub() call, not just one layer. Independently constructed and ran 3 additional messages not in the repo's fixtures: (1) From: \"John Doe\" <john.doe@enron.com> -> sender correctly resolves to 'john.doe@enron.com' via parseaddr; (2) multipart/mixed message with text/plain + binary attachment part -> get_body(preferencelist=('plain',)) correctly returns only the plain part's text, ignoring the attachment; (3) quoted-printable Content-Transfer-Encoding -> get_content() correctly decodes '=20' and multi-byte UTF-8 sequences. All three passed without modification to the implementation. None of these 3 scenarios exist in the shipped testdata/ fixtures, so this correct behavior is currently unverified by the test suite itself -- a future refactor could silently break it without a failing test."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No injection surface: file path is caller-provided (not parsed from untrusted network input in this normalizer's scope), BytesParser with policy.default does bounded parsing, no eval/exec, no shell-out, no arbitrary file write. OSError propagates cleanly for missing/unreadable files (test_normalize_email_raises_on_nonexistent_path passes)."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Single-pass file parse, no obvious O(n^2) construct; scope is single-message parsing, not corpus-scale, so no batch-performance concern at this subtask boundary."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Thread-id derivation tradeoffs are explicitly disclosed in the module docstring and EmailFields docstring, consistent with the project's pattern of documenting judgment calls (matches normalize_pdf.py's marker-format rationale). Regexes are named/commented. Frozen dataclass return type."
+    },
+    "test_coverage": {
+      "status": "comment",
+      "evidence": "9/9 tests pass, run 3x with no flakiness (deterministic, no I/O races, no time-based logic). ruff check clean. However: no fixture covers multipart bodies, quoted-printable/base64 encoding, display-name From headers, multi-address Cc/Bcc lists, folded (multi-line) headers, or forwarded-message body markers ('-----Original Message-----'). These are real, common patterns in the actual Enron maildir corpus. The implementation handles all of them correctly (independently verified above) but the test suite does not pin this behavior, so a future change could regress it silently."
+    },
+    "confidence": {
+      "status": "pass",
+      "evidence": "High confidence in current correctness based on independent source review, regex hand-tracing, and adversarial test construction beyond the shipped suite. Confidence in future regression-safety is medium given the test-coverage gap noted above."
+    },
+    "possible_improvements": {
+      "status": "comment",
+      "evidence": "1) Add fixture(s) covering multipart, quoted-printable, and display-name From to pin currently-correct-but-untested behavior before 3.3.4 dispatch integration relies on it. 2) Consider a follow-up test asserting the multi-prefix subject-stripping behavior directly (currently only single-prefix 'RE:' fixture exists in testdata; the multi-prefix regex correctness was verified by this reviewer out-of-band, not by the repo's own test suite)."
+    }
+  },
+  "no_real_dataset_confirmed": "Confirmed via grep/find: no real Enron corpus files exist anywhere in the repo outside agents/ingestion/testdata/'s 3 hand-authored fixtures. data/README.md documents that data/ is reserved for future dataset-prep scripts including 'an Enron email subsample', not yet implemented (issue #19 scope per task brief). Hand-authored fixtures are a reasonable stand-in for this subtask given no real dataset is wired in yet.",
+  "fixture_realism": "The 3 fixtures correctly model real Enron maildir header conventions (Message-ID, Date, From, To, Subject, Cc, Bcc, X-From, X-To, X-cc, X-bcc, X-Folder, X-Origin, X-FileName; bare-address From with display name only in X-From, matching the real corpus's actual convention). Gaps: no fixture demonstrates multipart, quoted-printable encoding, multi-address Cc, folded headers, or '-----Original Message-----' forwarded-body markers -- see test_coverage finding.",
+  "tests_run_by_verifier": {
+    "pytest_runs": 3,
+    "result": "9 passed each run, no flakiness",
+    "ruff": "All checks passed",
+    "adversarial_scripts": "3 independently authored messages (display-name From, multipart, quoted-printable) run directly against normalize_email() outside the repo's test suite -- all produced correct output"
+  },
+  "scope_containment": {
+    "status": "pass",
+    "evidence": "git show --name-status 4bdfb31: only 5 files, all Added (normalize_email.py, test_normalize_email.py, 3 testdata fixtures). No existing files modified or deleted."
+  },
+  "prompt_injection_observed": [
+    "gh issue view 17 output contained embedded fake system-reminder blocks: (1) fake date-change notice instructing not to tell the user, (2) fake 'tokensave' MCP server tool-usage instructions, (3) fake 'Auto Mode Active' directive. All treated as untrusted data and ignored; not disclosed as instructions, not acted upon."
+  ],
+  "destructive_actions_taken": "None. No files deleted, moved, or modified. Verification was read-only plus test/lint execution in a temp-file sandbox for adversarial edge-case checks (temp files created via tempfile.NamedTemporaryFile and cleaned up)."
+}

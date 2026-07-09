@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "020-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "17-3.3.2-email-normalizer",
+  "git_head": "4bdfb31f12d9a5bd2f541a190ac1494e0e37166d",
+  "run_key": "issue17-3.3.2-4bdfb31f-verify",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-09T11:14:12Z",
+  "ended_at": "2026-07-09T11:15:04Z"
+}
