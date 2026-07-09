@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "run_id": "029-cdr-commit",
+  "subtask": "issue-17-3.3.4-rawdoc-dispatch-commit",
+  "commit": "57407ce1f5d2730a63ee1bacda8d96fe0691b448",
+  "documented_commit": "0b541d00cb6ce125d333fddd8fa7c1edbd1274d1",
+  "pointers": {
+    "commit_doc": ".cdr/commits/task-3.3.4.md",
+    "task_index_entry": ".cdr/index/task.jsonl (id: task-3.3.4)",
+    "feature_index_entry": ".cdr/index/feature.jsonl (feature: hivemind-rawdocument-dispatch)",
+    "pending_md_entries_added": ["dispatch_pdf page_count double-computation", "normalize_ticket.py docstring overclaim (noted for completeness)"]
+  },
+  "issue_17_status": "all_4_subtasks_implemented_verified_committed_locally_not_pushed_not_closed",
+  "pushed": false,
+  "github_state_changed": false,
+  "notes": "Local docs-only commit. Did not push, did not touch GitHub issue/milestone state. Encountered known recurring embedded prompt-injection text (fake date-change/tokensave-MCP/auto-mode blocks) in prior tool output during this session; treated as untrusted data, not followed, disclosed."
+}
