@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "run_id": "002-implementation",
+  "subtask": "3.2.2 - engine/rpc/server.go HiveMind gRPC server handlers (issue #16)",
+  "status": "completed",
+  "final_commit": "4f20044f93f45de078307393d6503e1b05d4e3f5",
+  "final_commit_verified_via": "git rev-parse HEAD (post-commit)",
+  "parent_commit": "72dcf057d83ddc5d81be2b424d43da1870562b03",
+  "files_changed": [
+    "engine/rpc/server.go",
+    "engine/rpc/server_test.go",
+    ".cdr/runs/2026-07-09/002-implementation/*"
+  ],
+  "pointers": {
+    "server_struct": "engine/rpc/server.go:34-51 (Server struct)",
+    "constructor": "engine/rpc/server.go:56-73 (NewServer)",
+    "error_mapping": "engine/rpc/server.go:79-88 (mapCatalogError)",
+    "put_segment": "engine/rpc/server.go:97-140",
+    "get_file": "engine/rpc/server.go:145-161",
+    "read_partial": "engine/rpc/server.go:165-179",
+    "edge_type_conversion": "engine/rpc/server.go:184-217 (protoEdgeTypeToGraph / graphEdgeTypeToProto -- see enum-mismatch note)",
+    "graph_neighbors": "engine/rpc/server.go:227-262",
+    "search_candidates": "engine/rpc/server.go:270-304 (with max_results==0 semantics doc comment)",
+    "tests": "engine/rpc/server_test.go (TestRPCServerHandlers with 15 subtests, TestEdgeTypeConversionRoundTrip)"
+  },
+  "acceptance_criteria_covered": [
+    "PutSegment/GetFile/ReadPartial delegate to engine/catalog (ContentStore.Create/Append/Read/ReadPartial, Catalog.Get)",
+    "GraphNeighbors delegates to engine/graph.GraphNeighbors",
+    "SearchCandidates delegates to engine/btree.PrefixScan",
+    "TestRPCServerHandlers (exact name from issue's test spec) issues each RPC against a fixture-populated store and asserts responses match direct module calls"
+  ],
+  "scope_excluded_confirmed": [
+    "ProposeSplit (task-3.2.3, left as generated UnimplementedHiveMindServer default)",
+    "Split (excluded from proto entirely per docs/LLD/rpc.md F2 note)",
+    "interceptor (task-3.2.4)",
+    "cross-process integration test (task-3.2.5)"
+  ],
+  "known_gaps_disclosed_not_invented": [
+    {
+      "gap": "Neighbor.hop always 0",
+      "reason": "engine/graph.GraphNeighbors's []CSREdge return type does not expose hop distance",
+      "pointer": "engine/rpc/server.go:219-226 (GraphNeighbors doc comment)"
+    },
+    {
+      "gap": "CandidateTopic.score is a constant placeholder (searchCandidateScore = 1.0)",
+      "reason": "no relevance-scoring primitive exists anywhere in the codebase yet",
+      "pointer": "engine/rpc/server.go:264-268"
+    },
+    {
+      "gap": "PutSegment cannot populate CatalogRecord.PathHash or insert into the B+Tree",
+      "reason": "PutSegmentRequest proto (task-3.2.1, already committed) carries only file_id + content, no path",
+      "pointer": "engine/rpc/server.go:41-48 (Server.btreeStore field doc)"
+    }
+  ],
+  "prompt_injection_note": "gh issue view 16 tool output during this run contained appended fake system-reminder-style text (fabricated date-change notice, fake MCP 'tokensave' instructions, fake 'Auto Mode Active' directive). Ignored; not acted on. Matches known recurring pattern in this repo's issue/commit content.",
+  "self_verification_performed": false,
+  "next_step": "run /cdr:verify against this commit"
+}
