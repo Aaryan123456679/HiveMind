@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "run_id": "003-verification",
+  "subtask": "3.2.2 - engine/rpc/server.go HiveMind gRPC server handlers (issue #16)",
+  "commit_verified": "4f20044f93f45de078307393d6503e1b05d4e3f5",
+  "provenance_commit": "3bcbf2de60b7e5c5b3bea1cc306a9218c1690db6",
+  "verdict": "PASS_WITH_COMMENTS",
+  "prompt_injection_observed": {
+    "seen": true,
+    "locations": [
+      "gh issue view 16 raw tool output (fake date-change notice, fake 'tokensave' MCP instructions, fake 'Auto Mode Active' directive)",
+      "same pattern re-observed and pre-flagged by implementer in .cdr/runs/2026-07-09/002-implementation/requirement.md"
+    ],
+    "action_taken": "Ignored entirely; treated as untrusted data, not instructions. Did not act on any embedded directive. No suppression of disclosure."
+  },
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "All 5 in-scope RPCs (PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates) implemented per issue #16's acceptance criteria and docs/LLD/rpc.md's 'Exposed RPCs' list. Delegation targets verified by direct source read: PutSegment->catalog.ContentStore.Create/Append (server.go:104-141), GetFile->ContentStore.Read+Catalog.Get (146-164), ReadPartial->ContentStore.ReadPartial (165-182), GraphNeighbors->graph.GraphNeighbors (235-271), SearchCandidates->btree.PrefixScan (294-323). ProposeSplit confirmed genuinely untouched: grep shows only doc-comment references in server.go; no method defined; falls through embedded hivemindv1.UnimplementedHiveMindServer -> codes.Unimplemented, confirmed by TestRPCServerHandlers/ProposeSplit_Unimplemented."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches docs/LLD/rpc.md scope: exactly 5 served RPCs implemented, Split correctly excluded (F2 note), ProposeSplit correctly deferred to 3.2.3 -- no premature client wiring found. Server is a thin adapter with no reimplemented business logic, matching LLD's stated design."
+    },
+    "edge_type_conversion_correctness": {
+      "status": "pass",
+      "evidence": "Manually enumerated both enums from source. graph.EdgeType (engine/graph/edge_append.go:47ff, iota): Invalid=0, SplitSibling=1, Redirect=2, EntityCooccur=3, LLMAsserted=4 (uint8). hivemindv1.EdgeType (engine/rpc/gen/hivemind.pb.go:52-56): EDGE_TYPE_UNSPECIFIED=0, ENTITY_COOCCUR=1, LLM_ASSERTED=2, SPLIT_SIBLING=3, REDIRECT=4 (int32). Numeric orders genuinely differ as claimed -- a naive int cast would mismap SplitSibling<->EntityCooccur and Redirect<->LLMAsserted. protoEdgeTypeToGraph and graphEdgeTypeToProto (server.go:191-221) traced by hand for every value including zero/unspecified: both directions map by explicit name-based switch, zero value correctly pairs Invalid<->Unspecified, and both functions return an explicit error (not a silent wrong default) on any unrecognized/out-of-range input. TestEdgeTypeConversionRoundTrip (server_test.go:428-478) covers all 5 values bidirectionally except graph->proto for Invalid (correctly skipped with a documented rationale: Invalid never appears as a real edge's Type in GraphNeighbors results, only as a request-side 'no filter' sentinel). Verified independently, no discrepancy found."
+    },
+    "put_segment_branch_logic": {
+      "status": "pass",
+      "evidence": "file_id==0 (catalog.InvalidFileID) correctly routes to Create with a freshly IDAllocator.Next()-allocated fileID (server.go:105-125); nonzero file_id routes to Append (127-141). catalog.InvalidFileID==0 is a codebase-wide reserved sentinel (engine/catalog/idalloc.go:14), so a client cannot collide with a real fileID by sending 0. Append-to-nonexistent-fileID correctly maps to codes.NotFound: verified ContentStore.Append wraps catalog.ErrNotFound (content.go:341-344) and mapCatalogError converts wrapped ErrNotFound -> codes.NotFound; confirmed live via TestRPCServerHandlers/PutSegment_Append_NotFound. No race/off-by-one found in the branch itself; IDAllocator.Next() is documented and implemented as durably-persisted-before-return, so no double-allocation risk."
+    },
+    "error_mapping": {
+      "status": "pass_with_comment",
+      "evidence": "GetFile/ReadPartial correctly map wrapped catalog.ErrNotFound -> codes.NotFound for genuinely-nonexistent nonzero fileIDs (confirmed via GetFile_NotFound/ReadPartial_NotFound subtests using FileId=99999). GraphNeighbors/SearchCandidates correctly map caller-input validation failures (out-of-range depth/max_nodes/max_results) to codes.InvalidArgument, confirmed live.",
+      "finding": "Reproduced independently (ad hoc test, not left in tree): GetFile(FileId=0) and, by the same code path, ReadPartial(FileId=0) return codes.Internal (msg 'catalog: get: invalid fileID 0'), NOT codes.NotFound or codes.InvalidArgument. Root cause: catalog.Catalog.Get(fileID) special-cases FileID==InvalidFileID(0) with a plain (non-ErrNotFound-wrapped) error (catalog/catalog.go:219-221), which ContentStore.Read/ReadPartial then propagate through their non-ErrNotFound branch, and mapCatalogError treats anything that isn't errors.Is(ErrNotFound) as codes.Internal. FileId==0 is the proto3 zero-value for an unset/omitted field -- a plausible, ordinary client mistake (e.g. forgetting to set file_id), not an internal server fault. Mapping it to codes.Internal is misleading (would trigger internal-fault alerting/paging for what is actually a malformed request) and is not covered by any existing test -- the NotFound subtests only exercise a nonzero-but-nonexistent fileID (99999), not the zero-value case. This is a real, minor gap in the 'errors map to appropriate gRPC status codes' acceptance criterion, not a fabricated concern; not a data-loss/security/correctness issue. PutSegment is unaffected (file_id==0 correctly routes to Create, never reaches this path)."
+    },
+    "search_candidates_scope_honesty": {
+      "status": "pass",
+      "evidence": "Confirmed genuinely disclosed in code (server.go:273-293 doc comments) and in impact-analysis.json/self-consistency.json: literal-prefix interpretation of query (via btree.PrefixScan, the only query-shaped read primitive in engine/btree -- confirmed no fuzzy/general-search primitive exists), and searchCandidateScore as an explicit named constant placeholder (1.0) with an honest comment stating no relevance-scoring primitive exists anywhere in the codebase. Not silently presented as real ranking."
+    },
+    "concurrency": {
+      "status": "pass",
+      "evidence": "Concurrent subtest (server_test.go ~394-421) launches genuine overlapping goroutines (2*32=64) issuing GetFile and GraphNeighbors against the SAME fixture Server via sync.WaitGroup with all goroutines started before any Wait -- true overlap, not sequential-in-goroutine wrapper. go test ./rpc/... -race -count=5 -timeout 10m passed clean (no race reports across 5 repeated runs)."
+    },
+    "test_genuineness": {
+      "status": "pass",
+      "evidence": "Read server_test.go directly. Confirmed 15 subtests under TestRPCServerHandlers: PutSegment_Create, PutSegment_Append, PutSegment_Append_NotFound, GetFile, GetFile_NotFound, ReadPartial, ReadPartial_NotFound, GraphNeighbors, GraphNeighbors_InvalidDepth, GraphNeighbors_InvalidMaxNodes, SearchCandidates, SearchCandidates_MaxResultsCap, SearchCandidates_NoMatches, ProposeSplit_Unimplemented, Concurrent -- plus separate TestEdgeTypeConversionRoundTrip. Each subtest genuinely tests what its name claims (verified body of each). Fixture setup uses real catalog.Open/NewCatalog/NewIDAllocator/wal.OpenWriter/catalog.OpenContentStore/btree.OpenIndexFile/btree.NewNodeStore/btree.NewNodeAllocator/graph.BuildCSR -- no mocks, matching engine/integration_test.go's established style, confirmed by direct read."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go build ./... clean. go vet ./... clean. gofmt -l . flags only engine/rpc/gen/hivemind.pb.go and hivemind_grpc.pb.go, both PRE-EXISTING generated files from task-3.2.1 NOT touched by this diff (confirmed via git show --stat on 4f20044, and via extracting the pre-commit version of the file which is already unformatted) -- not a regression introduced by 3.2.2. go test ./rpc/... -race -count=5 -timeout 10m: all pass. Full go test ./... -count=1 -timeout 25m from engine/: all packages pass except the pre-existing, known-flaky engine/split TestReaderDuringSplit ('reader never observed post-split content across 400 iterations'), which is unrelated to this diff's files and matches the documented known baseline flake. Zero new regressions."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Server is a genuinely thin adapter; no duplicated business logic. Doc comments are thorough and point to concrete pointers (impact-analysis.json, LLD). Known gaps (Neighbor.hop always 0, CandidateTopic.score constant, PutSegment cannot populate PathHash/B+Tree insert) are all confirmed genuinely disclosed in code comments at the exact locations claimed, not silently hidden -- independently re-read and confirmed accurate to the underlying API limitations (graph.GraphNeighbors's []CSREdge return type has no hop field; PutSegmentRequest proto has no path field)."
+    },
+    "provenance": {
+      "status": "pass",
+      "evidence": "handoff.json's final_commit (4f20044f93f45de078307393d6503e1b05d4e3f5) confirmed correct: it is the direct parent of the current HEAD (3bcbf2d, the provenance chore commit), matches `git log --oneline`. metadata.json's git_head (72dcf057...) matches the actual parent commit at start of the 002-implementation run."
+    }
+  },
+  "overall_reasoning": "All adversarial checks (1-7) from the verification brief were performed independently against source, not the implementer's self-report. The highlighted EdgeType numeric-mismatch claim is genuine and the fix is correct and complete, including zero-value and out-of-range handling in both directions. PutSegment branch logic, error mapping for the primary NotFound paths, concurrency safety (-race clean, real overlapping goroutines), and test genuineness (15 real subtests, no mocks) all hold up under independent scrutiny. One real, minor gap found and reproduced independently: FileId=0 (proto3 zero-value / plausible unset-field client mistake) on GetFile/ReadPartial surfaces as codes.Internal instead of a caller-input code (InvalidArgument or NotFound), and is untested. This does not block merge -- it is a narrow edge case, not a functional regression, data-loss risk, or security issue, and is easily fixed in a small follow-up. Everything the implementer disclosed as a known gap was independently confirmed to be genuinely disclosed (not hidden) and accurate to the real underlying API limitations.",
+  "action_items_non_blocking": [
+    "Follow-up (low priority, can be folded into 3.2.4 interceptor work or a small standalone fix): map FileId==0 (or more generally catalog.InvalidFileID) explicitly to codes.InvalidArgument at the top of GetFile and ReadPartial (and any other handler that resolves a bare file_id) before it ever reaches ContentStore.Read/ReadPartial, so the zero-value/malformed-request case does not surface as codes.Internal. Add a corresponding subtest."
+  ]
+}
