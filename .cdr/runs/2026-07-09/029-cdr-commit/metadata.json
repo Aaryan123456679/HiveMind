@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "029-cdr-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "issue-17-3.3.4-rawdoc-dispatch-commit",
+  "git_head": "0b541d00cb6ce125d333fddd8fa7c1edbd1274d1",
+  "run_key": "issue17-3.3.4-0b541d0-commit",
+  "status": "in_progress",
+  "last_completed_step": "milestone_doc_and_indexes_written",
+  "started_at": "2026-07-09T12:00:00Z",
+  "ended_at": null
+}

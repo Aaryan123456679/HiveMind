@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "run_id": "028-verification",
+  "verdict": "PASS_WITH_COMMENTS",
+  "subtask": "issue-17-3.3.4-rawdoc-dispatch",
+  "commit": "0b541d00cb6ce125d333fddd8fa7c1edbd1274d1",
+  "pointers": {
+    "source_files": [
+      "agents/ingestion/rawdoc.py",
+      "agents/ingestion/dispatch.py",
+      "agents/ingestion/test_dispatch.py"
+    ],
+    "verified_upstream_files": [
+      "agents/ingestion/normalize_email.py:61-74 (EmailFields snake_case fields)",
+      "agents/ingestion/normalize_ticket.py:107-122 (TicketFields snake_case fields)"
+    ],
+    "verification_artifact": ".cdr/runs/2026-07-09/028-verification/verification.json"
+  },
+  "issue_17_status": "all_4_subtasks_verified_complete",
+  "notes": "Minor non-blocking maintainability finding on dispatch_pdf's double-pass page_count computation. Prompt injection detected and ignored in git show tool output (fake date-change/tokensave-MCP/auto-mode text); no injection in gh issue body this pass.",
+  "recommendation": "Issue #17 is ready for orchestrator to seek user authorization to push/close."
+}

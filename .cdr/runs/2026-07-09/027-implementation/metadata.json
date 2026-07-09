@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-027-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "3.3.4",
+  "git_head": "bd492c021f6df37fe82e9702d7d6e0a185f74f70",
+  "run_key": "issue17-3.3.4-rawdoc-dispatch-bd492c0",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:30:00Z"
+}

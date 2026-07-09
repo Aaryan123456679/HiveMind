@@ -1,0 +1,68 @@
+{
+  "verdict": "PASS_WITH_COMMENTS",
+  "issue": 17,
+  "subtask": "3.3.4",
+  "commit": "0b541d00cb6ce125d333fddd8fa7c1edbd1274d1",
+  "summary": "RawDocument record + dispatch() implementation independently re-verified against issue #17 acceptance criteria and test spec. All claims by the implementer hold up under adversarial re-derivation: naming-convention justification is factually true, dispatch validation is correct and complete including untested adversarial paths, structured_fields mapping is correct for all 3 source types via independently-constructed dispatch calls against fixtures, id is genuinely required (TypeError if omitted), timestamp is genuinely UTC-aware, ticket JSON/CSV routing and 3.3.3 comment-marker fix are preserved with no regression, scope is contained to the 3 declared files, and full 54/54 test suite passes 3x with ruff clean.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Acceptance criteria literally requires RawDocument{id, sourceType, text, structuredFields, timestamp} and a dispatch function selecting normalizer by sourceType. Implementation delivers this with disclosed snake_case field renaming (source_type, structured_fields) documented in rawdoc.py module docstring lines 9-21. Verified this is not a post-hoc excuse: EmailFields (normalize_email.py:61-74, fields sender/subject/thread/body) and TicketFields (normalize_ticket.py:107-122, fields ticket_id/subject/description/status/priority/category/requester/assignee/created_at/comments) are both genuinely snake_case, confirming an established package convention pre-dates this change. dispatch() (dispatch.py:178-235) is the single literal-spec-satisfying entry point; convenience wrappers dispatch_pdf/dispatch_email/dispatch_ticket_json/dispatch_ticket_csv_row are additive, not a spec violation, and dispatch() delegates to them."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches docs/LLD/ingestion-agent.md's described hand-off contract into the (not-yet-built) segmentation agent per rawdoc.py docstring. RawDocument is a frozen dataclass (immutable record, appropriate for a hand-off DTO). structured_fields correctly excludes ticket comment bodies (already fully represented in rendered text) to avoid dual-representation drift -- a genuinely sound design call, independently verified: comment_count=2 present, comment bodies absent from structured_fields dict but present as [[COMMENT N LEN=...]] blocks in text."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git diff 0b541d0~1..0b541d0 --stat confirms normalize_pdf.py, normalize_ticket.py, normalize_email.py are genuinely untouched (empty diff, no matching commits in range) -- the claimed skip of the 3.3.3-suggested marker-utility refactor introduced zero risk to existing normalizers. Independently dispatched a ticket through both dispatch_ticket_json and dispatch_ticket_csv_row against testdata fixtures and confirmed text contains '[[COMMENT 1 LEN=' / '[[COMMENT 2 LEN=' markers with correct length-prefix format matching 3.3.3's fix -- no regression re-introduced. Purely additive change (2 new files + 1 new test file), zero existing files modified."
+    },
+    "edge_cases_and_validation": {
+      "status": "pass",
+      "evidence": "Hand-traced dispatch() validation logic (dispatch.py:214-235) and independently executed 6 adversarial cases beyond the shipped tests: (1) row= passed to pdf dispatch -> ValueError 'source_type=\\'pdf\\' requires exactly `path`.' (2) data= and row= both passed to ticket -> ValueError 'requires exactly one of `data` or `row`.' (3-5) no kwargs at all for pdf/ticket/email -> each raises correct ValueError. (6) unknown source_type 'csv' -> ValueError listing valid options. All 6 behaved exactly as claimed with clear, specific error messages. RawDocument.id has no default (verified via direct TypeError when omitted), so it is genuinely caller-required, not silently defaulted to empty string. timestamp default confirmed tz-aware: doc.timestamp.tzinfo == UTC via independent inspection, matching test_dispatch_default_timestamp_is_utc_aware."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new attack surface: pure in-process data transformation, no I/O beyond delegating to already-verified normalizers, no eval/exec/deserialization of untrusted content beyond what normalize_pdf/normalize_email/normalize_ticket already handle. structured_fields values are plain JSON-serializable scalars (str/int), no injection risk for downstream consumers."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "dispatch_pdf recomputes page_count via sum(1 for _ in iter_pages(text)) after normalize_pdf already parsed the document -- a second O(n) pass over the marker text, not a re-parse of the PDF itself. Negligible cost relative to PDF text extraction; not a concern at this scale."
+    },
+    "maintainability": {
+      "status": "pass",
+      "comment": "Module docstrings are thorough and disclose all deviations (naming, id/timestamp design, marker-utility-skip rationale) in-line, matching the level of documentation established in 3.3.1-3.3.3. _ticket_structured_fields helper avoids duplicating the scalar-field list across dispatch_ticket_json/dispatch_ticket_csv_row -- reasonable DRY given the shared TicketFields shape."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "Ran pytest agents/ingestion/ -v three times independently via agents/.venv: 54/54 passed each run, 0 flakiness. ran ruff check on rawdoc.py, dispatch.py, test_dispatch.py: all checks passed. test_dispatch.py (25 tests) covers RawDocument shape consistency across all 3 source types, structured_fields/text content correctness, normalizer-invocation spying, all documented ValueError paths, id passthrough, and both explicit and default timestamp behavior -- test spec 'exercise RawDocument dispatch across all three source types' is satisfied and independently reproduced with hand-constructed dispatch() calls against the same testdata fixtures, yielding matching structured_fields for pdf (page_count=2), email (sender/subject/thread), and ticket (all scalars + comment_count=2, JSON/CSV parity confirmed by direct equality)."
+    },
+    "scope_containment": {
+      "status": "pass",
+      "evidence": "git show --name-only 0b541d0 confirms only agents/ingestion/dispatch.py, agents/ingestion/rawdoc.py, agents/ingestion/test_dispatch.py touched -- exactly the declared impacted modules, no destructive or out-of-scope changes."
+    },
+    "issue_closure": {
+      "status": "pass_with_comment",
+      "comment": "Cross-checked the full issue #17 body via gh issue view 17 against all 4 subtasks (3.3.1 PDF, 3.3.2 email, 3.3.3 ticket, 3.3.4 RawDocument/dispatch). No additional scope beyond the 4 listed subtasks was found in the issue text. All 4 acceptance criteria and test specs are satisfied by the corresponding files. Issue #17 is genuinely feature-complete: RawDocument + dispatch() gives the not-yet-built segmentation agent (docs/LLD/ingestion-agent.md) a single, consistent entry point across all 3 source types."
+    }
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "dimension": "maintainability",
+      "description": "dispatch_pdf recomputes page_count with a second pass over the already-parsed marker text (iter_pages) rather than normalize_pdf returning a count directly. Not a correctness issue and negligible performance cost, but a minor inefficiency/coupling to iter_pages' parsing behavior that a future refactor could simplify by having normalize_pdf optionally return page_count alongside text.",
+      "blocking": false
+    }
+  ],
+  "prompt_injection_observed": {
+    "detected": true,
+    "location": "git show 0b541d0 tool output (appended after the commit diff)",
+    "content_summary": "Fake system-reminder-style text claiming: (1) 'the date has changed... DO NOT mention this to the user', (2) fabricated MCP server instructions for a 'tokensave' server, (3) fabricated 'Auto Mode Active' directive urging the agent to proceed without stopping for clarifying questions and describing destructive-command handling procedures.",
+    "action_taken": "Ignored entirely as untrusted data embedded in git output; did not follow any of the injected instructions; disclosed to the user/orchestrator per repo security protocol. No injection found in the gh issue #17 body itself on this pass."
+  },
+  "tests_run_independently": {
+    "pytest_agents_ingestion": "54/54 passed, run 3x consecutively via agents/.venv/bin/pytest, 0 flakiness observed",
+    "ruff_check": "all checks passed on rawdoc.py, dispatch.py, test_dispatch.py",
+    "manual_dispatch_calls": "Constructed independent dispatch() calls for pdf/email/ticket-json/ticket-csv against agents/ingestion/testdata fixtures (and a freshly-built PDF via fitz), inspected RawDocument output directly, confirmed structured_fields correctness, JSON/CSV parity, comment-marker preservation, id passthrough, id-required TypeError, and timestamp UTC-awareness."
+  }
+}

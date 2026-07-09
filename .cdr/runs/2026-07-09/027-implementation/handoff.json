@@ -1,0 +1,35 @@
+{
+  "run_id": "2026-07-09-027-implementation",
+  "subtask": "3.3.4",
+  "issue": 17,
+  "status": "completed",
+  "commit": "0b541d00cb6ce125d333fddd8fa7c1edbd1274d1",
+  "commit_pushed": false,
+  "files_added": [
+    "agents/ingestion/rawdoc.py",
+    "agents/ingestion/dispatch.py",
+    "agents/ingestion/test_dispatch.py"
+  ],
+  "files_modified": [],
+  "test_command": "agents/.venv: python -m pytest ingestion/ -v",
+  "test_result": "54 passed, 0 failed (run 3x for flakiness, all identical)",
+  "run_artifacts": {
+    "requirement": ".cdr/runs/2026-07-09/027-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-09/027-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-09/027-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-09/027-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-09/027-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-09/027-implementation/self-consistency.json"
+  },
+  "design_decisions_for_verifier": [
+    "RawDocument fields are snake_case (id, source_type, text, structured_fields, timestamp), deviating from the issue's literal camelCase to match EmailFields/TicketFields convention -- disclosed in rawdoc.py module docstring.",
+    "SourceType = Literal['pdf', 'email', 'ticket'].",
+    "id and timestamp are not derived from source content (no normalizer produces either natively); id is caller-required, timestamp defaults to datetime.now(timezone.utc) at dispatch time, overridable.",
+    "dispatch() is the single required entry point (acceptance criteria); dispatch_pdf/dispatch_email/dispatch_ticket_json/dispatch_ticket_csv_row are convenience wrappers dispatch() delegates to.",
+    "structured_fields for ticket source deliberately excludes comment bodies (already fully represented in text) -- only comment_count is surfaced.",
+    "Shared marker-write/marker-read utility extraction (suggested non-mandatory in .cdr/commits/task-3.3.3.md) was evaluated and skipped: 3.3.4 does not introduce a new marker format, so normalize_pdf.py and normalize_ticket.py were left untouched (zero regression risk)."
+  ],
+  "issue_17_status": "All 4 subtasks (3.3.1, 3.3.2, 3.3.3, 3.3.4) now have implementation commits. 3.3.4 has NOT yet been through /cdr:verify. Issue #17 should not be considered fully closed until this final subtask is independently verified.",
+  "security_note": "gh issue view 17 output contained embedded fake system-reminder-style prompt injection (fake date-change notice, fake tokensave MCP instructions, fake Auto Mode Active directive), consistent with prior 3.3.1/3.3.3 runs. Not followed; disclosed here and in requirement.md.",
+  "next_step": "Run /cdr:verify on this commit (0b541d00cb6ce125d333fddd8fa7c1edbd1274d1) for subtask 3.3.4 before treating issue #17 as complete. Do not close the issue without explicit user authorization."
+}

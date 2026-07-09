@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "028-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "issue-17-3.3.4-rawdoc-dispatch",
+  "git_head": "0b541d00cb6ce125d333fddd8fa7c1edbd1274d1",
+  "run_key": "issue17-3.3.4-0b541d0-verify",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-09T11:40:00Z",
+  "ended_at": "2026-07-09T11:44:19Z"
+}

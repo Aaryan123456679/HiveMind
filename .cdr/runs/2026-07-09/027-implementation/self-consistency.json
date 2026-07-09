@@ -1,0 +1,15 @@
+{
+  "note": "Internal sanity check only. NOT verification (invariant I4) -- a separate /cdr:verify agent independently verifies.",
+  "build": "N/A (Python, no compile step)",
+  "full_suite_command": "agents/.venv: python -m pytest ingestion/ -v",
+  "runs": [
+    {"run": 1, "result": "54 passed, 0 failed", "duration_s": null},
+    {"run": 2, "result": "54 passed, 0 failed", "duration_s": 0.16},
+    {"run": 3, "result": "54 passed, 0 failed", "duration_s": 0.18}
+  ],
+  "flakiness_observed": false,
+  "regression_check": "test_normalize_pdf.py (10 tests), test_normalize_email.py (9 tests) and test_normalize_ticket.py (14 tests) all still pass unmodified; no source changes made to normalize_pdf.py/normalize_email.py/normalize_ticket.py",
+  "new_tests_added": 25,
+  "validation_matrix_coverage": "all 19 cases in validation-matrix.json covered by test_dispatch.py (24 test functions map onto the 19 logical cases, some cases covered by more than one test)",
+  "warnings": "pre-existing DeprecationWarning noise from pymupdf's SwigPyPacked/SwigPyObject internals (unrelated to this subtask's code, present before this change too)"
+}

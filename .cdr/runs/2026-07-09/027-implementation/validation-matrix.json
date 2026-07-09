@@ -1,0 +1,25 @@
+{
+  "subtask": "3.3.4",
+  "cases": [
+    {"id": "pdf-shape", "desc": "dispatch(source_type='pdf', ...) returns RawDocument with correct id/source_type/text/timestamp types", "covered_by": "test_dispatch_pdf_returns_rawdocument_shape"},
+    {"id": "email-shape", "desc": "dispatch(source_type='email', ...) returns RawDocument with correct shape", "covered_by": "test_dispatch_email_returns_rawdocument_shape"},
+    {"id": "ticket-json-shape", "desc": "dispatch(source_type='ticket', data=...) returns RawDocument with correct shape", "covered_by": "test_dispatch_ticket_json_returns_rawdocument_shape"},
+    {"id": "ticket-csv-shape", "desc": "dispatch(source_type='ticket', row=...) returns RawDocument with correct shape", "covered_by": "test_dispatch_ticket_csv_returns_rawdocument_shape"},
+    {"id": "pdf-structured-fields", "desc": "PDF RawDocument.structured_fields has correct page_count", "covered_by": "test_dispatch_pdf_structured_fields_page_count"},
+    {"id": "email-structured-fields", "desc": "Email RawDocument.structured_fields has sender/subject/thread; text == body", "covered_by": "test_dispatch_email_structured_fields_and_text"},
+    {"id": "ticket-structured-fields", "desc": "Ticket RawDocument.structured_fields has ticket_id/status/priority/etc + comment_count; text == rendered blob", "covered_by": "test_dispatch_ticket_structured_fields_and_text"},
+    {"id": "consistency-across-sources", "desc": "All three produce a RawDocument with identical field NAMES (id, source_type, text, structured_fields, timestamp) regardless of source type", "covered_by": "test_rawdocument_shape_consistent_across_source_types"},
+    {"id": "correct-normalizer-invoked-pdf", "desc": "dispatch('pdf', ...) actually calls normalize_pdf, not another normalizer (monkeypatch spy)", "covered_by": "test_dispatch_pdf_invokes_normalize_pdf"},
+    {"id": "correct-normalizer-invoked-email", "desc": "dispatch('email', ...) actually calls normalize_email", "covered_by": "test_dispatch_email_invokes_normalize_email"},
+    {"id": "correct-normalizer-invoked-ticket-json", "desc": "dispatch('ticket', data=...) actually calls normalize_ticket_json, not csv_row", "covered_by": "test_dispatch_ticket_json_invokes_normalize_ticket_json"},
+    {"id": "correct-normalizer-invoked-ticket-csv", "desc": "dispatch('ticket', row=...) actually calls normalize_ticket_csv_row, not json", "covered_by": "test_dispatch_ticket_csv_invokes_normalize_ticket_csv_row"},
+    {"id": "unknown-source-type", "desc": "dispatch() with an unrecognized source_type raises ValueError", "covered_by": "test_dispatch_unknown_source_type_raises"},
+    {"id": "ticket-missing-both-kwargs", "desc": "dispatch('ticket', ...) with neither data nor row raises ValueError", "covered_by": "test_dispatch_ticket_missing_input_raises"},
+    {"id": "ticket-both-kwargs", "desc": "dispatch('ticket', ...) with both data and row raises ValueError (ambiguous)", "covered_by": "test_dispatch_ticket_both_inputs_raises"},
+    {"id": "pdf-missing-path", "desc": "dispatch('pdf', ...) without path raises ValueError", "covered_by": "test_dispatch_pdf_missing_path_raises"},
+    {"id": "json-csv-parity-via-dispatch", "desc": "dispatch_ticket_json and dispatch_ticket_csv_row on the same logical ticket (sample_1 json vs csv) produce identical text and structured_fields", "covered_by": "test_dispatch_ticket_json_and_csv_parity"},
+    {"id": "explicit-timestamp-override", "desc": "caller-supplied timestamp is used verbatim instead of now()", "covered_by": "test_dispatch_explicit_timestamp_used"},
+    {"id": "default-timestamp-is-utc-now", "desc": "omitted timestamp defaults to a timezone-aware UTC datetime close to call time", "covered_by": "test_dispatch_default_timestamp_is_utc_aware"},
+    {"id": "id-passthrough", "desc": "caller-supplied doc_id is passed through verbatim as RawDocument.id for all source types", "covered_by": "test_dispatch_id_passthrough_all_types"}
+  ]
+}
