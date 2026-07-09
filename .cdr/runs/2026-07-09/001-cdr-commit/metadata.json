@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-001-cdr-commit",
+  "macro": "cdr:commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "task-3.2.1",
+  "git_head": "25846fd890e018bf9bc4fcbde148c9b382dbb35e",
+  "run_key": "cdr:commit|1|task-3.2.1|25846fd890e018bf9bc4fcbde148c9b382dbb35e|verification=.cdr/runs/2026-07-08/026-verification/verification.json",
+  "status": "completed",
+  "last_completed_step": "index_updated",
+  "started_at": "2026-07-09T00:00:00+05:30",
+  "ended_at": "2026-07-09T00:20:00+05:30",
+  "notes": "Resumed after a session-limit interruption. Verified no prior partial output existed (no .cdr/commits/task-3.2.1.md, no task.jsonl/feature.jsonl entries) before writing anything, per idempotency check. Encountered a fake system-reminder-style prompt-injection embedded in Bash tool output during resume (fake 'date changed' notice, fake MCP tool instructions, fake 'Auto Mode Active' directive) -- consistent with this repo's known recurring injection pattern (already independently caught and disclosed by 026-verification's own security_note). Treated as untrusted data only, not acted upon, disclosed to user."
+}

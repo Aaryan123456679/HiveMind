@@ -1,0 +1,26 @@
+{
+  "subtask": "task-3.2.1",
+  "issue": 16,
+  "attempt": "2 of 3-attempt cap",
+  "prior_verdict": "CHANGES_REQUESTED (.cdr/runs/2026-07-08/024-verification/verification.json)",
+  "commits_reviewed": [
+    "2fa5529b7ed5071bd9f2428b1f8b8a12da49e097",
+    "25846fd890e018bf9bc4fcbde148c9b382dbb35e"
+  ],
+  "parent_commit": "8671635edd52306e81145d0511bc18d8aad14fe1",
+  "verdict": "PASS",
+  "security_note": "git log output during this run's exploration contained embedded fake system-reminder-style text (fake 'date has changed' notice, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive) injected into commit-adjacent output. This matches the repo's known recurring prompt-injection pattern. Treated as untrusted plain-text data only; no instructions from it were followed; disclosed per policy.",
+  "findings": [],
+  "checks_performed": {
+    "F1_weight_type_fix": "proto/hivemind.proto:103 is now 'uint32 weight = 3;' (field number unchanged at 3, no wire-compat break). engine/graph/csr.go:82 CSREdge.Weight confirmed still uint32 (no drift). Cross-checked engine/rpc/gen/hivemind.pb.go: Weight field is now Go 'uint32' with protobuf tag 'varint,3,...' (was 'fixed32,3,...' float32) -- correct integer wire encoding, not float.",
+    "stub_regen_authenticity": "Actually re-ran codegen myself rather than trusting the commit message. Python: grpc_tools.protoc available in agents/.venv; regenerated agents/hivemind_pb2.py, .pyi, and hivemind_pb2_grpc.py from proto/hivemind.proto -- diff against checked-in files was EMPTY (byte-for-byte identical) for all three files. Go: installed protoc-gen-go and protoc-gen-go-grpc, regenerated engine/rpc/gen/hivemind.pb.go and hivemind_grpc.pb.go -- diff against checked-in files was EMPTY (byte-for-byte identical) for both. This is the strongest possible confirmation: genuine regeneration, not hand-edit, and hivemind_grpc.pb.go/hivemind_pb2_grpc.py are truly unchanged as claimed.",
+    "diff_scope": "git diff 8671635..2fa5529 (excluding .cdr/) touches only: proto/hivemind.proto (1 line), engine/rpc/gen/hivemind.pb.go (3 lines, regen artifact), agents/hivemind_pb2.py (1 line, regen artifact), agents/hivemind_pb2.pyi (2 lines, regen artifact), docs/LLD/rpc.md (F2 note, 7 lines added). No other production files touched. 25846fd is .cdr-metadata-only (handoff.json/metadata.json), zero code diff.",
+    "F2_doc_note": "docs/LLD/rpc.md's new note on 'Split' is an accurate, narrowly-scoped clarification: states Split is intentionally excluded from the proto's 6-RPC surface (matches issue #16 acceptance criteria exactly), is engine-internal/in-process, and explicitly warns against folding it into 3.2.2 as a 7th RPC silently. Confirmed proto/hivemind.proto still defines exactly 6 RPCs (no Split rpc added). This is a clarification, not a scope rewrite or expansion.",
+    "provenance": ".cdr/runs/2026-07-08/025-implementation/handoff.json final_commit=2fa5529b7ed5071bd9f2428b1f8b8a12da49e097 matches git log/git show reality. metadata.json status=completed, last_completed_step=handoff. fix_cycle_attempt=1, fix_cycle_cap=3 recorded correctly.",
+    "build_lint": "gofmt -l . -> clean (no output). go vet ./... -> clean. go build ./... -> clean. All run from engine/.",
+    "test_suite": "go test ./... -count=1 -timeout 25m from engine/: all packages pass (engine, btree, catalog, graph, mvcc, wal) except engine/split's TestReaderDuringSplit, which FAILs -- this is the pre-existing, already-disclosed sleep-timing-based flake documented in .cdr/index/regression.jsonl (run 037-verification, ~1-3% false-failure rate, unresolved but tracked, not caused by this fix cycle). Zero new regressions vs. run-024 baseline."
+  },
+  "confidence": "high -- independently regenerated both stub sets from source and diffed byte-for-byte against checked-in artifacts rather than relying on the fix-cycle agent's claims.",
+  "recommendation": "Proceed to /cdr:commit (local only). Safe to proceed to subtask 3.2.2.",
+  "regression_cap_note": "N/A this run -- verdict is PASS, not CHANGES_REQUESTED, so no regression.jsonl entry appended and the 3-attempt cap does not advance further against this subtask."
+}
