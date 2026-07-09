@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-014-implementation",
+  "subtask": "3.3.1",
+  "issue": 17,
+  "status": "completed",
+  "commit": "73310f1da5d01ab632c7b9cf5a5ad311b0ade51e",
+  "files": [
+    "agents/ingestion/normalize_pdf.py",
+    "agents/ingestion/test_normalize_pdf.py"
+  ],
+  "public_symbols": [
+    { "symbol": "normalize_pdf", "file": "agents/ingestion/normalize_pdf.py", "kind": "function" },
+    { "symbol": "PAGE_MARKER_RE", "file": "agents/ingestion/normalize_pdf.py", "kind": "compiled regex, public" }
+  ],
+  "marker_format": "[[PAGE n]]\\n<page text>\\n[[/PAGE n]]\\n, 1-indexed, one pair per source page unconditionally (including zero-text pages)",
+  "dependency_changes": "none - pymupdf>=1.24 already present in agents/pyproject.toml",
+  "test_spec": {
+    "command": "pytest agents/ingestion/test_normalize_pdf.py",
+    "tests": [
+      "test_page_markers_present_in_order",
+      "test_page_content_preserved",
+      "test_marker_count_matches_page_count",
+      "test_empty_page_still_gets_marker"
+    ],
+    "self_consistency_run_result": "4 passed in 0.14s (run via agents/.venv python -m pytest ingestion/test_normalize_pdf.py from agents/ working dir)"
+  },
+  "validation_matrix": ".cdr/runs/2026-07-09/014-implementation/validation-matrix.json",
+  "self_consistency": ".cdr/runs/2026-07-09/014-implementation/self-consistency.json",
+  "notes": "Self-consistency only (internal sanity, not independent verification per invariant I4). Next agent must run /cdr:verify.",
+  "prior_attempt_recovery": "Interrupted prior attempt had already written normalize_pdf.py, test_normalize_pdf.py, and CDR artifacts requirement.md through validation-matrix.json before session cutoff; this run verified those artifacts, ran the test suite (previously unrun), added self-consistency.json, and committed."
+}
