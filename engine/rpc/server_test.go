@@ -252,6 +252,18 @@ func TestRPCServerHandlers(t *testing.T) {
 		assertCode(t, err, codes.NotFound)
 	})
 
+	// GetFile_ZeroFileID: regression test for the FileId=0 (proto3 zero-value / unset
+	// field) misclassification finding surfaced during task-3.2.2 verification
+	// (.cdr/index/regression.jsonl, issue #16 / .cdr/runs/2026-07-09/003-verification) and
+	// folded into task-3.2.4. FileId=0 is a plausible ordinary client mistake (forgetting
+	// to set file_id), not an internal server fault, so it must map to
+	// codes.InvalidArgument, not codes.Internal.
+	t.Run("GetFile_ZeroFileID", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.GetFile(context.Background(), &hivemindv1.GetFileRequest{FileId: 0})
+		assertCode(t, err, codes.InvalidArgument)
+	})
+
 	t.Run("ReadPartial", func(t *testing.T) {
 		f := newFixture(t)
 		want, err := f.cs.ReadPartial(f.alphaID)
@@ -278,6 +290,14 @@ func TestRPCServerHandlers(t *testing.T) {
 		f := newFixture(t)
 		_, err := f.srv.ReadPartial(context.Background(), &hivemindv1.ReadPartialRequest{FileId: 99999})
 		assertCode(t, err, codes.NotFound)
+	})
+
+	// ReadPartial_ZeroFileID: regression test, see GetFile_ZeroFileID's doc comment above
+	// for the finding this covers.
+	t.Run("ReadPartial_ZeroFileID", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.ReadPartial(context.Background(), &hivemindv1.ReadPartialRequest{FileId: 0})
+		assertCode(t, err, codes.InvalidArgument)
 	})
 
 	t.Run("GraphNeighbors", func(t *testing.T) {

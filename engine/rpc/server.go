@@ -145,6 +145,9 @@ func (s *Server) PutSegment(ctx context.Context, req *hivemindv1.PutSegmentReque
 // for the file's CurrentVersion.
 func (s *Server) GetFile(ctx context.Context, req *hivemindv1.GetFileRequest) (*hivemindv1.GetFileResponse, error) {
 	fileID := req.GetFileId()
+	if fileID == catalog.InvalidFileID {
+		return nil, status.Errorf(codes.InvalidArgument, "rpc: GetFile: file_id %d is invalid (proto3 zero-value / unset field)", fileID)
+	}
 
 	content, err := s.cs.Read(fileID)
 	if err != nil {
@@ -165,7 +168,12 @@ func (s *Server) GetFile(ctx context.Context, req *hivemindv1.GetFileRequest) (*
 // ReadPartial performs a section-level read using the markdown header-offset cache.
 // Delegates directly to engine/catalog.ContentStore.ReadPartial.
 func (s *Server) ReadPartial(ctx context.Context, req *hivemindv1.ReadPartialRequest) (*hivemindv1.ReadPartialResponse, error) {
-	headers, err := s.cs.ReadPartial(req.GetFileId())
+	fileID := req.GetFileId()
+	if fileID == catalog.InvalidFileID {
+		return nil, status.Errorf(codes.InvalidArgument, "rpc: ReadPartial: file_id %d is invalid (proto3 zero-value / unset field)", fileID)
+	}
+
+	headers, err := s.cs.ReadPartial(fileID)
 	if err != nil {
 		return nil, mapCatalogError("ReadPartial", err)
 	}
