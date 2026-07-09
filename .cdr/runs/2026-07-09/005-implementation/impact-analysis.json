@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "subtask": "3.2.3",
+  "new_files": [
+    "engine/split/proposer_grpc.go",
+    "engine/split/proposer_grpc_test.go"
+  ],
+  "modified_files": [],
+  "untouched_but_read": [
+    "engine/split/proposer.go",
+    "engine/split/proposer_mock.go",
+    "engine/rpc/server.go",
+    "engine/rpc/gen/hivemind.pb.go",
+    "engine/rpc/gen/hivemind_grpc.pb.go",
+    "proto/hivemind.proto",
+    "docs/LLD/rpc.md",
+    "docs/LLD/split.md"
+  ],
+  "contracts": {
+    "implements": "split.SplitProposer (engine/split/proposer.go) -- interface unchanged",
+    "depends_on": "hivemindv1.HiveMindClient.ProposeSplit (engine/rpc/gen/hivemind_grpc.pb.go), generated in task-3.2.1"
+  },
+  "dependents": [
+    "engine/split/orchestrate.go (future issue #12 execution logic) will eventually select between MockSplitProposer and GRPCSplitProposer at wiring time -- no change required by this subtask since SplitProposer is an interface"
+  ],
+  "risk_level": "low",
+  "risk_notes": [
+    "No production wiring change: nothing currently constructs a SplitProposer for live traffic (orchestrate.go still scaffold-only per split.md), so this is purely additive and cannot regress existing behavior.",
+    "engine/rpc/server.go's ProposeSplit stays Unimplemented -- calling GRPCSplitProposer against the real production server today would return codes.Unimplemented, which is expected and correctly surfaced as an error, not a panic or silent success.",
+    "Test-only risk: bufconn test server must be shut down cleanly per test to avoid goroutine leaks under -race; addressed via t.Cleanup."
+  ],
+  "backward_compatibility": "proposer_mock.go untouched; SplitProposer interface untouched; purely additive new implementation."
+}

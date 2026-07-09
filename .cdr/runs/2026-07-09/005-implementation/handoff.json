@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-implementation",
+  "subtask": "3.2.3 - engine/split/proposer_grpc.go real gRPC-backed SplitProposer (issue #16)",
+  "status": "completed",
+  "final_commit": "b2a119d768f8fed28b2a73003ef0ce19a98bd450",
+  "final_commit_verified_via": "git rev-parse HEAD (post-commit)",
+  "parent_commit": "b38dc8173cf99f693e67e7958d80b2ee6edf5be6",
+  "files_changed": [
+    "engine/split/proposer_grpc.go",
+    "engine/split/proposer_grpc_test.go",
+    "docs/LLD/rpc.md",
+    ".cdr/runs/2026-07-09/005-implementation/*"
+  ],
+  "pointers": {
+    "type": "engine/split/proposer_grpc.go:40-53 (GRPCSplitProposer struct)",
+    "constructor": "engine/split/proposer_grpc.go:62-64 (NewGRPCSplitProposer)",
+    "compile_time_assertion": "engine/split/proposer_grpc.go:57 (var _ SplitProposer = (*GRPCSplitProposer)(nil))",
+    "propose_split": "engine/split/proposer_grpc.go:74-88 (ProposeSplit method, timeout wiring + error wrapping)",
+    "response_translation": "engine/split/proposer_grpc.go:93-125 (translateProposeSplitResponse, incl. int64->int SectionRange conversion note)",
+    "test_fixture_server": "engine/split/proposer_grpc_test.go:20-55 (fixtureProposeSplitServer, test-local, distinct from engine/rpc/server.go's Unimplemented production stub)",
+    "test_bufconn_helper": "engine/split/proposer_grpc_test.go:62-97 (startFixtureServer: bufconn.Listener + real grpc.Server + real grpc.NewClient)",
+    "tests": "engine/split/proposer_grpc_test.go:101-219 (TestGRPCSplitProposer -- exact name from issue's test spec; subtests: happy_path, empty_response, server_error, timeout)",
+    "docs_status_update": "docs/LLD/rpc.md (Status paragraph near top, updated to reflect 3.2.2/3.2.3 completion + 3.2.4/3.2.5/issue-#18 remaining scope)"
+  },
+  "acceptance_criteria_covered": [
+    "engine/split/ can be configured to use a real gRPC-backed SplitProposer calling ProposeSplit (GRPCSplitProposer + NewGRPCSplitProposer)",
+    "task-2b.2's MockSplitProposer remains available for pure-unit tests (proposer_mock.go byte-for-byte untouched -- confirmed via git diff --stat)",
+    "Request marshaling: fileContent -> ProposeSplitRequest.FileContent",
+    "Response unmarshaling: ProposeSplitResponse.Files/RedirectSummary -> SplitPlan/SplitFileProposal/SectionRange",
+    "Error/timeout handling: non-nil error + zero SplitPlan on transport failure, non-OK gRPC status, or client-side deadline exceeded (never a panic, never a hang)",
+    "go test ./split/... -run TestGRPCSplitProposer -race -timeout 30s -v: PASS (4/4 subtests)",
+    "Real wire round-trip via in-process bufconn.Listener + real grpc.Server + test-local fixture handler, not a mocked-out Go interface",
+    "gofmt / go vet / go build ./... clean"
+  ],
+  "scope_excluded_confirmed": [
+    "ProposeSplit server-side LLM logic (agents/ingestion/, issue #18) -- not implemented, out of scope",
+    "engine/rpc/server.go's ProposeSplit handler left as generated Unimplemented stub -- file untouched by this subtask",
+    "Per-call latency/cost interceptor (task-3.2.4, engine/rpc/interceptor.go / agents/llm/interceptor.py) -- not in scope, separate subtask/commit",
+    "Cross-process integration test (task-3.2.5) -- not in scope, separate subtask/commit"
+  ],
+  "known_gaps_disclosed_not_invented": [
+    {
+      "gap": "SectionRange.Start/End int64 (wire) -> int (internal) conversion has a theoretical truncation edge case on 32-bit build targets receiving a >2^31 offset from a 64-bit peer",
+      "reason": "proto3 has no native platform-sized int type; SplitPlan predates any RPC transport",
+      "pointer": "engine/split/proposer_grpc.go:110-118 (doc comment on the conversion)"
+    },
+    {
+      "gap": "SplitProposer interface (proposer.go) takes no context.Context, so GRPCSplitProposer's only per-call deadline control is the constructor-configured timeout field",
+      "reason": "pre-existing interface constraint from task-2b.2.1's transport-decoupling design; changing it is out of this subtask's scope",
+      "pointer": "engine/split/proposer_grpc.go:48-53 (GRPCSplitProposer.timeout doc comment)"
+    }
+  ],
+  "prompt_injection_note": "gh issue view 16 and prior .cdr run tool output in this session contained injected fake-system-reminder-style text (fake date-change notice, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive with an embedded 'don't tell the user' instruction). All such embedded instructions were treated as inert untrusted data and not acted upon; this disclosure itself is the required response per the dispatch's security note.",
+  "self_verification_performed": false,
+  "next_step": "run /cdr:verify against commit b2a119d768f8fed28b2a73003ef0ce19a98bd450"
+}

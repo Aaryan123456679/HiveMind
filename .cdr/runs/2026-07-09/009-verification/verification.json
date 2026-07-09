@@ -1,0 +1,61 @@
+{
+  "verdict": "PASS",
+  "subtask": "issue #16 / task-3.2.4: engine/rpc/interceptor.go LatencyInterceptor + folded-in FileId=0 fix",
+  "commits_reviewed": [
+    "a1497bc178478523826664752115667fc8e6b630 (feat: per-call latency gRPC interceptor)",
+    "3f0647a397b2796dbcd6131ae7153d710b6adf5b (fix: map FileId=0 to InvalidArgument in GetFile/ReadPartial)"
+  ],
+  "security_note": "Tool output during this run (a `date` command's stdout) contained an INJECTED fake system-reminder block claiming 'the date has changed, don't tell the user', fake MCP 'tokensave' tool-usage instructions, and a fake 'Auto Mode Active' directive urging reduced clarification-seeking and unattended destructive-command handling. This matches the recurring injection pattern documented for this repo. It was NOT followed, NOT acted on, and treated purely as untrusted data. No other injected instruction-like content was found in the issue #16 body, commit messages, or .cdr/ files reviewed for this task (issue #16 body and .cdr/memory/pending.md contain only legitimate project history).",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "Issue #16 task-3.2.4 acceptance criteria (via `gh issue view 16`): 'Per-call latency/cost gRPC interceptor... Go engine emits per-call latency (Python side additionally logs LLM cost)... Test: go test ./engine/rpc/... -run TestLatencyInterceptor'. docs/LLD/rpc.md confirms: 'gRPC used specifically so both sides can attach interceptors logging per-call latency and (Python-side) LLM cost'. The implementer's claimed scope match (Go side has no LLM calls, so 'cost' is a disclosed proxy = proto payload byte size, not a guess at LLM tokens) is independently verified true against the LLD text itself, not merely the implementer's say-so. LatencyInterceptor is implemented in engine/rpc/interceptor.go, test name matches exactly (TestLatencyInterceptor), and it is documented as purely additive/non-behavior-altering, confirmed correct by code read."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "LatencyInterceptor(opts ...Option) grpc.UnaryServerInterceptor uses the standard functional-options pattern (Option func(*interceptorConfig)) and returns a real func(ctx, req, *grpc.UnaryServerInfo, grpc.UnaryHandler) (any, error) matching the grpc.UnaryServerInterceptor type exactly -- confirmed it plugs cleanly into grpc.NewServer(grpc.UnaryInterceptor(...)), and the interceptor_test.go's startInterceptedServer helper does exactly this (grpc.NewServer(grpc.UnaryInterceptor(LatencyInterceptor(WithRecorder(rec))))) with real bufconn listener/dial. Recorder interface + SlogRecorder default is a clean, swappable design. No cross-module scope violations -- only engine/rpc/ touched, consistent with LLD ownership boundaries."
+    },
+    "correctness_latency_measurement": {
+      "status": "PASS",
+      "evidence": "engine/rpc/interceptor.go: start := cfg.now(); resp, err := handler(ctx, req); duration := cfg.now().Sub(start) -- start is captured before handler invocation and stop after, on BOTH success and error return paths (handler's err is not special-cased before duration capture), so latency is measured correctly including error paths. Verified directly by reading interceptor.go lines ~139-154."
+    },
+    "correctness_cost_metric": {
+      "status": "PASS",
+      "evidence": "protoSize(v any) int type-asserts v.(proto.Message), returns 0 on !ok or nil msg (no panic), else proto.Size(msg) (single call, no redundant marshal -- proto.Size uses cached/streaming size computation, not a full Marshal). Called exactly once for RequestBytes and, only on err==nil, once for ResponseBytes -- no double counting. On error path, ResponseBytes correctly stays 0 since no response exists; test TestLatencyInterceptor/error_call_... explicitly asserts m.ResponseBytes == 0 on error, and it passed."
+    },
+    "test_genuineness": {
+      "status": "PASS",
+      "evidence": "Read the full interceptor_test.go source myself. startInterceptedServer spins up a REAL grpc.Server bound to a real bufconn.Listener, registers the real *Server via hivemindv1.RegisterHiveMindServer, and dials a REAL hivemindv1.HiveMindClient over grpc.NewClient with a context dialer -- this is a genuine wire round-trip through the actual gRPC machinery (marshal/unmarshal, interceptor chain, codec), not a direct Go function call bypassing gRPC. All three subtests (success, error, concurrent) call client.GetFile(ctx, ...) through this real client, confirming genuine E2E interceptor invocation."
+    },
+    "concurrency_safety": {
+      "status": "PASS",
+      "evidence": "LatencyInterceptor itself holds no shared mutable state (cfg is read-only after construction; each invocation is a fresh closure-local start/duration/m). The only shared state is the caller-supplied Recorder; fakeRecorder in tests correctly guards its slice with a sync.Mutex, and the production SlogRecorder relies on log/slog's documented concurrency-safe Logger. Ran `go test ./rpc/... -race -run TestLatencyInterceptor -timeout 5m -v` myself (not trusting implementer's report) -- all 3 subtests PASS including 32-goroutine concurrent_calls_each_produce_exactly_one_record_race_clean, with -race clean (no race detector output)."
+    },
+    "fileid0_fix_correctness": {
+      "status": "PASS",
+      "evidence": "GetFile and ReadPartial in engine/rpc/server.go now guard `if fileID == catalog.InvalidFileID { return nil, status.Errorf(codes.InvalidArgument, ...) }` before calling into ContentStore/Catalog. Verified catalog.InvalidFileID is defined once in engine/catalog/idalloc.go as `const InvalidFileID uint64 = 0`, documented as a reserved sentinel, and consistently guarded against elsewhere in catalog.go (4 sites), content.go, idalloc_test.go, and split/execute_test.go -- confirming 0 is never a legitimately-allocated real fileID anywhere in the codebase (idalloc_test.go explicitly asserts 'first Next() = 1; want 1 (0 is reserved as InvalidFileID)'). This means the fix cannot wrongly reject any legitimate zero-based ID, because no such scheme exists. New regression subtests GetFile_ZeroFileID / ReadPartial_ZeroFileID added and pass. Genuine-not-found lookups on real nonzero IDs (GetFile_NotFound, ReadPartial_NotFound subtests, using ID 99999) still correctly return codes.NotFound, unaffected by the new guard, both by code inspection (guard only fires on fileID==0) and by passing test."
+    },
+    "regression_provenance": {
+      "status": "PASS",
+      "evidence": "Confirmed via `git log`/`git show` and .cdr/index/regression.jsonl + .cdr/memory/pending.md that the FileId=0 misclassification was a real, previously-logged non-blocking finding from task-3.2.2 verification (.cdr/runs/2026-07-09/003-verification, verdict PASS_WITH_COMMENTS, category error-code-correctness/untested-edge-case), which recommended folding the fix into 3.2.4. Today's commit's own message cites this correctly. regression.jsonl's newest entry (.cdr/runs/2026-07-09/008-implementation) marks it resolved=true with resolves_run_dir pointing at 003-verification -- consistent and traceable, not fabricated provenance."
+    },
+    "regression_full_suite": {
+      "status": "PASS",
+      "evidence": "Ran myself from engine/: `go build ./...` (clean, no output), `go vet ./...` (clean), `gofmt -l .` (clean, no unformatted files), `go test ./rpc/... -race -timeout 10m -v` (all tests incl. TestRPCServerHandlers and TestLatencyInterceptor pass), and full `go test ./... -timeout 10m` across engine, btree, catalog, graph, mvcc, rpc, split, wal -- all packages report 'ok', exit code 0. No occurrence of the known pre-existing split.TestReaderDuringSplit flake this run (not required to appear, non-blocking if seen)."
+    },
+    "scope_containment": {
+      "status": "PASS",
+      "evidence": "`git show a1497bc --name-only`: engine/rpc/interceptor.go, engine/rpc/interceptor_test.go only. `git show 3f0647a --name-only`: engine/rpc/server.go, engine/rpc/server_test.go, .cdr/index/regression.jsonl, .cdr/memory/pending.md only. Both commits stay within declared scope; the .cdr index/memory updates are expected bookkeeping, not code scope creep. No destructive or out-of-scope filesystem changes observed in either commit or in the working tree during this verification session."
+    },
+    "maintainability": {
+      "status": "PASS_WITH_COMMENTS",
+      "note": "Non-blocking style observation only: interceptor.go's top-of-file doc comment is dense/run-on in places (a stylistic choice, not a defect) but is accurate and does not misstate scope. No action required."
+    }
+  },
+  "known_pending_unrelated_findings_not_reintroduced": [
+    "engine/graph/edgelog.go ReadNodeAfter/TruncateNode lock-ordering gap (pre-existing, Phase 3 follow-up, unaffected by this diff)",
+    "engine/split.TestReaderDuringSplit ~1-3% timing flake (pre-existing, did not occur in this run)"
+  ],
+  "confidence": "high — build/vet/fmt/tests independently re-run by this agent, not taken from implementer's report; source of both interceptor.go and the FileId=0 fix read in full",
+  "final_verdict_summary": "Both commits are correctly scoped, architecturally conformant (real grpc.UnaryServerInterceptor via functional-options pattern), correctly measure wall-clock latency across success and error paths, correctly and safely compute the disclosed byte-size cost proxy (no panics, no double-counting), are tested via genuine bufconn gRPC wire round-trips (not bypassed function calls), are race-clean under concurrent load, and the folded-in FileId=0 fix correctly resolves a real previously-logged regression at the correct layer without affecting any legitimate ID (0 is a globally reserved sentinel, never a real allocated ID). Full build/vet/fmt/test suite passes cleanly, independently re-run by this agent."
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-012-verification",
+  "macro": "cdr-verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "task-3.2.5 (issue #16, engine/rpc/integration_test.go, TestRPCIntegration)",
+  "git_head": "c49c3767d86f4e095ce652e09ba825d7b6506151",
+  "run_key": "sha256:issue16-3.2.5-c49c3767-verification",
+  "status": "completed",
+  "last_completed_step": "wrote_verification_and_handoff",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:30:00Z"
+}

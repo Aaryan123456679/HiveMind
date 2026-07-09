@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "006-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "3.2.3 - engine/split/proposer_grpc.go real gRPC-backed SplitProposer (issue #16)",
+  "git_head": "b2a119d768f8fed28b2a73003ef0ce19a98bd450",
+  "run_key": "sha256(issue16:3.2.3|v1|verify|b2a119d768f8fed28b2a73003ef0ce19a98bd450)",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-09T05:00:00Z",
+  "ended_at": "2026-07-09T05:10:00Z"
+}

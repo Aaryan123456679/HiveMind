@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "3.2.3 - engine/split/proposer_grpc.go real gRPC-backed SplitProposer (issue #16)",
+  "git_head": "b38dc8173cf99f693e67e7958d80b2ee6edf5be6",
+  "run_key": "sha256(issue16:3.2.3|v1|proposer_grpc.go|b38dc8173cf99f693e67e7958d80b2ee6edf5be6)",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:30:00Z",
+  "final_commit": "b2a119d768f8fed28b2a73003ef0ce19a98bd450"
+}

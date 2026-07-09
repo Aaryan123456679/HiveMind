@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-implementation",
+  "subtask": "3.2.4 (issue #16, Go-side interceptor) + bundled FileId=0 follow-up fix",
+  "commits": [
+    {
+      "hash": "a1497bc",
+      "summary": "feat(rpc): add per-call latency gRPC server interceptor",
+      "files": ["engine/rpc/interceptor.go", "engine/rpc/interceptor_test.go"]
+    },
+    {
+      "hash": "3f0647a397b2796dbcd6131ae7153d710b6adf5b",
+      "summary": "fix(rpc): map FileId=0 to InvalidArgument in GetFile/ReadPartial",
+      "files": ["engine/rpc/server.go", "engine/rpc/server_test.go", ".cdr/index/regression.jsonl", ".cdr/memory/pending.md"]
+    }
+  ],
+  "final_commit": "3f0647a397b2796dbcd6131ae7153d710b6adf5b",
+  "final_commit_verified_via": "git rev-parse HEAD, run after the second commit",
+  "pointers": {
+    "interceptor_impl": "engine/rpc/interceptor.go (LatencyInterceptor, RPCMetric, Recorder, SlogRecorder, WithRecorder)",
+    "interceptor_tests": "engine/rpc/interceptor_test.go:TestLatencyInterceptor (issue's named test spec, 3 subtests, bufconn/real-wire)",
+    "fileid0_fix": "engine/rpc/server.go GetFile (~line 146-152) and ReadPartial (~line 167-173)",
+    "fileid0_tests": "engine/rpc/server_test.go: GetFile_ZeroFileID, ReadPartial_ZeroFileID subtests",
+    "requirement_and_scope_decisions": ".cdr/runs/2026-07-09/008-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-09/008-implementation/architecture-discovery.md",
+    "validation_matrix": ".cdr/runs/2026-07-09/008-implementation/validation-matrix.json",
+    "index_updates": [".cdr/index/regression.jsonl (new resolved-marker entry, run .cdr/runs/2026-07-09/008-implementation)", ".cdr/memory/pending.md (FileId=0 entry marked [RESOLVED, task-3.2.4, issue #16])"]
+  },
+  "out_of_scope_for_this_dispatch": [
+    "Python-side interceptor (agents/llm/interceptor.py or similar) — issue #16's 3.2.4 nominally covers both Go and Python sides; this dispatch was explicitly scoped to engine/rpc/interceptor.go only by the launching agent's task instructions. Remains open for a future dispatch."
+  ],
+  "test_commands_run": [
+    "cd engine && gofmt -l rpc/",
+    "cd engine && go vet ./...",
+    "cd engine && go build ./...",
+    "cd engine && go test ./rpc/... -race -run \"TestRPCServerHandlers|TestLatencyInterceptor\" -timeout 120s -v"
+  ],
+  "prompt_injection_disclosure": {
+    "seen": true,
+    "location": "raw tool output while reading .cdr/memory/pending.md via Bash (grep/cat)",
+    "content_summary": "fake system-reminder-style text: fake date-change notice instructing not to disclose it to the user, fake 'tokensave' MCP server tool-usage instructions, fake 'Auto Mode Active' directive",
+    "action_taken": "Ignored entirely as untrusted data; not acted upon; disclosed here and in the final report per standing security instructions. No destructive filesystem actions taken."
+  },
+  "next_step": "Hand off to /cdr:verify for independent verification. This agent has NOT verified its own work (invariant I4)."
+}

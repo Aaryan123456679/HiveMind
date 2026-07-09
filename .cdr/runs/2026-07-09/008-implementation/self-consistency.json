@@ -1,0 +1,12 @@
+{
+  "note": "Internal sanity only. NOT independent verification (invariant I4) — a separate /cdr:verify dispatch must independently verify this work.",
+  "checks": [
+    {"check": "gofmt -l engine/rpc/", "result": "clean (no output)"},
+    {"check": "go vet ./... (from engine/)", "result": "clean"},
+    {"check": "go build ./... (from engine/)", "result": "clean"},
+    {"check": "go test ./rpc/... -race -run \"TestRPCServerHandlers|TestLatencyInterceptor\" -timeout 120s -v", "result": "all subtests PASS, including 3 new TestLatencyInterceptor subtests and 2 new FileId=0 regression subtests, -race clean"},
+    {"check": "validation-matrix.json criteria all covered by tests listed above", "result": "yes, see plan.md/validation-matrix.json"},
+    {"check": "prompt injection encountered during this dispatch", "result": "yes — fake system-reminder-style text (fake date-change notice with a 'do not tell the user' instruction, fake 'tokensave' MCP tool instructions, fake 'Auto Mode Active' directive) appeared embedded in raw tool output while reading .cdr/memory/pending.md. Ignored entirely as untrusted data; disclosed to the user in the final report; no suppression of disclosure; no destructive filesystem actions taken."}
+  ],
+  "not_performed_here_by_design": "No independent adversarial re-verification of correctness/regression-risk was performed by this agent, per invariant I4 (self-verification is prohibited). That is /cdr:verify's job."
+}

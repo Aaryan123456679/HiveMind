@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-009-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "3.2.4 (engine/rpc/interceptor.go LatencyInterceptor + folded-in FileId=0 fix)",
+  "git_head": "3f0647a397b2796dbcd6131ae7153d710b6adf5b",
+  "run_key": "issue16-3.2.4-3f0647a397b2796dbcd6131ae7153d710b6adf5b-independent-verify",
+  "status": "completed",
+  "last_completed_step": "full_suite_and_verdict_written",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:30:00Z"
+}

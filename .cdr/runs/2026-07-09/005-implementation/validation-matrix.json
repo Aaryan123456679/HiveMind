@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "subtask": "3.2.3",
+  "matrix": [
+    {
+      "criterion": "engine/split/ can be configured to use a real gRPC-backed SplitProposer calling ProposeSplit",
+      "check": "GRPCSplitProposer type + NewGRPCSplitProposer constructor added, implements split.SplitProposer (compile-time assertion)",
+      "test": "TestGRPCSplitProposer/happy_path"
+    },
+    {
+      "criterion": "task-2b.2's mock remains available for pure-unit tests",
+      "check": "proposer_mock.go left byte-for-byte unmodified",
+      "test": "git diff --stat shows no change to engine/split/proposer_mock.go"
+    },
+    {
+      "criterion": "Request marshaling: fileContent -> ProposeSplitRequest.FileContent",
+      "check": "GRPCSplitProposer.ProposeSplit constructs ProposeSplitRequest{FileContent: fileContent}",
+      "test": "TestGRPCSplitProposer/happy_path (fixture server echoes/asserts received FileContent)"
+    },
+    {
+      "criterion": "Response unmarshaling: ProposeSplitResponse -> SplitPlan (Files/RedirectSummary/SectionRange)",
+      "check": "translateProposeSplitResponse helper maps proto SplitFileProposal/SectionRange to internal types",
+      "test": "TestGRPCSplitProposer/happy_path and /empty_response"
+    },
+    {
+      "criterion": "Error handling: transport/server errors surface as non-nil error, zero SplitPlan",
+      "check": "gRPC status errors wrapped and returned, never panics",
+      "test": "TestGRPCSplitProposer/server_error"
+    },
+    {
+      "criterion": "Timeout handling: client-side deadline produces a bounded, sensible error (not a hang)",
+      "check": "context.WithTimeout wraps the call when configured timeout > 0",
+      "test": "TestGRPCSplitProposer/timeout (asserts DeadlineExceeded-style error within bounded wall time)"
+    },
+    {
+      "criterion": "Real wire round-trip, not a mocked interface",
+      "check": "bufconn.Listener + real grpc.Server + real grpc client connection in test helper",
+      "test": "TestGRPCSplitProposer (all subtests go over bufconn, not a hand-rolled fake HiveMindClient)"
+    },
+    {
+      "criterion": "go vet / gofmt / go build clean",
+      "check": "gofmt -l, go vet ./..., go build ./... all clean from engine/",
+      "test": "self-consistency.json step"
+    },
+    {
+      "criterion": "-race on concurrency-relevant test; explicit -timeout on every go test invocation",
+      "check": "go test ./engine/split/... -run TestGRPCSplitProposer -race -timeout 30s",
+      "test": "self-consistency.json step"
+    },
+    {
+      "criterion": "engine/rpc/server.go's ProposeSplit remains Unimplemented (server-side out of scope)",
+      "check": "engine/rpc/server.go not modified by this subtask",
+      "test": "git diff --stat shows no change to engine/rpc/server.go"
+    }
+  ]
+}

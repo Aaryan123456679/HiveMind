@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-012-verification",
+  "subtask": "task-3.2.5",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit": "c49c3767d86f4e095ce652e09ba825d7b6506151",
+  "pointers": {
+    "test_file": "engine/rpc/integration_test.go",
+    "test_name": "TestRPCIntegration",
+    "issue": "GitHub issue #16",
+    "lld": "docs/LLD/rpc.md",
+    "prior_verified_subtasks_index": ".cdr/index/task.jsonl (task-3.2.1, task-3.2.2, task-3.2.3, task-3.2.4)",
+    "regression_entry_appended": ".cdr/index/regression.jsonl"
+  },
+  "key_findings": [
+    "Real OS net.Listener + real grpc.Server + LatencyInterceptor wiring confirmed genuinely novel in repo (grep-verified against split/proposer_grpc_test.go and rpc/interceptor_test.go, the latter uses bufconn not real net.Listener).",
+    "All 9 subtests independently re-run with -race, pass; full suite go test ./... -timeout 180s clean, no regressions, no flake observed this run.",
+    "gofmt/go vet/go build all clean; commit touches only engine/rpc/integration_test.go plus .cdr process artifacts, no production code.",
+    "Issue #16's literal 3.2.5 acceptance criteria (real Go<->Python cross-language ProposeSplit+PutSegment round trip) is NOT what was delivered; delivered test is Go-only and expects/asserts codes.Unimplemented for ProposeSplit. This is a disclosed, previously-verified (3.2.1 fix cycle onward) scope reduction documented in docs/LLD/rpc.md, not a defect in this commit, but it means issue #16 is not literally complete per its own written text -- flag to user before closing issue #16.",
+    "Prompt injection observed again in gh issue view 16 output (fake date-change/MCP/Auto-Mode system-reminder blocks appended after real issue body); not followed, disclosed here per protocol."
+  ]
+}

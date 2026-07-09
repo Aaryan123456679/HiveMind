@@ -1,0 +1,56 @@
+{
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit": "c49c3767d86f4e095ce652e09ba825d7b6506151",
+  "subtask": "task-3.2.5 (issue #16, final subtask)",
+  "file": "engine/rpc/integration_test.go",
+  "prompt_injection_observed": true,
+  "prompt_injection_detail": "gh issue view 16 output contained two fake embedded system-reminder blocks (a fake 'date has changed, do not tell the user' notice and a fake 'MCP tokensave server instructions' block, plus an 'Auto Mode Active' directive) appended after the legitimate issue body. Consistent with prior confirmed injection pattern in this repo. Treated as untrusted data only, not followed, not acted upon.",
+  "dimensions": {
+    "requirements_literal_text": {
+      "status": "DEVIATION_DISCLOSED_AND_PRE-ACCEPTED",
+      "evidence": "Issue #16's literal 3.2.5 text reads: 'A real end-to-end gRPC call from the Go engine to a running Python agent service correctly executes ProposeSplit and PutSegment' / test spec: 'starts the Python gRPC server, issues ProposeSplit and PutSegment from the Go client, asserts expected responses.' The delivered test does NOT start any Python process and does NOT assert ProposeSplit succeeds -- it asserts codes.Unimplemented. This is a genuine, material deviation from the issue's literal acceptance criteria. HOWEVER this deviation was disclosed and baked in consistently starting at 3.2.1's fix cycle (docs/LLD/rpc.md Status note, confirmed via git blame equivalent in .cdr/index/task.jsonl notes for 3.2.1/3.2.2/3.2.3, all independently PASS/PASS_WITH_COMMENTS-verified) which descoped the real LLM-backed Python ProposeSplit server to issue #18. 3.2.5's own file header comment (lines 12-21) explicitly documents this scope correction and cites docs/LLD/rpc.md. Since this is a repo-wide, previously-verified, multi-subtask architectural decision rather than something introduced unilaterally in this final commit, it is not treated as a new defect in this commit, but it DOES mean issue #16, if read literally, is not fully satisfied -- see overall assessment."
+    },
+    "real_transport_not_bufconn": {
+      "status": "PASS",
+      "evidence": "engine/rpc/integration_test.go:226 uses net.Listen(\"tcp\", \"127.0.0.1:0\") (real OS listener, ephemeral port) and grpc.NewClient dialed against lis.Addr().String() with insecure creds -- genuine real network transport, not bufconn. Independently confirmed novelty claim: grep -rn 'grpc.NewServer(' across engine/ shows only 3 call sites -- split/proposer_grpc_test.go (grpc.NewServer() with NO interceptor), rpc/interceptor_test.go (grpc.NewServer with LatencyInterceptor but bufconn.Listen, not real net.Listener -- confirmed by reading the file), and this new integration_test.go. Claim that this is the first LatencyInterceptor + real net.Listener call site in the repo is TRUE."
+    },
+    "real_backing_state_not_mocks": {
+      "status": "PASS",
+      "evidence": "newIntegrationFixture wires real catalog.Open/NewCatalog/NewIDAllocator, real wal.OpenWriter, real catalog.OpenContentStore, real btree.OpenIndexFile/NewNodeStore/NewNodeAllocator, real graph.BuildCSR -- all backed by t.TempDir() on-disk files, no interfaces mocked. GetFile and SearchCandidates subtests cross-check RPC responses directly against f.cs.Read(...) and btree.PrefixScan(...) on the same underlying store, not just against each other."
+    },
+    "interceptor_wiring_confirmed": {
+      "status": "PASS",
+      "evidence": "startRealServer wires grpc.NewServer(grpc.UnaryInterceptor(rpc.LatencyInterceptor(rpc.WithRecorder(rec)))) (line 232). LatencyInterceptor_Wired subtest (lines 446-488) asserts recorder captured a nonzero number of RPCMetric records, asserts every one of the 6 exercised method names appears (including ProposeSplit), asserts no negative Duration values, and specifically asserts the ProposeSplit metric reflects an Unimplemented outcome rather than assuming success -- genuinely proves the interceptor fired on real per-call outcomes rather than being incidentally present."
+    },
+    "proposesplit_unimplemented_assertion": {
+      "status": "PASS",
+      "evidence": "ProposeSplit_Unimplemented subtest (lines 428-441) uses split.NewGRPCSplitProposer(f.client, 5*time.Second) (task-3.2.3's real client), calls ProposeSplit, asserts err != nil, uses status.FromError(err) (not string matching) to extract the gRPC status, and asserts st.Code() == codes.Unimplemented. This is the correct expected behavior given 3.2.2's design (server inherits UnimplementedHiveMindServer default for this RPC) and 3.2.3's %w-wrapping client design (must preserve gRPC-status introspectability through wrapping) -- confirmed status.FromError succeeds, meaning the client's error wrapping does not break status introspection."
+    },
+    "graphneighbors_hop_limitation_respected": {
+      "status": "PASS",
+      "evidence": "GraphNeighbors subtest (lines 368-391) asserts TargetFileId, Type (ENTITY_COOCCUR), and Weight (7) but never asserts a Hop value, correctly avoiding the known documented limitation (server.go:232-242 doc comment: Neighbor.hop always left at proto zero-value 0, not a faithful hop distance, is a genuine engine/graph API gap out of 3.2.2's scope)."
+    },
+    "searchcandidates_placeholder_and_maxresults_respected": {
+      "status": "PASS",
+      "evidence": "SearchCandidates subtest calls with MaxResults: 0 and correctly treats it as 'no cap' (cross-checked against the full, uncapped btree.PrefixScan result set), matching server.go:296-309's documented max_results==0 'no cap' semantics (distinct from GraphNeighbors' max_nodes==0 'empty result' semantics, which the test does NOT confuse). Does not assert on Score beyond what's consistent with the documented searchCandidateScore=1.0 placeholder constant (implicit, non-asserted, correctly avoiding over-specification of a known-placeholder value)."
+    },
+    "cleanup_and_race_safety": {
+      "status": "PASS",
+      "evidence": "t.Cleanup registered for FileManager.Close, IDAllocator.Close, NodeAllocator.Close, gsrv.GracefulStop()+<-serveErrCh (real drain, not just Stop()), and conn.Close(). recordingRecorder/fakeRecorder-equivalent guarded by sync.Mutex for concurrent interceptor invocation safety. Verified independently: go test ./rpc/... -run TestRPCIntegration -race -timeout 60s -v -- all 9 subtests PASS, race detector clean."
+    },
+    "test_execution": {
+      "status": "PASS",
+      "evidence": "Independently ran from engine/: gofmt -l . (empty, clean), go vet ./... (clean), go build ./... (clean), go test ./rpc/... -run TestRPCIntegration -race -timeout 60s -v (all 9 subtests PASS), go test ./... -timeout 180s (all packages ok, no flake observed this run, no regressions)."
+    },
+    "scope_containment": {
+      "status": "PASS",
+      "evidence": "git show --name-only c49c3767 confirms only .cdr/runs/2026-07-09/011-implementation/* (process artifacts) and engine/rpc/integration_test.go changed. No production code (server.go, interceptor.go, proposer_grpc.go) modified. No destructive or out-of-scope filesystem changes observed anywhere in the repo working tree during this verification."
+    }
+  },
+  "overall_issue16_assessment": {
+    "all_5_subtasks_individually_verified": true,
+    "genuinely_complete_per_original_issue_text": false,
+    "reasoning": "3.2.1-3.2.5 are each internally correct, well-tested, and consistent with each other and with the documented (docs/LLD/rpc.md) descoping decision that ProposeSplit's real Python-backed server implementation is issue #18's scope, not #16's. However issue #16's own subtask 3.2.5 acceptance criteria literally require a real cross-language (Go engine <-> running Python agent service) round trip executing ProposeSplit successfully end to end, which has never been implemented or tested anywhere in the 3.2.x sequence -- only a Go-only integration test asserting the Python side does not exist (Unimplemented) has been delivered. This is a legitimate, disclosed, and repeatedly-reverified scope reduction, not a bug, but it means: (a) issue #16 should not be closed as literally satisfying its own written acceptance criteria without an explicit human decision to accept the reduced scope and either amend the issue text or split out the true cross-language round trip into issue #18 explicitly, and (b) the orchestrator should surface this scope gap to the user before seeking authorization to close issue #16, rather than silently treating all 5 subtask checkboxes as equivalent to the issue's original written scope."
+  },
+  "regression_flake_note": "engine/split.TestReaderDuringSplit was not observed to flake in this run's `go test ./... -timeout 180s` invocation; consistent with the documented ~1-3% pre-existing timing flake, not triggered here."
+}

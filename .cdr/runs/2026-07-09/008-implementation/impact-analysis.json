@@ -1,0 +1,35 @@
+{
+  "affected_files": {
+    "new": [
+      "engine/rpc/interceptor.go",
+      "engine/rpc/interceptor_test.go"
+    ],
+    "modified": [
+      "engine/rpc/server.go (FileId==0 InvalidArgument guard on GetFile/ReadPartial, non-blocking follow-up)",
+      "engine/rpc/server_test.go (regression subtests for FileId=0)",
+      ".cdr/index/regression.jsonl (mark 3.2.2 finding resolved=true)",
+      ".cdr/memory/pending.md (mark FileId=0 item resolved)"
+    ]
+  },
+  "modules": ["engine/rpc"],
+  "contracts": {
+    "new_exported_symbols": [
+      "rpc.LatencyInterceptor(opts ...Option) grpc.UnaryServerInterceptor",
+      "rpc.Recorder interface { Record(RPCMetric) }",
+      "rpc.RPCMetric struct { Method string; Duration time.Duration; RequestBytes int; ResponseBytes int; Code codes.Code }",
+      "rpc.WithRecorder(Recorder) Option",
+      "rpc.SlogRecorder (default Recorder, log/slog-backed)"
+    ],
+    "unchanged_contracts": [
+      "hivemindv1.HiveMindServer (no proto/gen changes)",
+      "rpc.Server's 5 handler signatures (PutSegment/GetFile/ReadPartial/GraphNeighbors/SearchCandidates) unchanged in behavior; GetFile/ReadPartial gain an additional early-return InvalidArgument path for FileId==0 only, no change to any existing success/NotFound/Internal path"
+    ]
+  },
+  "dependents": [
+    "No current production caller of engine/rpc.Server over a real grpc.Server exists yet in this repo (no cmd/ binary) — interceptor is additive/unused-in-production until a future server binary or 3.2.5's integration test wires grpc.NewServer(grpc.UnaryInterceptor(rpc.LatencyInterceptor())) explicitly.",
+    "engine/split/proposer_grpc.go (gRPC client) unaffected — this is a server-side interceptor only.",
+    "engine/rpc/server_test.go's existing 15 subtests unaffected except the two new FileId=0 subtests appended."
+  ],
+  "risk_level": "low",
+  "risk_rationale": "Purely additive observability layer plus a narrowly-scoped 2-line guard-clause fix in already-tested handlers; no change to existing success-path semantics, no new external dependencies, no proto/wire-format changes. Concurrency risk from the interceptor's own state (if any counters/aggregation added) is the only elevated-attention item; addressed by keeping the interceptor itself stateless per-call (delegates aggregation entirely to the pluggable Recorder, whose default implementation - log/slog - is already documented safe for concurrent use)."
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "run_id": "007-cdr-commit",
+  "subtask": "3.2.3",
+  "final_commit": "b2a119d768f8fed28b2a73003ef0ce19a98bd450",
+  "commit_doc": ".cdr/commits/task-3.2.3.md",
+  "index_updates": [".cdr/index/task.jsonl", ".cdr/index/feature.jsonl"],
+  "pending_items_added": 0,
+  "pushed": false,
+  "github_issue_touched": false,
+  "notes": "Documentation-only close-out of already-verified (006-verification, PASS, zero findings) commit b2a119d. No fix cycle, no pending.md addition. Issue #16 left open (2 subtasks remain: 3.2.4, 3.2.5)."
+}

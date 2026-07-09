@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "3.2.4 - Per-call latency/cost interceptors on Go/Python gRPC sides (Go side: engine/rpc/interceptor.go), issue #16",
+  "git_head": "b2a119d768f8fed28b2a73003ef0ce19a98bd450",
+  "run_key": "issue16-3.2.4-interceptor-b2a119d",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:45:00Z",
+  "final_commit": "3f0647a397b2796dbcd6131ae7153d710b6adf5b"
+}

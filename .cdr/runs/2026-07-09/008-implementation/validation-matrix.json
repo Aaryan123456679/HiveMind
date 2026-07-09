@@ -1,0 +1,36 @@
+{
+  "criteria": [
+    {
+      "criterion": "Every RPC call logs per-call latency (Go side)",
+      "check": "TestLatencyInterceptor success + error subtests assert Duration>0 recorded for every call via a real gRPC round trip"
+    },
+    {
+      "criterion": "Interceptor is a grpc.UnaryServerInterceptor wireable via grpc.UnaryInterceptor/ChainUnaryInterceptor",
+      "check": "interceptor_test.go constructs a real grpc.NewServer(grpc.UnaryInterceptor(LatencyInterceptor(...))) and demonstrates it intercepting real RPCs"
+    },
+    {
+      "criterion": "Format a future benchmark harness can consume",
+      "check": "RPCMetric struct is a stable, typed record (method/duration/bytes/code) passed to a pluggable Recorder; default SlogRecorder emits structured key=value fields, not free-text"
+    },
+    {
+      "criterion": "Does not change existing handler behavior/response semantics",
+      "check": "interceptor_test.go asserts response payloads/error codes from wrapped calls are identical to server_test.go's existing non-intercepted expectations (GetFile success content, NotFound code)"
+    },
+    {
+      "criterion": "go test ./engine/rpc/... -run TestLatencyInterceptor (issue's named test spec)",
+      "check": "test function named exactly TestLatencyInterceptor in engine/rpc/interceptor_test.go"
+    },
+    {
+      "criterion": "Concurrency safety of any shared state",
+      "check": "go test ./engine/rpc/... -race -run TestLatencyInterceptor -timeout 5m; interceptor itself holds no shared mutable state (stateless per call), test Recorder uses a mutex-guarded slice"
+    },
+    {
+      "criterion": "(bundled, non-blocking, explicitly flagged) FileId=0 on GetFile/ReadPartial returns a caller-input code, not codes.Internal",
+      "check": "server_test.go GetFile_ZeroFileID / ReadPartial_ZeroFileID subtests assert codes.InvalidArgument"
+    },
+    {
+      "criterion": "gofmt/vet/build clean",
+      "check": "gofmt -l engine/rpc, go vet ./..., go build ./... all clean from engine/"
+    }
+  ]
+}

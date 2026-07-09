@@ -1,0 +1,46 @@
+{
+  "run_id": "2026-07-09-011-implementation",
+  "subtask": "task-3.2.5",
+  "issue": 16,
+  "final_commit": "c49c3767d86f4e095ce652e09ba825d7b6506151",
+  "final_commit_verified_via": "git rev-parse HEAD (post-commit)",
+  "files_changed": [
+    {
+      "path": "engine/rpc/integration_test.go",
+      "kind": "new file (test only, package rpc_test)",
+      "key_symbols": [
+        "TestRPCIntegration (top-level test, ~line 260)",
+        "newIntegrationFixture (fixture setup, ~line 87)",
+        "startRealServer (real net.Listener + grpc.Server + LatencyInterceptor wiring, ~line 224)",
+        "recordingRecorder (rpc.Recorder test double, ~line 52)"
+      ],
+      "subtests": [
+        "PutSegment_Create", "PutSegment_Append", "GetFile", "GetFile_NotFound",
+        "ReadPartial", "GraphNeighbors", "SearchCandidates",
+        "ProposeSplit_Unimplemented", "LatencyInterceptor_Wired"
+      ]
+    }
+  ],
+  "criteria_covered": ["AC1", "AC2", "AC3", "AC4", "AC5", "AC6"],
+  "validation_matrix": ".cdr/runs/2026-07-09/011-implementation/validation-matrix.json",
+  "requirement": ".cdr/runs/2026-07-09/011-implementation/requirement.md",
+  "impact_analysis": ".cdr/runs/2026-07-09/011-implementation/impact-analysis.json",
+  "self_consistency": ".cdr/runs/2026-07-09/011-implementation/self-consistency.json",
+  "test_commands": [
+    "cd engine && gofmt -l rpc/integration_test.go",
+    "cd engine && go vet ./...",
+    "cd engine && go build ./...",
+    "cd engine && go test ./rpc/... -run TestRPCIntegration -race -timeout 60s -v",
+    "cd engine && go test ./... -timeout 180s"
+  ],
+  "production_code_changed": false,
+  "transport_choice": "real net.Listener (net.Listen(\"tcp\", \"127.0.0.1:0\")), not bufconn -- disclosed judgment call, see requirement.md and architecture-discovery.md",
+  "prior_related_commits": {
+    "task-3.2.1": "2fa5529b7ed5071bd9f2428b1f8b8a12da49e097 (fix: 25846fd890e018bf9bc4fcbde148c9b382dbb35e)",
+    "task-3.2.2": "4f20044f93f45de078307393d6503e1b05d4e3f5",
+    "task-3.2.3": "b2a119d (see .cdr/index/task.jsonl for full hash)",
+    "task-3.2.4": "a1497bc / 3f0647a / bb01cedec369621c781fb8a6ef0308cb86611971 (git_head at start of this run)"
+  },
+  "not_verified_by_this_agent": true,
+  "note_for_verifier": "This agent (implementation) does not verify its own work per invariant I4. Run /cdr:verify next. Note pre-existing untracked run artifacts from earlier 3.2.3/3.2.4 cdr-commit cycles (.cdr/runs/2026-07-09/005-009, .cdr/commits/task-3.2.3.md) were observed as untracked at the start of this run and were deliberately left untouched/uncommitted -- they are out of this subtask's scope, not something this agent created or should silently commit alongside its own change."
+}

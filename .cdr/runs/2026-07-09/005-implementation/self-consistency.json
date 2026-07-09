@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "subtask": "3.2.3",
+  "note": "Internal sanity only -- NOT independent verification. A separate /cdr:verify agent must independently verify this work (invariant I4).",
+  "checks": [
+    {"check": "gofmt -l .", "result": "clean (after gofmt -w on the 2 new files)"},
+    {"check": "go vet ./...", "result": "clean"},
+    {"check": "go build ./...", "result": "clean"},
+    {"check": "go test ./split/... -run TestGRPCSplitProposer -race -timeout 30s -v", "result": "PASS, 4 subtests (happy_path, empty_response, server_error, timeout)"},
+    {"check": "go test ./split/... -race -timeout 60s", "result": "PASS (full package, including pre-existing tests, unaffected)"},
+    {"check": "git diff --stat engine/split/proposer_mock.go engine/rpc/server.go", "result": "empty -- both untouched"},
+    {"check": "validation-matrix.json coverage", "result": "all 10 rows covered by implementation + test subtests listed above"}
+  ],
+  "known_limitations_disclosed": [
+    "Timeout test asserts codes.DeadlineExceeded specifically (via context.WithTimeout wrapping); a bare context cancellation from an upstream caller would surface as codes.Canceled instead -- both are non-nil, non-hanging errors satisfying the acceptance criteria, but only DeadlineExceeded is exercised by the test suite added here.",
+    "SplitProposer's interface (proposer.go) takes no context.Context, so GRPCSplitProposer's only per-call deadline knob is the constructor-configured timeout field; this is a pre-existing interface constraint, not something this subtask could change without touching proposer.go (out of scope)."
+  ]
+}

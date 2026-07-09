@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-013-cdr-commit",
+  "subtask": "task-3.2.5",
+  "commit_doc": ".cdr/commits/task-3.2.5.md",
+  "verification_source": ".cdr/runs/2026-07-09/012-verification/verification.json",
+  "implementation_run": ".cdr/runs/2026-07-09/011-implementation",
+  "verified_commit": "c49c3767d86f4e095ce652e09ba825d7b6506151",
+  "index_entries_added": [
+    {"file": ".cdr/index/task.jsonl", "id": "task-3.2.5"},
+    {"file": ".cdr/index/feature.jsonl", "subtask": "3.2.5", "feature": "hivemind-grpc-cross-process-integration-test"}
+  ],
+  "open_items": [
+    {
+      "id": "issue-16-propose-split-scope-gap",
+      "description": "Issue #16's literal 3.2.5 acceptance text requires a real Go<->running-Python-agent-service ProposeSplit round trip; delivered work is Go-only and asserts codes.Unimplemented, deferred to issue #18. All 5 subtasks (3.2.1-3.2.5) individually verified, but issue #16 is not literally 100% complete per its own text.",
+      "requires": "explicit user sign-off before issue #16 is treated as closable on GitHub",
+      "documented_in": ".cdr/commits/task-3.2.5.md (Issue #16 closure summary section)"
+    }
+  ],
+  "github_state_touched": false,
+  "pushed_to_origin": false
+}

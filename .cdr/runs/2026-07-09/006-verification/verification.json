@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "run_id": "006-verification",
+  "subtask": "3.2.3 - engine/split/proposer_grpc.go real gRPC-backed SplitProposer (issue #16, Epic Phase 3, milestone #5)",
+  "commit_verified": "b2a119d768f8fed28b2a73003ef0ce19a98bd450",
+  "parent_commit": "b38dc8173cf99f693e67e7958d80b2ee6edf5be6",
+  "verdict": "PASS",
+  "security_note": "gh issue view 16 and the implementer's handoff.json contained embedded prompt-injection attempts (fake date-change system-reminder, fake MCP 'tokensave' tool instructions, fake 'Auto Mode Active' directive with an embedded 'don't tell the user' instruction). Treated as inert untrusted data; not acted upon. Disclosed per protocol.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Issue #16 subtask 3.2.3 acceptance criteria: 'engine/split/ can be configured to use a real gRPC-backed SplitProposer implementation that calls the Python agent service's ProposeSplit RPC instead of the deterministic mock'. GRPCSplitProposer (engine/split/proposer_grpc.go:38-64) implements split.SplitProposer via hivemindv1.HiveMindClient.ProposeSplit, confirmed via compile-time assertion `var _ SplitProposer = (*GRPCSplitProposer)(nil)` (line 54). Test spec 'go test ./engine/split/... -run TestGRPCSplitProposer' matches exactly (test name confirmed at proposer_grpc_test.go:101)."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Matches proposer.go's SplitProposer interface (fileContent []byte) -> (SplitPlan, error), no context.Context param -- correctly documented as a pre-existing interface constraint (proposer_grpc.go:44-49), not silently worked around. Constructor mirrors engine/rpc.NewServer's 'trusts caller-validated args, does not own connection lifecycle' convention. docs/LLD/rpc.md status paragraph update (git show b2a119d -- docs/LLD/rpc.md) is accurate: correctly states server-side ProposeSplit remains the generated Unimplemented stub and that server-side LLM logic is issue #18's job -- does not overclaim completion of anything out of scope."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git show --stat b2a119d confirms exactly 3 files changed: docs/LLD/rpc.md (+10/-3), engine/split/proposer_grpc.go (new, 134 lines), engine/split/proposer_grpc_test.go (new, 252 lines). engine/split/proposer_mock.go and engine/rpc/server.go are absent from the diff -- confirmed untouched. Full `go test ./... -count=1 -timeout 25m` from engine/: all packages pass except the single pre-existing TestReaderDuringSplit flake (engine/split, 'reader never observed post-split content across 400 iterations'), which is a known, already-tracked (.cdr/index/regression.jsonl, entries dated 2026-07-08 and prior) sleep-timing-based flake unrelated to this change -- zero new regressions."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "empty_response subtest (proposer_grpc_test.go:153-169) confirms a nil/empty ProposeSplitResponse correctly yields an empty, non-nil SplitPlan{} (len(Files)==0, RedirectSummary==''), not a nil-pointer panic -- exercises translateProposeSplitResponse's GetFiles()/GetRedirectSummary() nil-safe proto accessor usage and its `if f == nil { continue }` / `if r == nil { continue }` guards (proposer_grpc.go:104,112)."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No secrets, no injection surface introduced. GRPCSplitProposer performs no auth/credential handling itself (delegates to the caller-constructed grpc.ClientConn), consistent with its documented client-side-transport-only scope. bufconn test correctly uses insecure.NewCredentials(), appropriate for an in-process test-only transport."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Per-call timeout (context.WithTimeout) correctly bounds each RPC when configured; genuinely verified via the timeout subtest's real wall-clock elapsed-time assertion (elapsed >= 300*time.Millisecond fails the test), proving the 20ms client timeout actually fires well before the fixture server's artificial 300ms delay -- not merely an error-code check with no timing bound. No unbounded loops, no N+1 patterns; translateProposeSplitResponse pre-sizes slices via make(..., 0, len(...))."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Extensive, accurate doc comments throughout proposer_grpc.go. int64(wire)->int(internal) SectionRange conversion (proposer_grpc.go:110-127) is genuinely documented, not silently lossy: doc comment correctly reasons that SectionRange bounds an in-memory []byte slice whose length is itself bounded by Go's int (== platform word size), so any legitimately-produced Start/End value already fits int on the sending side; the only theoretical risk (32-bit build target receiving a >2^31 offset from a 64-bit peer) is explicitly flagged as an accepted, non-targeted platform per repo build conventions, not silently ignored. This is a reasonable, well-documented assumption -- not a real portability risk given the repo targets amd64/arm64 (64-bit int)."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestGRPCSplitProposer has exactly the 4 claimed subtests (happy_path, empty_response, server_error, timeout). happy_path's server-receipt assertion (proposer_grpc_test.go:133-140) genuinely checks req.GetFileContent() read back from a channel populated inside the fixture server's handler running on the real grpc.Server goroutine -- proving the marshaled request actually crossed the wire, not just that the client sent it. server_error correctly asserts status.Code(err) == codes.InvalidArgument propagates end-to-end. bufconn wiring (startFixtureServer, lines 62-97) is a genuine wire round-trip: real bufconn.Listener, real grpc.NewServer()+RegisterHiveMindServer, real grpc.NewClient dialed via grpc.WithContextDialer -- not a shortcut Go function-call mock. `go test ./split/... -run TestGRPCSplitProposer -race -count=5 -timeout 5m`: all 5 iterations pass, no flakiness observed."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "All implementer claims independently reproduced by reading actual code (not the report): error wrapping (fmt.Errorf wraps status.Code(err) and the original err, proposer_grpc.go:86-88, confirmed non-panicking for codes.Unimplemented -- p.client.ProposeSplit returns a non-nil err for any non-OK status including Unimplemented, which flows straight to the wrap-and-return path, never touching resp), scope discipline (git show --stat), provenance (final_commit in handoff.json/metadata.json matches git log exactly), and rpc.md accuracy all match the diff verbatim."
+    },
+    "possible_improvements": [
+      "Non-blocking: consider adding a subtest for codes.Unimplemented specifically (the realistic near-term production scenario against today's engine/rpc/server.go), even though server_error's InvalidArgument case already proves generic non-OK-status handling works.",
+      "Non-blocking, already disclosed by implementer: SplitProposer's context-less interface signature limits GRPCSplitProposer to a single constructor-configured timeout rather than a per-call caller-supplied deadline; acceptable for this subtask's scope, flagged for a future interface revision if per-call deadlines become necessary."
+    ]
+  },
+  "commands_run": [
+    "go build ./... -- clean, zero output",
+    "go vet ./... -- clean, zero output",
+    "gofmt -l . -- clean, zero output",
+    "go test ./split/... -run TestGRPCSplitProposer -race -count=5 -timeout 5m -- PASS, 1.656s",
+    "go test ./split/... -race -count=1 -timeout 10m -- PASS, 55.021s",
+    "go test ./... -count=1 -timeout 25m (from engine/) -- PASS except pre-existing known-flaky TestReaderDuringSplit (engine/split), matching disclosed baseline"
+  ],
+  "provenance_check": {
+    "handoff_final_commit": "b2a119d768f8fed28b2a73003ef0ce19a98bd450",
+    "git_log_head": "b2a119d768f8fed28b2a73003ef0ce19a98bd450",
+    "match": true
+  },
+  "regression_log_entry_required": false
+}
