@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-09-014-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "3.3.1 - PDF normalizer via pymupdf -> plain text page markers (GitHub issue #17)",
+  "git_head": "b2d5dd473bad8cd4c801ada7ee90a741e6148b5a",
+  "run_key": "issue17-3.3.1-normalize_pdf-b2d5dd473bad8cd4c801ada7ee90a741e6148b5a",
+  "status": "completed",
+  "last_completed_step": "self-consistency",
+  "started_at": "2026-07-09T00:00:00Z",
+  "ended_at": "2026-07-09T00:00:00Z"
+}

@@ -1,0 +1,18 @@
+{
+  "subtask": "3.3.1",
+  "new_files": [
+    "agents/ingestion/normalize_pdf.py",
+    "agents/ingestion/test_normalize_pdf.py"
+  ],
+  "modified_files": [],
+  "dependency_changes": {
+    "pymupdf": "already declared in agents/pyproject.toml (>=1.24) and already installed in agents/.venv (1.28.0) -- no change required"
+  },
+  "downstream_consumers": {
+    "current": "none -- agents/ingestion package is scaffold-only, no dispatch.py/rawdoc.py yet (subtask 3.3.4, out of scope)",
+    "future": "agents/ingestion/dispatch.py (subtask 3.3.4) will eventually call normalize_pdf() and wrap its output into a RawDocument"
+  },
+  "risk": "low -- purely additive, new module + new test, no existing code paths touched, no public API changes to other modules",
+  "backward_compatibility": "n/a -- no existing callers",
+  "test_impact": "adds agents/ingestion/test_normalize_pdf.py; no existing tests affected (none exist yet in agents/)"
+}

@@ -1,0 +1,31 @@
+{
+  "subtask": "3.3.1",
+  "checks": [
+    {
+      "check": "pytest agents/ingestion/test_normalize_pdf.py (run from agents/ dir with venv, equivalent invocation) passes",
+      "result": "pass",
+      "detail": "4 passed, 5 warnings (unrelated SWIG DeprecationWarning noise from pymupdf native bindings) in 0.14s"
+    },
+    {
+      "check": "pymupdf declared as dependency",
+      "result": "pass",
+      "detail": "agents/pyproject.toml already lists 'pymupdf>=1.24' in [project.dependencies]; no change needed"
+    },
+    {
+      "check": "validation-matrix.json criteria AC1-AC4 all covered by actual test functions present in test_normalize_pdf.py",
+      "result": "pass",
+      "detail": "test_page_markers_present_in_order, test_page_content_preserved, test_marker_count_matches_page_count, test_empty_page_still_gets_marker all present and passing"
+    },
+    {
+      "check": "no page content dropped, including zero-extractable-text pages",
+      "result": "pass",
+      "detail": "normalize_pdf emits one [[PAGE n]]...[[/PAGE n]] block per page via enumerate(doc), unconditionally; empty-page test confirms marker still emitted with empty text body"
+    },
+    {
+      "check": "marker format is unambiguous/parseable",
+      "result": "pass",
+      "detail": "PAGE_MARKER_RE regex with backreference (?P=page) matching open/close pairs exported publicly for downstream consumers; documented in module docstring"
+    }
+  ],
+  "note": "This is internal sanity only, not independent verification (invariant I4). A separate agent must run /cdr:verify."
+}

@@ -1,0 +1,29 @@
+{
+  "subtask": "3.3.1",
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "Given a PDF file, normalizer produces plain text with page-boundary markers preserved",
+      "test": "test_normalize_pdf.py::test_page_markers_present_in_order",
+      "covered": true
+    },
+    {
+      "id": "AC2",
+      "description": "No page content dropped",
+      "test": "test_normalize_pdf.py::test_page_content_preserved and test_marker_count_matches_page_count",
+      "covered": true
+    },
+    {
+      "id": "AC3",
+      "description": "Empty page is not silently skipped (interpretation of 'no content dropped' at page granularity)",
+      "test": "test_normalize_pdf.py::test_empty_page_still_gets_marker",
+      "covered": true
+    },
+    {
+      "id": "AC4",
+      "description": "Test spec exact invocation works: pytest agents/ingestion/test_normalize_pdf.py",
+      "test": "self-consistency step runs this exact command",
+      "covered": true
+    }
+  ]
+}
