@@ -1,0 +1,25 @@
+{
+  "build_green": true,
+  "targeted_tests": {
+    "command": "cd agents && python3 -m pytest query/ -q",
+    "result": "43 passed",
+    "includes_unmodified_4.4.1_tests": true
+  },
+  "full_regression": {
+    "command": "cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q",
+    "result": "2 failed, 254 passed",
+    "failures": [
+      "ingestion/test_shortlist.py::test_grpc_client_translates_request_response",
+      "ingestion/test_shortlist.py::test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist"
+    ],
+    "failure_root_cause": "google.protobuf.runtime_version.VersionError: installed protobuf runtime (5.29.6) is older than the linked gencode (6.33.5) used to generate hivemind_pb2.py -- a pre-existing local environment issue, unrelated to this change.",
+    "pre_existing_confirmed": "Verified by git stash -u (removing all this run's changes, back to commit 5cc0ea3) and re-running ingestion/test_shortlist.py alone: same 2 failures, 14 passed -- identical failure set before this dispatch's changes."
+  },
+  "lint": {
+    "command": "ruff check query/topic_selector.py query/test_topic_selector_expansion.py",
+    "result": "All checks passed"
+  },
+  "validation_matrix_coverage": "all rows in validation-matrix.json covered by test_topic_selector_expansion.py",
+  "scope_check": "select_top_k, TopicCandidate, DEFAULT_K, SearchCandidatesFn (4.4.1) left byte-for-byte unmodified -- confirmed additive-only diff via git diff. No 4.4.3 (hard-cap) or 4.4.4 (integration test) logic introduced.",
+  "note": "Per agent invariant I4, this is internal sanity only -- not verification. /cdr:verify must independently assess this work."
+}

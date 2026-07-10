@@ -129,3 +129,191 @@ def select_top_k(
     )
     top_indices = ranked_indices[:k]
     return [candidates[i] for i in top_indices]
+
+
+# ---------------------------------------------------------------------------
+# 4.4.2 -- graph-traversal expansion decision, delegating to GraphNeighbors
+# ---------------------------------------------------------------------------
+#
+# Per issue #23 subtask 4.4.2 and `docs/LLD/query-agent.md`'s `topic_selector.py`
+# section ("For any topic it judges insufficient alone, it may also request
+# graph-traversal expansion (0-2 hops); the Go engine performs the expansion via
+# `GraphNeighbors`."), this section adds the *decision* of which of `select_top_k`'s
+# output topics warrant a `GraphNeighbors` expansion request, and delegates the actual
+# expansion call to an injected function -- it does not implement graph traversal
+# itself (that lives in `engine/graph`/`engine/rpc`), and it does not implement 4.4.3's
+# `k + 2k` hard cap on the *combined* result (a later, separate subtask).
+#
+# "Judged insufficient alone" -- disclosed heuristic, since the LLD does not specify one
+# ---------------------------------------------------------------------------------------
+# Neither `docs/LLD/query-agent.md` nor the issue's acceptance criteria give a concrete
+# rule for what makes a selected topic "insufficient alone". This module uses a simple,
+# rules-based (not LLM) heuristic: a selected topic is flagged insufficient if its own
+# `score` falls below `ratio * top_score`, where `top_score` is the highest score among
+# the topics `select_top_k` actually returned for this query, and `ratio` is a tunable
+# constant (`DEFAULT_INSUFFICIENCY_RATIO`, not a hardcoded literal in the comparison
+# itself). This is deliberately *relative*, not an absolute cutoff: `score`'s scale is
+# caller-defined (see `select_top_k`'s own docstring -- candidates come from an
+# already-decoded `SearchCandidates` result whose relevance metric this module does not
+# control), so a fixed absolute threshold would only be meaningful for one particular
+# score distribution. A relative-to-top rule also guarantees the single best-selected
+# topic is never flagged (its own score never falls below `ratio * itself` for any
+# `ratio <= 1`), matching the intuitive reading that the top-ranked result is presumed
+# the most self-sufficient of the selection.
+#
+# Hop depth -- disclosed choice: always request the max of the valid range
+# ---------------------------------------------------------------------------
+# `proto/hivemind.proto`'s `GraphNeighborsRequest.depth` and `engine/rpc/server.go`'s
+# `Server.GraphNeighbors` handler both constrain `depth` to `[0, 2]` -- confirmed by
+# reading the handler directly (`depth < 0 || depth > 2` -> `InvalidArgument`). Issue
+# #23's "0-2 hop" phrasing is that same valid range, not a description of a per-call
+# variable hop-selection rule -- neither the LLD nor the issue names any signal (topic
+# type, score, edge density, etc.) for choosing 0 vs. 1 vs. 2 dynamically per topic, and
+# inventing one would be unfounded speculation beyond this subtask's scope. This module
+# therefore always requests `DEFAULT_EXPANSION_HOPS` (2, the max of the valid range) for
+# every topic it flags as insufficient, on the reasoning that a topic already judged
+# not self-sufficient should get the most graph context the engine allows. `hops`
+# remains a caller-overridable, range-validated keyword parameter (not a literal
+# baked into the call), so a future tunable config can change it without touching this
+# module's signature -- mirroring `select_top_k`'s own `k` parameter precedent.
+#
+# DI shape -- mirrors `SearchCandidatesFn`'s precedent exactly
+# ----------------------------------------------------------------
+# `agents/query/` has no gRPC client wiring yet (no `wiring.py` analogue exists, same gap
+# 4.4.1 disclosed for `SearchCandidatesFn`), and this subtask's test spec explicitly says
+# "GraphNeighbors mocked" -- so, following `agents/ingestion/shortlist.py`'s
+# `SearchCandidatesFn` pattern, `GraphNeighborsFn` is a plain `Callable` type alias
+# (`(file_id, hops) -> Sequence[GraphNeighbor]`) that tests inject directly as a mock; no
+# `Grpc*Client` wrapper is built in this dispatch, since it is not named in 4.4.2's
+# impacted-modules list. `GraphNeighbor` is a frozen dataclass mirroring
+# `proto/hivemind.proto`'s `Neighbor` message fields (`file_id`, `edge_type`, `weight`,
+# `hop`), decoupled from the generated type so tests never need `grpc` installed --
+# same rationale as `TopicCandidate`'s precedent in this same file.
+
+#: Threshold ratio for `is_insufficient_alone`: a topic is flagged insufficient if its
+#: own score is strictly less than `ratio * top_score` among the current selection. See
+#: this section's module-level comment above for the full rationale.
+DEFAULT_INSUFFICIENCY_RATIO = 0.5
+
+#: Hop depth requested for every flagged expansion. `proto/hivemind.proto`'s
+#: `GraphNeighborsRequest.depth` (enforced by `engine/rpc/server.go`'s `GraphNeighbors`
+#: handler) is valid only in `[0, 2]`; this module always requests the max of that
+#: range. See this section's module-level comment above for the full rationale.
+DEFAULT_EXPANSION_HOPS = 2
+
+
+@dataclass(frozen=True)
+class GraphNeighbor:
+    """One neighbor returned by a `GraphNeighbors` expansion, decoupled from
+    `proto/hivemind.proto`'s `Neighbor` message so callers/tests never need `grpc` or
+    the generated stubs.
+
+    Field names/types mirror `Neighbor` (`target_file_id` -> `file_id`, `type` ->
+    `edge_type`, `weight`, `hop`).
+    """
+
+    file_id: int
+    edge_type: str
+    weight: int
+    hop: int
+
+
+#: Injection point for a future caller's real `GraphNeighbors` RPC wrapper: given
+#: `(file_id, hops)`, return the decoded neighbor list. Mirrors
+#: `GraphNeighborsRequest{file_id, depth}` -> a sequence of `GraphNeighbor`. Tests
+#: supply a plain mock callable here, per this subtask's test spec ("GraphNeighbors
+#: mocked"); no real gRPC-backed implementation is built in this dispatch (see this
+#: section's module-level comment above).
+GraphNeighborsFn = Callable[[int, int], Sequence[GraphNeighbor]]
+
+
+@dataclass(frozen=True)
+class ExpansionResult:
+    """One selected topic flagged insufficient alone, paired with the neighbors its
+    `GraphNeighbors` expansion returned."""
+
+    topic: TopicCandidate
+    neighbors: list[GraphNeighbor]
+
+
+def is_insufficient_alone(
+    topic: TopicCandidate,
+    top_score: float,
+    *,
+    ratio: float = DEFAULT_INSUFFICIENCY_RATIO,
+) -> bool:
+    """Return whether `topic` is judged "insufficient alone" relative to `top_score`.
+
+    Args:
+        topic: The selected topic to judge.
+        top_score: The highest score among the current selection (typically
+            `max(t.score for t in selected)`); `topic` is compared against this, not
+            against a global/absolute constant. See this module's `DEFAULT_EXPANSION_HOPS`
+            section-level comment for the full rationale.
+        ratio: Threshold fraction. Defaults to `DEFAULT_INSUFFICIENCY_RATIO`.
+
+    Returns:
+        `True` if `topic.score < ratio * top_score`; `False` otherwise (strict `<`, so
+        a topic exactly at the threshold -- including the top topic itself, whose score
+        equals `top_score` -- is never flagged for any `ratio <= 1`).
+
+    Raises:
+        ValueError: If `ratio` is negative.
+    """
+    if ratio < 0:
+        raise ValueError(f"is_insufficient_alone: ratio must be >= 0, got {ratio}")
+
+    return topic.score < ratio * top_score
+
+
+def expand_insufficient_topics(
+    selected: Sequence[TopicCandidate],
+    graph_neighbors: GraphNeighborsFn,
+    *,
+    hops: int = DEFAULT_EXPANSION_HOPS,
+    ratio: float = DEFAULT_INSUFFICIENCY_RATIO,
+) -> list[ExpansionResult]:
+    """Decide which of `selected`'s topics are "insufficient alone" and request a
+    `GraphNeighbors` expansion for exactly those, via `graph_neighbors`.
+
+    Args:
+        selected: Topics already chosen by `select_top_k` (or any equivalent sequence
+            of `TopicCandidate`s). Not mutated. If empty, returns `[]` without calling
+            `graph_neighbors` at all.
+        graph_neighbors: Callable satisfying `GraphNeighborsFn` -- called as
+            `graph_neighbors(topic.file_id, hops)` once per topic flagged insufficient,
+            and *not at all* for topics judged sufficient (per this subtask's test
+            spec: "expansion is requested only for topics flagged insufficient").
+            Tests mock this directly; no real gRPC-backed implementation exists yet
+            (see this module's section-level comment above).
+        hops: Hop depth requested for every flagged expansion. Must be in `[0, 2]`,
+            matching `engine/rpc/server.go`'s `GraphNeighbors` handler's own validated
+            range. Defaults to `DEFAULT_EXPANSION_HOPS` (2).
+        ratio: Forwarded to `is_insufficient_alone` as its `ratio` argument. Defaults to
+            `DEFAULT_INSUFFICIENCY_RATIO`.
+
+    Returns:
+        One `ExpansionResult` per topic in `selected` (in original order) that was
+        flagged insufficient, each carrying that call's decoded `graph_neighbors`
+        result. Topics judged sufficient are simply absent from the result -- this
+        function does not report "not expanded" entries.
+
+    Raises:
+        ValueError: If `hops` is outside `[0, 2]`, or if `ratio` is negative (raised by
+            `is_insufficient_alone`).
+    """
+    if not 0 <= hops <= 2:
+        raise ValueError(f"expand_insufficient_topics: hops must be in [0, 2], got {hops}")
+
+    if not selected:
+        return []
+
+    top_score = max(topic.score for topic in selected)
+
+    results: list[ExpansionResult] = []
+    for topic in selected:
+        if is_insufficient_alone(topic, top_score, ratio=ratio):
+            neighbors = list(graph_neighbors(topic.file_id, hops))
+            results.append(ExpansionResult(topic=topic, neighbors=neighbors))
+
+    return results
