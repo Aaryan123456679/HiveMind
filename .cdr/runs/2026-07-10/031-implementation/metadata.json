@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-031-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-18-subtask-3.4.5-propose-split",
+  "git_head": "4ed5f0e0162ec136ad57a1b8c204033013b08f48",
+  "run_key": "2f7bcbe45f979f36",
+  "status": "in_progress",
+  "last_completed_step": "started",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": null
+}

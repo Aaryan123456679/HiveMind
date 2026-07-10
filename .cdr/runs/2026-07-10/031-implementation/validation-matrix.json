@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "subtask": "issue-18-subtask-3.4.5-propose-split",
+  "acceptance_criteria": [
+    {
+      "criterion": "ProposeSplit(fileContent) -> topic-coherent [{newPath, sectionRanges}, ...] plan plus redirect summary, using segmentation LLM pathway",
+      "covered_by": [
+        "test_propose_split_partitions_content_without_gaps_or_overlaps",
+        "test_propose_split_preserves_topic_paths_and_order",
+        "test_propose_split_returns_redirect_summary",
+        "test_prompt_includes_document_text"
+      ]
+    },
+    {
+      "criterion": "LLMClient mocked; fixture over-threshold document",
+      "covered_by": [
+        "_FakeLLMClient (mirrors test_segment.py convention)",
+        "_FIXTURE_DOCUMENT (multi-topic, over-threshold-representative)"
+      ]
+    },
+    {
+      "criterion": "Returned plan's ranges partition content without gaps or overlaps",
+      "covered_by": [
+        "test_propose_split_partitions_content_without_gaps_or_overlaps (explicit start==0, end==len, contiguous, reassembly-equals-original assertions)"
+      ]
+    },
+    {
+      "criterion": "LLMError propagates unwrapped (matches segment.py convention)",
+      "covered_by": ["test_llm_error_propagates_unwrapped"]
+    },
+    {
+      "criterion": "Malformed-response handling produces a clear, specific error (not a generic Exception)",
+      "covered_by": [
+        "test_unparseable_json_raises",
+        "test_non_object_json_raises",
+        "test_missing_top_level_field_raises[sections]",
+        "test_missing_top_level_field_raises[redirect_summary]",
+        "test_sections_wrong_type_raises",
+        "test_fewer_than_two_sections_raises",
+        "test_section_missing_field_raises[new_topic_path]",
+        "test_section_missing_field_raises[start_marker]",
+        "test_section_empty_new_topic_path_raises",
+        "test_duplicate_new_topic_path_raises",
+        "test_unresolvable_start_marker_raises",
+        "test_out_of_order_start_marker_raises"
+      ]
+    },
+    {
+      "criterion": "Proactive defense against segment.py's open F1 finding (markdown-code-fence-wrapped JSON)",
+      "covered_by": ["test_markdown_code_fence_wrapped_json_is_parsed"]
+    },
+    {
+      "criterion": "Call kwargs (model/temperature/max_tokens/timeout) forwarded verbatim to LLMClient.complete()",
+      "covered_by": ["test_propose_split_forwards_call_kwargs"]
+    },
+    {
+      "criterion": "No Go/proto changes; engine/rpc's ProposeSplit Unimplemented stub is intentional and unaffected",
+      "covered_by": [
+        "go build ./... (engine/, clean)",
+        "go vet ./... (engine/, clean)",
+        "go test ./rpc/... -race -run TestRPCIntegration -v (ProposeSplit_Unimplemented subtest still PASS, unchanged)",
+        "go test ./... -race -count=1 (engine/, run twice; both green except the pre-existing tracked TestReaderDuringSplit flake on run 1, both green on run 2 -- confirms no new flakiness introduced)"
+      ]
+    }
+  ],
+  "test_execution_summary": {
+    "python_new_file": "agents/ingestion/test_propose_split.py: 19/19 passed",
+    "python_full_suite": "146/146 passed (agents/), run twice, stable",
+    "go_build": "clean (engine/)",
+    "go_vet": "clean (engine/)",
+    "go_test_race_run1": "9/10 packages ok; engine/split failed on TestReaderDuringSplit (pre-existing tracked flake, see .cdr/memory/pending.md / task-3.2.5 note; not touched by this change)",
+    "go_test_race_run2": "10/10 packages ok, including engine/split -- confirms flake, not a regression"
+  }
+}

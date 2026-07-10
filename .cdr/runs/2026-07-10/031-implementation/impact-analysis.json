@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "subtask": "issue-18-subtask-3.4.5-propose-split",
+  "new_files": [
+    "agents/ingestion/propose_split.py",
+    "agents/ingestion/test_propose_split.py"
+  ],
+  "modified_files": [],
+  "explicitly_not_touched": [
+    "engine/rpc/server.go",
+    "engine/rpc/integration_test.go",
+    "proto/hivemind.proto",
+    "agents/ingestion/wiring.py",
+    "agents/ingestion/segment.py",
+    "agents/hivemind_pb2.py",
+    "agents/hivemind_pb2_grpc.py"
+  ],
+  "reasoning_for_not_touched": {
+    "engine/rpc/server.go": "ProposeSplit's Unimplemented stub is intentional, permanent design (Go engine is the gRPC client, not the callee, for this RPC). Confirmed via doc comment, docs/LLD/rpc.md, and .cdr/index/task.jsonl task-3.2.2/3.2.5 entries.",
+    "engine/rpc/integration_test.go": "TestRPCIntegration's ProposeSplit_Unimplemented subtest exercises the Go engine's own server only, by documented design; not the subtask's scope (no cross-process Python-service test is being stood up here -- that is a separate, not-yet-authorized item per task-3.2.5's own carried finding).",
+    "proto/hivemind.proto": "Message/RPC shapes already exist and fully cover this subtask's needs (ProposeSplitRequest/Response, SplitFileProposal, SectionRange); no schema change required.",
+    "agents/ingestion/wiring.py": "Explicitly excluded by dispatch instructions (3.4.4, already done).",
+    "agents/ingestion/segment.py": "Sibling module reused as a pattern reference only, not modified; its F1 (open, markdown-code-fence) finding is out of this subtask's file scope and flagged forward in handoff.json instead of silently fixed elsewhere.",
+    "agents/hivemind_pb2.py / agents/hivemind_pb2_grpc.py": "Generated code, already covers the needed message shapes; no regeneration needed since proto is unchanged."
+  },
+  "risk_areas": [
+    "LLM topic-boundary nondeterminism (shared risk with segment.py, documented in docs/LLD/ingestion-agent.md's Known risks)",
+    "Marker-based offset resolution: an LLM-supplied marker string could legitimately occur in multiple candidate positions in the document; resolved via monotonic forward search from the previous boundary, but a maliciously/poorly chosen marker (e.g. a very short common substring) could still land on an unintended occurrence -- documented as a disclosed limitation, not fixed by additional heuristics, matching segment.py's own validation-strictness precedent.",
+    "Multi-byte UTF-8 content: SectionRange offsets are byte offsets per proto/LLD; markers are located via text (str) search and converted to byte offsets via UTF-8 re-encoding of the preceding slice, which is correct but O(n) per boundary -- acceptable for this call's document-size scale (same order as the segmentation prompt itself)."
+  ],
+  "downstream_consumers": [
+    "engine/split/proposer_grpc.go (already implemented, task-3.2.3) -- will eventually call this logic over the wire once a Python grpc.Server wiring is stood up (separate, not-yet-authorized scope)",
+    "docs/LLD/split.md step 2 -- engine executes the returned plan atomically"
+  ]
+}
