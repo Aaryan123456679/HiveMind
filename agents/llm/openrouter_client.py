@@ -1,0 +1,182 @@
+"""`OpenRouterClient`: `LLMClient` implementation backed by OpenRouter.
+
+Per issue #20 subtask 4.1.1. Talks HTTP to OpenRouter's
+`/chat/completions` endpoint (OpenAI-Chat-Completions-compatible); this is
+one of the modules in `agents/llm/` permitted to call a provider API
+directly (see `agents/llm/client.py` and `docs/LLD/llm-provider.md`).
+
+Endpoint choice -- disclosed design
+------------------------------------
+OpenRouter exposes an OpenAI-compatible `/chat/completions` endpoint,
+which expects a `messages` list rather than a single `prompt` string.
+`complete()`'s contract is single-shot "prompt in, text out" with no
+conversation state, so the prompt is wrapped in a single `{"role":
+"user", "content": prompt}` message -- the same mapping strategy
+`OllamaClient` uses when it puts `complete()`'s single prompt string
+directly into Ollama's single-prompt `/api/generate` field, just applied
+to a chat-shaped endpoint since OpenRouter has no non-chat completion
+endpoint.
+
+Default model -- disclosed choice
+------------------------------------
+`DEFAULT_MODEL = "openai/gpt-4o-mini"` -- OpenRouter's `<provider>/<model>`
+model-slug convention for GPT-4o-mini, matching the issue body and
+`docs/LLD/llm-provider.md`'s "OpenRouter (GPT-4o-mini) -- used for
+query-time agents" guidance.
+
+API key handling -- disclosed design
+--------------------------------------
+Unlike local Ollama, OpenRouter requires bearer-token auth on every
+request. `api_key` may be passed explicitly (mainly for tests); if not
+given, it falls back to the `OPENROUTER_API_KEY` environment variable. If
+neither is available, construction fails immediately with
+`OpenRouterClientError` -- never silently sending an unauthenticated
+request that would only fail later inside `complete()`.
+
+Error handling -- disclosed design
+------------------------------------
+Any HTTP-level failure (connection error, timeout, non-2xx status) and
+any response-parsing failure (non-JSON body, JSON body missing the
+expected `choices[0].message.content` path) raises
+`OpenRouterClientError`. Nothing is silently swallowed or converted into
+an empty-string/None result.
+"""
+
+from __future__ import annotations
+
+import os
+
+import httpx
+
+from llm.client import LLMClient, LLMError
+
+#: OpenRouter's OpenAI-compatible API base URL.
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+
+#: OpenRouter model slug for GPT-4o-mini; see module docstring.
+DEFAULT_MODEL = "openai/gpt-4o-mini"
+
+#: Environment variable used as a fallback when `api_key` is not passed
+#: explicitly to the constructor.
+API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
+
+#: Hosted API over the network; shorter default than Ollama's local-CPU
+#: timeout since there is no local model-loading/inference latency here.
+DEFAULT_TIMEOUT_SECONDS = 60.0
+
+
+class OpenRouterClientError(LLMError):
+    """Raised on any OpenRouter HTTP call failure or malformed response.
+
+    Also raised at construction time if no API key can be resolved (see
+    module docstring's "API key handling" section).
+    """
+
+
+class OpenRouterClient(LLMClient):
+    """`LLMClient` implementation that calls the OpenRouter API.
+
+    Args:
+        api_key: OpenRouter API key. Defaults to `None`, in which case the
+            `OPENROUTER_API_KEY` environment variable is used. Raises
+            `OpenRouterClientError` immediately if neither is available.
+        base_url: OpenRouter API base URL. Defaults to
+            `DEFAULT_BASE_URL`.
+        model: Default model slug used when a call does not override it
+            via `complete(..., model=...)`. Defaults to `DEFAULT_MODEL`.
+        timeout: Default per-call timeout in seconds, used when a call
+            does not override it via `complete(..., timeout=...)`.
+        transport: Optional `httpx.BaseTransport` override, used by tests
+            to inject `httpx.MockTransport` and avoid any real network
+            call. Production callers should leave this `None`.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str = DEFAULT_BASE_URL,
+        model: str = DEFAULT_MODEL,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        resolved_key = api_key if api_key is not None else os.environ.get(
+            API_KEY_ENV_VAR
+        )
+        if not resolved_key:
+            raise OpenRouterClientError(
+                "No OpenRouter API key available: pass api_key= explicitly "
+                f"or set the {API_KEY_ENV_VAR} environment variable."
+            )
+
+        self._api_key = resolved_key
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._timeout = timeout
+        self._transport = transport
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        """See `LLMClient.complete`. Calls OpenRouter's `/chat/completions`."""
+        payload: dict[str, object] = {
+            "model": model or self._model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        request_timeout = timeout if timeout is not None else self._timeout
+
+        try:
+            with httpx.Client(
+                base_url=self._base_url, transport=self._transport
+            ) as client:
+                response = client.post(
+                    "/chat/completions",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    timeout=request_timeout,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise OpenRouterClientError(
+                f"OpenRouter request to {self._base_url}/chat/completions "
+                f"failed: {exc}"
+            ) from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise OpenRouterClientError(
+                f"OpenRouter response was not valid JSON: {exc}"
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise OpenRouterClientError(
+                f"OpenRouter response was not a JSON object: {data!r}"
+            )
+
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise OpenRouterClientError(
+                f"OpenRouter response missing expected 'choices' list: {data!r}"
+            )
+
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        completion = message.get("content") if isinstance(message, dict) else None
+
+        if not isinstance(completion, str):
+            raise OpenRouterClientError(
+                "OpenRouter response missing expected "
+                f"'choices[0].message.content' string: {data!r}"
+            )
+
+        return completion
