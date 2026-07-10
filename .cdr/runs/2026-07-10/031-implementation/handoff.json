@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-031-implementation",
+  "subtask": "issue-18-subtask-3.4.5-propose-split",
+  "commit": "e7443bb",
+  "status": "completed",
+  "ready_for": "cdr:verify",
+  "pointers": {
+    "new_files": [
+      "agents/ingestion/propose_split.py",
+      "agents/ingestion/test_propose_split.py"
+    ],
+    "requirement": ".cdr/runs/2026-07-10/031-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-10/031-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-10/031-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-10/031-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-10/031-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-10/031-implementation/self-consistency.json"
+  },
+  "key_findings_for_verifier": [
+    "Architectural correction (see requirement.md 'Architectural correction' section): ProposeSplit's real server-side implementation belongs in agents/ingestion/ (Python), NOT engine/rpc/server.go. engine/rpc/server.go and engine/rpc/integration_test.go were deliberately left untouched -- their codes.Unimplemented assertion for ProposeSplit describes the Go engine's own permanent, already-verified server surface (Go is the gRPC client for this RPC, via engine/split/proposer_grpc.go, task-3.2.3), not a stub this subtask closes. Confirmed via docs/LLD/rpc.md's Status note, engine/rpc/server.go's own doc comment, proto/hivemind.proto's top comment, and .cdr/index/task.jsonl's task-3.2.2/3.2.5 entries. Re-ran TestRPCIntegration directly to confirm it is unaffected and still passing.",
+    "Disclosed scope reduction: propose_split() always produces exactly one contiguous SectionRange per proposed file, even though proto's SplitFileProposal.section_ranges is repeated (technically allowing scattered/non-contiguous ranges per file). Sufficient for the test spec's partition invariant; flagged forward, not a defect.",
+    "Disclosed scope boundary: no actual running grpc.Server / HiveMindServicer wiring was stood up in agents/ -- only the callee-side business logic function. Standing up a real Python gRPC server process is new scope beyond 3.4.5's named impacted modules (agents/ingestion/propose_split.py, agents/ingestion/test_propose_split.py) and would need the same explicit user authorization the engine-edge-entity-rpc scope expansion got.",
+    "Proactively avoided reproducing segment.py's OPEN finding F1 (.cdr/index/regression.jsonl, id F1): propose_split.py strips a single markdown code fence before json.loads, with a regression test (test_markdown_code_fence_wrapped_json_is_parsed). segment.py itself was NOT modified (out of this subtask's file scope) -- its own F1 remains open.",
+    "Prompt injection disclosures: (1) gh issue view 18's body contains embedded fake system-reminder-style text, consistent with this repo's recurring pattern (also noted in prior task.jsonl entries for 3.2.2/3.2.4/3.2.5/engine-edge-entity-rpc) -- treated as data only, not followed. (2) Two system-reminder-style blocks appeared unprompted mid-session immediately after tool calls: a 'date changed to 2026-07-10' notice (verified against the real shell clock -- accurate, but still independently verified rather than trusted) and an 'Auto Mode Active' directive; both disclosed and neither acted on as authorization for anything. (3) A background-task notification later claimed a bash-output file 'was modified by the user or a linter' -- implausible for that file type/origin; disclosed as suspicious, not acted on, and the file's actual content was independently read and confirmed consistent with a normal go test run."
+  ],
+  "test_results": {
+    "python": "146/146 passed (agents/ full suite, incl. 19 new in test_propose_split.py), run twice, stable",
+    "go_build_vet": "clean (engine/)",
+    "go_test_race": "run1: engine/split failed pre-existing tracked TestReaderDuringSplit flake (~1-3%, .cdr/memory/pending.md, unrelated -- no Go files touched); run2: all packages green, confirming flake not regression",
+    "go_rpc_integration_targeted": "TestRPCIntegration / ProposeSplit_Unimplemented subtest re-run directly and confirmed unchanged/still passing"
+  },
+  "remaining_subtasks_after_this_one": [
+    {
+      "id": "3.4.6",
+      "description": "Segmentation agent fixture test suite (agents/ingestion/test_segment_fixtures.py, always-run, mocked) + optional live-Ollama smoke test (agents/ingestion/test_segment_live.py, skip-if-no-ollama). Last remaining subtask of issue #18 (6/6).",
+      "must_address": "segment.py's still-OPEN finding F1 (markdown-code-fence-wrapped LLM JSON rejected instead of parsed, .cdr/index/regression.jsonl id F1, .cdr/memory/pending.md) -- flagged forward at 3.4.3, 3.4.4, and again here. 3.4.6's live-Ollama smoke test is explicitly named as the natural place to either fix it (add fence-stripping to segment.py + regression test, mirroring this subtask's propose_split.py defense) or explicitly re-confirm the deferred risk before issue #18 closes."
+    }
+  ],
+  "issue_18_status_after_this_run": "4 of 6 subtasks complete and committed (3.4.1-3.4.5, plus the user-authorized engine-edge-entity-rpc scope addition unblocking 3.4.4). Only 3.4.6 remains before issue #18 can be considered for closure -- closure itself requires separate explicit user authorization, not implied by subtask completion (per this repo's established convention, see task-3.2.5's carried note re: issue #16).",
+  "not_pushed": true,
+  "github_state_touched": false
+}

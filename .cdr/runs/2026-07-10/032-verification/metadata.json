@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-032-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "cdr-verification",
+  "subtask": "issue-18-subtask-3.4.5-propose-split",
+  "git_head": "e7443bb1b54e4bcbd25f37c113caa3dd53aa6380",
+  "run_key": "verify-3.4.5-e7443bb-vs-4ed5f0e",
+  "status": "completed",
+  "last_completed_step": "written_verification_and_regression",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T00:30:00Z"
+}

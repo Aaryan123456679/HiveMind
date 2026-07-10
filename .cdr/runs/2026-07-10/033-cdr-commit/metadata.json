@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-033-cdr-commit",
+  "macro": "cdr:commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "issue-18-3.4.5-propose-split-closeout",
+  "git_head": "e7443bb1b54e4bcbd25f37c113caa3dd53aa6380",
+  "run_key": "cdr:commit|1|issue-18-3.4.5-propose-split-closeout|e7443bb1b54e4bcbd25f37c113caa3dd53aa6380|verification=032",
+  "status": "completed",
+  "last_completed_step": "commit_created",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T00:30:00Z"
+}

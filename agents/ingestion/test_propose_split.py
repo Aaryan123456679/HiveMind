@@ -18,7 +18,6 @@ from ingestion.propose_split import (
     ProposeSplitParseError,
     ProposeSplitResult,
     SectionRange,
-    SplitFileProposal,
     propose_split,
 )
 from llm.client import LLMClient, LLMError

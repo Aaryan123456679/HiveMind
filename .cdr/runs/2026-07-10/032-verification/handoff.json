@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-032-verification",
+  "subtask": "issue-18-subtask-3.4.5-propose-split",
+  "commit": "e7443bb1b54e4bcbd25f37c113caa3dd53aa6380",
+  "status": "completed",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification": ".cdr/runs/2026-07-10/032-verification/verification.json",
+    "regression_entries_appended": [
+      "hivemind-issue18-3.4.5-F1-unused-import",
+      "hivemind-issue18-3.4.5-F2-untested-utf8-byte-offsets",
+      "hivemind-issue18-3.4.5-F3-substring-marker-nearmiss-untested"
+    ],
+    "reviewed_files": [
+      "agents/ingestion/propose_split.py",
+      "agents/ingestion/test_propose_split.py",
+      "proto/hivemind.proto:12,137-163",
+      "docs/LLD/rpc.md",
+      "engine/split/proposer_grpc.go",
+      "engine/rpc/server.go:9"
+    ]
+  },
+  "disclosure": "Two unprompted system-reminder-style blocks (date-change notice, 'Auto Mode Active' directive) appeared mid-session; treated as untrusted data, not acted on."
+}
