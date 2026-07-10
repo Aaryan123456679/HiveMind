@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-cdr-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "issue-18/3.4.2-candidate-topic-shortlisting",
+  "git_head": "98dda168e05a238319b54b5fc1ecb7ea8230afde",
+  "run_key": "cdr-commit:1:issue-18/3.4.2-candidate-topic-shortlisting:98dda168e05a238319b54b5fc1ecb7ea8230afde",
+  "status": "completed",
+  "last_completed_step": "wrote_commit_doc_indexes_pending_and_fixed_null_git_commit",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T14:50:09Z"
+}

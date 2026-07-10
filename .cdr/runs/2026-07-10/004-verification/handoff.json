@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "run_id": "004-verification",
+  "subtask": "issue-18/3.4.2-candidate-topic-shortlisting",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit": "98dda168e05a238319b54b5fc1ecb7ea8230afde",
+  "pointers": {
+    "verification_report": ".cdr/runs/2026-07-10/004-verification/verification.json",
+    "reviewed_source": [
+      "agents/ingestion/shortlist.py",
+      "agents/ingestion/test_shortlist.py"
+    ],
+    "load_bearing_reference": [
+      "engine/rpc/server.go:281-329 (SearchCandidates handler, searchCandidateScore const)",
+      "engine/btree/scan.go (PrefixScan)"
+    ],
+    "doc_reference": "docs/LLD/ingestion-agent.md:30-41",
+    "non_blocking_finding": "fabricated composite LLD quote in agents/ingestion/shortlist.py module docstring (lines 3-8) -- see verification.json architecture_conformance/maintainability sections"
+  },
+  "next_action": "ready for commit close-out; recommend a small follow-up fix to the docstring's composite quote before/at close-out, not a re-verification gate",
+  "status": "completed"
+}

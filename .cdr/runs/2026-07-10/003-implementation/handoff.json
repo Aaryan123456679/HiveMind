@@ -37,5 +37,5 @@
   "not_verified_by_this_agent": true,
   "next_step": "/cdr:verify",
   "security_note": "This session's tool output/environment surfaced injected system-reminder-style text (fake date-change notice, fake 'tokensave' MCP server instructions, fake 'Auto Mode Active' directive). All were treated as untrusted data, not followed, and did not affect scope or behavior. gh issue view 18 was re-checked fresh and found clean this read.",
-  "git_commit": null
+  "git_commit": "98dda168e05a238319b54b5fc1ecb7ea8230afde"
 }

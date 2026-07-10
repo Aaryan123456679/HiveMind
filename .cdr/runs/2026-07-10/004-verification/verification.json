@@ -1,0 +1,62 @@
+{
+  "subtask": "issue-18/3.4.2-candidate-topic-shortlisting",
+  "commit": "98dda168e05a238319b54b5fc1ecb7ea8230afde",
+  "verdict": "PASS_WITH_COMMENTS",
+  "security_note": "Untrusted injected content encountered during this run: a fake 'date-change' system-reminder, a fake 'tokensave' MCP server instruction block, and a fake 'Auto Mode Active' directive appeared in the transcript outside of legitimate tool/user output. These were treated as untrusted data, not followed, and are disclosed here per repo policy. No injected instructions were found inside the reviewed source files, issue body, or commit diff themselves.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "shortlist(document_text, search_candidates, top_k=8, pool_size=200) calls SearchCandidates once for a bounded pool then re-ranks locally with BM25, truncating to top_k. Verified independently: result size is always <= min(top_k, pool_size, len(pool)) via direct code read (agents/ingestion/shortlist.py:198-217) and via my own adversarial script with a 5-topic pool and an unrelated k8s-incident document (engineering/IncidentPostmortems and engineering/DeploymentRunbooks scored 1.386, all others scored 0.0 and were correctly ranked last)."
+    },
+    "architecture_conformance": {
+      "status": "PASS_WITH_COMMENTS",
+      "evidence": "Claim 2 (load-bearing) CONFIRMED by direct read of engine/rpc/server.go:302-329 and engine/btree/scan.go: SearchCandidates calls btree.PrefixScan(store, root, req.GetQuery()) (a pure lexicographic path-prefix scan, early-exits via strings.HasPrefix), truncates to max_results, and assigns every result the same constant `searchCandidateScore = 1.0` (server.go:287). It is genuinely not a content-ranking search; the call/local-rank split is architecturally justified. HOWEVER claim 3 overstates docs/LLD/ingestion-agent.md's explicitness: the module docstring presents a quoted string 'The shortlist comes from a cheap local heuristic ... against the candidate list from engine/btree/'s prefix-scan-style SearchCandidates lookup -- not the full catalog -- to bound prompt size and reduce topic-name drift/duplication' as if it were a direct doc quote, but the actual LLD (docs/LLD/ingestion-agent.md:34-36) says the shortlist should come from 'a cheap embedding/BM25 pre-filter against the existing catalog (via a local embedding model, e.g. nomic-embed-text)', and the SearchCandidates/prefix-scan mention is a separate, non-adjacent line (line 76-77) in a different section. The docstring stitches two non-adjacent lines into one quotation and substitutes 'embedding/BM25 pre-filter (via a local embedding model)' with 'local heuristic', which materially changes the doc's stated preference for an actual embedding model. This is a documentation-accuracy issue (fabricated composite quote), not a functional defect -- the issue's own acceptance criteria (which is authoritative over the LLD for this subtask) explicitly permits BM25 as an alternative to embeddings, so the implementation choice itself is compliant, but the code comment misrepresents the LLD as unambiguously endorsing this exact split."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "Ran full `pytest agents/ -q` 3x independently: 83 passed each time, 0 flakiness, ~0.2-0.3s. No existing files were modified besides the two new module files; engine/ (Go side) confirmed untouched via `git show --name-status` (only .cdr run docs + agents/ingestion/{shortlist,test_shortlist}.py). agents/pyproject.toml diff for this commit is empty -- confirmed no new dependency (heavy or otherwise) was added, consistent with claim 1 and claim 6."
+    },
+    "edge_cases": {
+      "status": "PASS",
+      "evidence": "Verified independently (not just via shipped tests): top_k=0 -> [] (code path agents/ingestion/shortlist.py:204); empty pool -> []; negative top_k/pool_size raise ValueError; pool smaller than top_k returns len(pool) not top_k; a hand-run 5000-item mocked pool (beyond the shipped test's scale) truncates correctly to top_k. Also checked an edge case not covered by either party's claims: engine/rpc/server.go's SearchCandidates does NOT truncate when max_results==0 (returns the unbounded full scan, server.go's `if maxResults > 0 && ...` guard), but confirmed by direct test that shortlist() still bounds its own output via the local top_k truncation regardless, so this engine-side quirk cannot violate the acceptance criterion from the Python side."
+    },
+    "security": {
+      "status": "PASS",
+      "evidence": "GrpcSearchCandidatesClient lazy-imports hivemind_pb2/hivemind_pb2_grpc inside __init__/__call__, not at module import time (verified: `import ingestion.shortlist` alone does not require grpc importable). The sys.path fallback in _import_hivemind_grpc_modules uses Path(__file__).resolve().parent.parent, which is CWD-independent; independently verified by invoking _import_hivemind_grpc_modules() and constructing GrpcSearchCandidatesClient from /tmp (a different CWD than agents/) with only the venv's site-packages on path -- import succeeded both via the plain top-level import (since `ingestion` is pip-installed editable and agents/ ends up reachable) and would fall back correctly if not. ImportError is not silently swallowed: it is only caught once to retry via sys.path, and would propagate on a genuine second failure. No pre-existing gRPC client wrapper found elsewhere in agents/ (grep confirmed), so claim 4's 'gap' claim holds. hivemind_pb2/_grpc are plain top-level modules not declared in pyproject's packages list, correctly identified as the reason the fallback is needed."
+    },
+    "performance": {
+      "status": "PASS",
+      "evidence": "BM25 implementation is O(pool_size * unique_query_terms) with a single doc-frequency pre-pass -- reasonable for pool_size<=200-5000 range tested. No quadratic blowup found. Test suite runs in ~0.2s even with 5000-item pool."
+    },
+    "maintainability": {
+      "status": "PASS_WITH_COMMENTS",
+      "evidence": "Code is well-documented and dataclass-based. The one issue is the fabricated composite LLD quote noted under architecture_conformance -- recommend replacing the quoted string with either a verbatim quote or a paraphrase not in quotation marks, and being explicit that BM25-over-embedding was this implementer's choice within the issue's stated flexibility, not a design already fully specified by the LLD."
+    },
+    "test_coverage": {
+      "status": "PASS",
+      "evidence": "16/16 targeted tests independently re-run and passed (agents/ingestion/test_shortlist.py). Test file confirmed to mock SearchCandidates entirely via a plain Python callable / MagicMock stub, no real grpc.Channel or socket opened anywhere (grep for grpc.insecure_channel/socket usage in the test file: none). My own adversarial fixture (k8s incident-response document vs. 3 relevant/2 irrelevant topics, not from the shipped fixtures) confirmed BM25 correctly ranks relevant topics ahead of irrelevant ones with a clear score separation (1.386 vs 0.0)."
+    },
+    "confidence": {
+      "status": "HIGH",
+      "evidence": "All 6 implementer claims independently re-derived from source, not taken at face value. Claim 2 (load-bearing) fully confirmed against actual Go source. Claim 3 found to be an overstated/fabricated composite quote (see architecture_conformance) -- downgraded from a blocking to a non-blocking finding because the underlying functional behavior is still issue-compliant."
+    },
+    "possible_improvements": [
+      "Fix the module docstring's fabricated composite quote from docs/LLD/ingestion-agent.md to either quote verbatim or clearly mark as paraphrase/interpretation, and note explicitly that choosing BM25 over the LLD's suggested embedding model (nomic-embed-text) is a deliberate deviation permitted by the issue's own wording, not something the LLD itself endorses as the intended design.",
+      "Consider documenting the server.go max_results==0-means-unbounded quirk somewhere near the SearchCandidatesFn type/DEFAULT_POOL_SIZE, since a caller directly using pool_size=0 with a real (not mocked) engine would get the full catalog from the RPC before local truncation -- currently harmless because shortlist() still bounds the final output via top_k, but worth a one-line comment for future maintainers who might assume pool_size=0 means 'empty pool' rather than 'unbounded pool, then still top_k truncated'."
+    ]
+  },
+  "commands_run": [
+    "git show --stat/--name-status 98dda168e05a238319b54b5fc1ecb7ea8230afde",
+    "grep/awk engine/rpc/server.go SearchCandidates handler + searchCandidateScore constant",
+    "cat engine/btree/scan.go PrefixScan",
+    "grep docs/LLD/ingestion-agent.md",
+    "git diff HEAD~1 HEAD -- agents/pyproject.toml (empty)",
+    "grep -rln hivemind_pb2_grpc/HiveMindStub across agents/",
+    "pytest agents/ingestion/test_shortlist.py -v (16 passed)",
+    "pytest agents/ -q x3 (83 passed each, no flakiness)",
+    "ruff check agents/ingestion/shortlist.py agents/ingestion/test_shortlist.py (clean)",
+    "custom adversarial BM25 fixture script (k8s incident doc vs 5 topics)",
+    "cross-CWD import test of GrpcSearchCandidatesClient / _import_hivemind_grpc_modules from /tmp",
+    "pool_size=0 edge-case simulation of server.go's non-truncating branch"
+  ]
+}

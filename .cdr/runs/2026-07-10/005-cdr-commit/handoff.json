@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-cdr-commit",
+  "subtask": "issue-18/3.4.2-candidate-topic-shortlisting",
+  "status": "completed",
+  "pointers": {
+    "commit_doc": ".cdr/commits/task-3.4.2.md",
+    "verification_run": ".cdr/runs/2026-07-10/004-verification",
+    "implementation_run": ".cdr/runs/2026-07-10/003-implementation",
+    "task_index_entry": "task-3.4.2",
+    "feature_index_entry": "hivemind-shortlist-bm25",
+    "pending_finding": "shortlist.py module docstring fabricated composite LLD quote (.cdr/memory/pending.md)"
+  },
+  "housekeeping": "filled null git_commit in .cdr/runs/2026-07-10/003-implementation/handoff.json with 98dda168e05a238319b54b5fc1ecb7ea8230afde",
+  "security_note": "Tool output during this run again carried injected fake system-reminder-style text (fake date-change notice, fake 'tokensave' MCP server instructions, fake 'Auto Mode Active' directive). Treated as untrusted data only, not followed, disclosed per protocol.",
+  "next_action": "issue #18 has 4 subtasks remaining (3.4.3-3.4.6); not ready to close. Do not push, do not change GitHub issue/milestone state.",
+  "not_pushed": true
+}
