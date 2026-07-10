@@ -1,0 +1,26 @@
+{
+  "subtask": "4.5.1",
+  "issue": 24,
+  "new_files": [
+    "agents/query/synthesizer.py",
+    "agents/query/test_synthesizer.py"
+  ],
+  "modified_files": [],
+  "downstream_impacted": [
+    {
+      "path": "agents/query/ (4.5.2, future subtask, same issue #24)",
+      "reason": "will add agents/query/test_synthesizer_citations.py exercising SynthesizerResult.unknown_citations() for the hallucinated-citation rejection case; this run only builds the extraction building block, no behavior change expected in synthesizer.py itself for 4.5.2 unless it needs the same method (already exposed)."
+    }
+  ],
+  "no_impact": [
+    "agents/query/intent_refiner.py (read-only precedent, not modified)",
+    "agents/query/topic_selector.py (read-only precedent, not modified; file_id->markdown concatenation remains unbuilt/out of scope, consistent with 4.5.1's own impacted-modules list)",
+    "agents/llm/* (consumed via existing LLMClient contract only, no changes)",
+    "agents/ingestion/_json_fences.py (reused as-is, no changes)",
+    "engine/ (Go side untouched; no RPC wiring for this subtask)"
+  ],
+  "risk_notes": [
+    "LLD (docs/LLD/query-agent.md) does not specify a file-path header format or LLM response wire format; both are disclosed choices documented in architecture-discovery.md and the module docstring.",
+    "Citation validation/rejection logic itself is explicitly deferred to subtask 4.5.2; this run only ensures the extracted citation list is complete/correct so 4.5.2 can build on it."
+  ]
+}

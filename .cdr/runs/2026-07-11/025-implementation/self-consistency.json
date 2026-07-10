@@ -1,0 +1,22 @@
+{
+  "subtask": "4.5.1",
+  "checks": [
+    {
+      "check": "cd agents && python3 -m pytest query/ -q",
+      "result": "73 passed in 0.05s (all pre-existing query/ tests + new test_synthesizer.py's 17 tests)"
+    },
+    {
+      "check": "cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q",
+      "result": "2 failed, 284 passed. Both failures are ingestion/test_shortlist.py::test_grpc_client_translates_request_response and test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist -- pre-existing protobuf gencode/runtime version mismatch (issue #46), unrelated to this change; unchanged in count/identity from before this run."
+    },
+    {
+      "check": "ruff check agents/query/",
+      "result": "All checks passed!"
+    },
+    {
+      "check": "validation-matrix.json coverage",
+      "result": "All 7 criteria (AC1-AC7) covered by named tests in test_synthesizer.py; verified test names exist and pass."
+    }
+  ],
+  "note": "This is internal build/test sanity only, per invariant I4 -- NOT independent verification. /cdr:verify must perform the actual verification pass."
+}

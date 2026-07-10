@@ -1,0 +1,16 @@
+{
+  "run_id": "028-verification",
+  "subtask": "4.5.2",
+  "issue": 24,
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit": "b8da449ac555fe8c3de199c6392ad0e9b20200d0",
+  "verification_doc": ".cdr/runs/2026-07-11/028-verification/verification.json",
+  "regression_entries_appended": ["F-4.5.2-1", "F-4.5.2-2", "F-4.5.2-3", "regression_reconfirmation-b8da449"],
+  "index_updates": [".cdr/index/task.jsonl (task-4.5.2, issue-24 summary)", ".cdr/index/regression.jsonl (4 entries appended)"],
+  "pointers": {
+    "diff_reviewed": "git show b8da449 (full)",
+    "source_files_read_in_full": ["agents/query/synthesizer.py", "agents/query/test_synthesizer.py", "agents/query/test_synthesizer_citations.py"],
+    "adversarial_script_scenarios": "6 scenarios run ad hoc against SynthesizerResult.unknown_citations() via python3 -c (not persisted as a file); see verification.json adversarial_findings for full description"
+  },
+  "next_step": "issue #24 fully verified locally (4.5.1 + 4.5.2); candidate for a cdr-commit step to close out issue #24 similar to issues #20-#23 precedent (batched push/close), pending user direction -- not performed by this verification run."
+}

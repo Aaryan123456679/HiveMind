@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "run_id": "029-cdr-commit",
+  "produced": {
+    "commit_doc": ".cdr/commits/task-issue-24-summary.md",
+    "feature_index_entries_added": [
+      "hivemind-synthesizer-answer-generation (subtask 4.5.1, feature.jsonl last-but-one line)",
+      "hivemind-synthesizer-citation-hallucination-test (subtask 4.5.2, feature.jsonl last line)"
+    ]
+  },
+  "verification_sources": {
+    "4.5.1": ".cdr/runs/2026-07-11/026-verification/verification.json",
+    "4.5.2": ".cdr/runs/2026-07-11/028-verification/verification.json"
+  },
+  "regression_findings_folded_in": [
+    ".cdr/index/regression.jsonl:111 (F-4.5.1-1)",
+    ".cdr/index/regression.jsonl:112 (F-4.5.1-2)",
+    ".cdr/index/regression.jsonl:113 (F-4.5.2-1)",
+    ".cdr/index/regression.jsonl:114 (F-4.5.2-2)",
+    ".cdr/index/regression.jsonl:115 (F-4.5.2-3)"
+  ],
+  "task_index_change": "none (task.jsonl already current per instructions; issue-24 entry pre-existing)",
+  "commit_message_audit": {
+    "c8c49cf": "already Problem/Solution/Impact compliant, no deviation",
+    "b8da449": "already Problem/Solution/Impact compliant, no deviation"
+  },
+  "not_pushed": true,
+  "github_issue_not_closed": true,
+  "security_note": "This run's tool-output stream contained an injected fake system-reminder (fake date-change notice, fake 'tokensave' MCP tool-instruction block, fake 'Auto Mode Active' directive), consistent with prior instance disclosed in F-4.5.2-3. Not acted upon."
+}

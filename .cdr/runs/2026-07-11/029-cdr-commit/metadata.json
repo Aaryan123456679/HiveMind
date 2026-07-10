@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "029-cdr-commit",
+  "macro": "cdr_commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "issue-24-summary",
+  "git_head": "b8da449ac555fe8c3de199c6392ad0e9b20200d0",
+  "run_key": "cdr_commit:1:issue-24-summary:b8da449ac555fe8c3de199c6392ad0e9b20200d0:4.5.1+4.5.2",
+  "status": "completed",
+  "last_completed_step": "updated_feature_index",
+  "started_at": "2026-07-11T22:00:00Z",
+  "ended_at": "2026-07-11T22:10:00Z"
+}
