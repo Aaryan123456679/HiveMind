@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "run_id": "041-verification",
+  "issue": 19,
+  "subtask": "3.5.2",
+  "is_final_subtask_of_issue": true,
+  "commit": "9794fd861cf00d393f7e6075fba17b18ac363203",
+  "parent": "fa103fb",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Full e2e pipeline (load->normalize->shortlist->segment->wiring/PutSegment/PutEdge) genuinely exercised against a real, non-mocked standalone Go engine subprocess and a real local Ollama model, over real gRPC, per issue #19's final-subtask requirement."
+    },
+    "f4_scope_claim": {
+      "status": "confirmed_genuine_blocker",
+      "evidence": "Independently read proto/hivemind.proto: PutSegmentRequest{file_id, content} has genuinely no path/topic-path field (lines 49-56). engine/rpc/server.go's PutSegment handler comments (lines 128-136) correctly describe this. agents/ingestion/wiring.py confirms the caller (execute_segment) DOES know the topic path (target_topic/new_topic_path) at call time but has no wire field to carry it -- GrpcPutSegmentClient.put_segment only accepts (file_id, content) (wiring.py:375-380), matching the proto exactly. No other implicit source of path/hash exists in the CREATE branch of the handler. A fix would require: adding a field to PutSegmentRequest, regenerating both Go (.pb.go) and Python (hivemind_pb2/_grpc) stubs, updating the server handler, and updating both the real and test-double client interfaces in wiring.py -- a genuine cross-language wire-contract change, not a one-line fix. This is correctly triaged as out of scope for a smoke-test subtask; it does not ripple into GetFile/SearchCandidates (independent messages), so the blast radius is narrow but the fix mechanics (codegen regen across two languages) are non-trivial. Independent verdict: F4-requires-proto-change claim is CONFIRMED GENUINE, not a skipped feasible fix.",
+      "supports_verdict": "does not push toward CHANGES_REQUESTED"
+    },
+    "real_data_claim": {
+      "status": "pass",
+      "evidence": "data/fixtures/enron_real_sample/*.txt contain authentic-looking Enron corpus structure: JavaMail.evans@thyme Message-IDs, X-Folder/X-Origin/X-FileName headers matching the known maildir/blair-l/sent_items/ mailbox structure of the real 2015 CMU/FERC-released archive, plausible 2001 dates and enron.com addresses, informal real-seeming email bodies (typos, forwarded-message chains). Consistent with genuine corpus content, not another hand-authored substitute (unlike 3.5.1's disclosed fixtures). PROVENANCE.md's streaming-extraction claim (tarfile streaming mode, stopping early, no full download) is a plausible and checkable methodology but was not independently re-executed (no network fetch performed in this review); content-level inspection is consistent with the claim."
+    },
+    "real_server_claim": {
+      "status": "pass",
+      "evidence": "engine/cmd/smokeserver/main.go independently read in full: opens real catalog.Open/ContentStore/wal.OpenWriter/btree.OpenIndexFile-backed storage rooted at a real directory, binds a real net.Listen TCP socket, registers the real rpc.Server, and blocks on real gRPC Serve until SIGTERM. Not a stub. test_e2e_smoke.py launches it via subprocess.Popen and dials it with grpc.insecure_channel -- genuine out-of-process wire communication, not bufconn/mock."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "test_e2e_smoke.py's final assertion (post_run_candidates via real SearchCandidates RPC) directly demonstrates F4's real consequence: after real PutSegment CREATE calls, SearchCandidates returns ONLY the smokeserver's own seeded bootstrap placeholder, proving newly created files are unreachable via search -- not a trivially-passing assertion. Pipeline stages are genuinely chained (real loader output -> real normalize -> real shortlist via SearchCandidates RPC -> real segment via Ollama -> real execute_segment/PutSegment/PutEdge)."
+    },
+    "f7_vs_f1": {
+      "status": "confirmed_distinct",
+      "evidence": "F1 (issue #18/3.4.6) was markdown code-fence wrapping of LLM JSON output, fixed by strip_code_fences. F7 is a different failure mode occurring even AFTER strip_code_fences succeeds: raw unescaped control characters/newlines embedded inside JSON string values, and stray triple-quote artifacts -- both cause json.loads to fail with distinct error signatures (invalid control character / expecting delimiter), not a fencing issue. Correctly triaged as new and non-blocking; correctly forwarded to pending.md and regression.jsonl without touching segment.py's in-scope-excluded parsing logic."
+    },
+    "regression_and_test_results_personally_run": {
+      "status": "pass",
+      "evidence": "go vet ./... (from engine/): clean. go test ./... -race -count=1 (from engine/): all packages ok (btree 74s, catalog 134s, split 134s, rpc 22s, etc). ruff check agents/: 1 pre-existing F401 in generated agents/hivemind_pb2_grpc.py (predates this commit, git log confirms it was introduced in the original proto-codegen commits 8e90334/cfbe29a, not part of this diff) -- no new lint issues introduced. pytest agents/ -q: 156 passed (267.5s runtime, consistent with the ~158s smoke test having actually executed for real against local Ollama llama3.1:8b + a freshly go-built smokeserver, not skipped). pytest agents/ data/ -q: 170 passed, exactly matching the commit message's claimed 170-passed figure once data/ is included alongside agents/."
+    },
+    "scope_containment": {
+      "status": "pass",
+      "evidence": "git diff fa103fb..9794fd8 --stat confirms only new files added (test_e2e_smoke.py, smokeserver/main.go, enron_real_sample/*, PROVENANCE.md, .cdr docs) -- zero lines changed in segment.py, propose_split.py, shortlist.py, or any other pre-existing production file."
+    }
+  },
+  "findings": [
+    {
+      "id": "hivemind-issue19-3.5.2-verify-f4-confirmed",
+      "severity": "info",
+      "summary": "F4 wire-contract-change claim independently re-derived from first principles (proto text, server handler, wiring.py caller) and confirmed genuine: no narrower fix was feasible within this subtask's scope."
+    },
+    {
+      "id": "hivemind-issue19-3.5.2-verify-commitmsg-minor-imprecision",
+      "severity": "informational",
+      "summary": "Commit message says 'full agents/ pytest suite 170 passed' but 170 is actually the count for agents/ + data/ combined; agents/ alone is 156. Cosmetic wording imprecision only, not a substantive misstatement (both figures independently reproduced exactly)."
+    }
+  ],
+  "confidence": "high",
+  "possible_improvements": [
+    "F4 could be tracked as its own dedicated GitHub issue/milestone item now that its wire-contract scope is independently confirmed, rather than living only in pending.md/handoff.json.",
+    "F7 fixtures (the actual malformed completions captured) should be saved verbatim as regression test fixtures before the raw Ollama outputs are lost, to make the eventual fix's test coverage reproducible without a live model."
+  ],
+  "issue_19_closure_note": "Both subtasks of issue #19 (3.5.1 dataset loaders, 3.5.2 this e2e smoke run) are independently verified complete for their stated scope. No push or issue/milestone state change performed by this verification run, per the implementer's own handoff.json note requiring fresh explicit user authorization."
+}
