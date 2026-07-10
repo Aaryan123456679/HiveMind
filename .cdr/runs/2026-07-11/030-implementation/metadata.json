@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-030-implementation",
+  "macro": "cdr-implementation",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "4.6.1",
+  "issue": 25,
+  "git_head": "dc9dd3e3579caa2dcfa149bfffc0642ac832ffda",
+  "run_key": "issue25-4.6.1-dc9dd3e3579caa2dcfa149bfffc0642ac832ffda",
+  "status": "in_progress",
+  "last_completed_step": "self-consistency",
+  "started_at": "2026-07-11T00:00:00Z",
+  "ended_at": null
+}
