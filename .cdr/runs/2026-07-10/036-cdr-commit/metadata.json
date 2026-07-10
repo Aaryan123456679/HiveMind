@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-036-cdr-commit",
+  "macro": "cdr:commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "issue-18-3.4.6-segment-fixtures-live-smoke-f1-closure",
+  "git_head": "48f1845f48479634f02df981e2c99aa767dd0f57",
+  "run_key": "cdr:commit|1|issue-18-3.4.6-segment-fixtures-live-smoke-f1-closure|48f1845f48479634f02df981e2c99aa767dd0f57|verification=035",
+  "status": "completed",
+  "last_completed_step": "commit_created",
+  "started_at": "2026-07-10T23:00:00Z",
+  "ended_at": "2026-07-10T23:15:00Z",
+  "result_commit": "09bf779d95768ae11a4c702934838525232d39a9"
+}
