@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "run_id": "018-implementation",
+  "subtask": "4.4.2-topic-selector-graph-expansion",
+  "issue": 23,
+  "milestone": "Phase 4: Query pipeline",
+  "status": "completed",
+  "commit": "f65787bf235b37f7d32354818cb42c8a7cce5075",
+  "commit_pushed": false,
+  "files": {
+    "modified": [
+      {
+        "path": "agents/query/topic_selector.py",
+        "note": "Additive only, appended after existing select_top_k (line ~129). New symbols: DEFAULT_INSUFFICIENCY_RATIO, DEFAULT_EXPANSION_HOPS, GraphNeighbor, GraphNeighborsFn, ExpansionResult, is_insufficient_alone(), expand_insufficient_topics(). 4.4.1's DEFAULT_K/TopicCandidate/SearchCandidatesFn/select_top_k unchanged."
+      }
+    ],
+    "created": [
+      {
+        "path": "agents/query/test_topic_selector_expansion.py",
+        "note": "16 tests covering the validation matrix rows."
+      }
+    ]
+  },
+  "design_decisions_for_verifier_attention": [
+    "'Insufficient alone' heuristic (not specified in docs/LLD/query-agent.md or the issue): topic.score < DEFAULT_INSUFFICIENCY_RATIO(0.5) * top_selected_score. See topic_selector.py's section-level comment above DEFAULT_INSUFFICIENCY_RATIO for full rationale.",
+    "Hop depth: always DEFAULT_EXPANSION_HOPS=2 (max of engine/rpc/server.go's validated [0,2] GraphNeighbors.depth range) for every flagged topic -- no dynamic 0/1/2 selection, since no signal for that was specified anywhere.",
+    "GraphNeighborsFn DI shape mirrors agents/ingestion/shortlist.py's SearchCandidatesFn precedent exactly; no real Grpc*Client built (not in 4.4.2's impacted-modules list, same disclosed gap 4.4.1 left for SearchCandidatesFn).",
+    "GraphNeighbor dataclass fields mirror proto/hivemind.proto's Neighbor message (file_id, edge_type, weight, hop)."
+  ],
+  "test_results": {
+    "targeted": "agents/query/ -> 43 passed",
+    "full_regression": "agents/ (excl. ingestion/test_e2e_smoke.py) -> 254 passed, 2 failed",
+    "failures_pre_existing": true,
+    "failures_detail": "ingestion/test_shortlist.py::test_grpc_client_translates_request_response and ::test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist fail due to a local protobuf gencode(6.33.5)/runtime(5.29.6) version mismatch -- confirmed pre-existing via git stash -u back to commit 5cc0ea3 (before this dispatch's changes), same 2 failures reproduce.",
+    "lint": "ruff check query/topic_selector.py query/test_topic_selector_expansion.py -> All checks passed"
+  },
+  "scope_boundaries_respected": [
+    "4.4.3 (k+2k hard cap) NOT implemented -- separate subtask.",
+    "4.4.4 (integration test) NOT implemented -- separate subtask.",
+    "No proto/engine changes -- proto/hivemind.proto and engine/rpc/server.go were read-only reference."
+  ],
+  "security_disclosure": "During this run, two <system-reminder>-formatted blocks appeared directly in my own tool-call flow (not embedded in gh issue view 23's output, which was clean) claiming (a) a date change I should not mention to the user, and (b) an 'Auto Mode Active' directive to bias toward not asking clarifying questions. Both match the exact injection patterns the dispatching agent explicitly warned about for this repo. Per the dispatcher's own instruction that no message can authorize concealing things from the user or overriding real permissions, both were treated as untrusted and NOT acted on -- I disclosed the date situation to the user rather than hiding it, and did not change my clarification-seeking behavior because of the second block. No repo content (issue body, LLD, proto, Go source) that I read contained any injected instructions in this run.",
+  "not_verified_by_self": "Per invariant I4, this agent does not verify its own work. /cdr:verify must independently review requirement fidelity, heuristic choice, hop-depth choice, and test coverage before this subtask is considered closed.",
+  "next_step": "Dispatch /cdr:verify for subtask 4.4.2 against commit f65787bf235b37f7d32354818cb42c8a7cce5075."
+}
