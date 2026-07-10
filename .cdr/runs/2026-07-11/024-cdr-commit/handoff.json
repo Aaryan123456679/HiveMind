@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "run_id": "024-cdr-commit",
+  "issue": 23,
+  "subtasks": ["4.4.1", "4.4.2", "4.4.3", "4.4.4"],
+  "commit_doc": ".cdr/commits/task-issue-23-summary.md",
+  "index_updates": [".cdr/index/feature.jsonl", ".cdr/index/task.jsonl"],
+  "verification_runs": [
+    ".cdr/runs/2026-07-11/017-verification/verification.json",
+    ".cdr/runs/2026-07-11/019-verification/verification.json",
+    ".cdr/runs/2026-07-11/021-verification/verification.json",
+    ".cdr/runs/2026-07-11/023-verification/verification.json"
+  ],
+  "regression_source": ".cdr/index/regression.jsonl",
+  "github_issue_state": "untouched (no close, no comment; local closure only per launching agent's explicit instruction pending separate user authorization)",
+  "pushed": false
+}

@@ -1,0 +1,66 @@
+{
+  "subtask": "4.4.1",
+  "rows": [
+    {
+      "id": "V1",
+      "criterion": "top-k selection correctness for k=1",
+      "test": "test_topic_selector.py::test_select_top_k_correctness[1]",
+      "acceptance_ref": "issue #23 4.4.1 test spec (k=1,3,5)"
+    },
+    {
+      "id": "V2",
+      "criterion": "top-k selection correctness for k=3",
+      "test": "test_topic_selector.py::test_select_top_k_correctness[3]",
+      "acceptance_ref": "issue #23 4.4.1 test spec (k=1,3,5)"
+    },
+    {
+      "id": "V3",
+      "criterion": "top-k selection correctness for k=5",
+      "test": "test_topic_selector.py::test_select_top_k_correctness[5]",
+      "acceptance_ref": "issue #23 4.4.1 test spec (k=1,3,5)"
+    },
+    {
+      "id": "V4",
+      "criterion": "k defaults to 3 when not specified",
+      "test": "test_topic_selector.py::test_select_top_k_default_k_is_three",
+      "acceptance_ref": "issue #23 4.4.1 acceptance criteria ('k configurable ... defaulting to 3')"
+    },
+    {
+      "id": "V5",
+      "criterion": "k is a configurable/tunable parameter",
+      "test": "test_topic_selector.py::test_select_top_k_correctness (parametrized k values themselves demonstrate tunability)",
+      "acceptance_ref": "issue #23 4.4.1 acceptance criteria"
+    },
+    {
+      "id": "V6",
+      "criterion": "selection is by relevance (descending score), not input order",
+      "test": "test_topic_selector.py::test_select_top_k_orders_by_descending_score",
+      "acceptance_ref": "issue #23 4.4.1 acceptance criteria ('top-k topics by relevance')"
+    },
+    {
+      "id": "V7",
+      "criterion": "k=0 returns empty list (boundary)",
+      "test": "test_topic_selector.py::test_select_top_k_zero_returns_empty",
+      "acceptance_ref": "precedent boundary handling (shortlist.py); not explicit in issue but required for robustness of a public API"
+    },
+    {
+      "id": "V8",
+      "criterion": "k larger than candidate pool returns full pool, no error",
+      "test": "test_topic_selector.py::test_select_top_k_larger_than_pool_returns_all",
+      "acceptance_ref": "precedent boundary handling (shortlist.py analogous test)"
+    },
+    {
+      "id": "V9",
+      "criterion": "negative k raises ValueError",
+      "test": "test_topic_selector.py::test_select_top_k_rejects_negative_k",
+      "acceptance_ref": "precedent input validation (shortlist.py analogous test)"
+    },
+    {
+      "id": "V10",
+      "criterion": "tie-break determinism (equal scores preserve original order)",
+      "test": "test_topic_selector.py::test_select_top_k_tie_break_is_stable_original_order",
+      "acceptance_ref": "precedent determinism guarantee (shortlist.py docstring: 'ties broken by pool's original order, determinism')"
+    }
+  ],
+  "coverage": "all rows implemented and passing (see self-consistency.json)"
+}

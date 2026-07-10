@@ -1,0 +1,43 @@
+{
+  "subtask": "4.4.2",
+  "issue": 23,
+  "milestone": "Phase 4: Query pipeline",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commits_reviewed": ["f65787b", "7d2f3dd"],
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "expand_insufficient_topics/is_insufficient_alone added per issue #23 4.4.2 AC; expansion requested only for topics judged insufficient, correct hop-depth (DEFAULT_EXPANSION_HOPS=2) forwarded; test_topic_selector_expansion.py (16 tests, matches self-report) covers the exact test spec wording."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "engine/rpc/server.go:280-282 independently confirmed: `if depth < 0 || depth > 2 { return InvalidArgument }` -- the implementer's claim about the [0,2] validated range is accurate. GraphNeighbor dataclass fields (file_id/edge_type/weight/hop) mirror proto Neighbor (target_file_id/type/weight/hop). GraphNeighborsFn DI mirrors shortlist.py's SearchCandidatesFn precedent, consistent with docs/LLD/query-agent.md's topic_selector.py section (line 26-27: '0-2 hops... via GraphNeighbors')."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git show f65787b diff for topic_selector.py is purely additive (index 957bb77..6c9851c, only + lines after existing EOF); select_top_k/TopicCandidate/DEFAULT_K/SearchCandidatesFn untouched. Full agents/ test suite: 254 passed, 2 pre-existing failures unrelated to this diff (ingestion/test_shortlist.py protobuf gencode/runtime version mismatch, issue #46, present before this change)."
+    },
+    "edge_cases": {
+      "status": "comment",
+      "evidence": "Single-topic/tied-score/empty-list/hops-out-of-range/negative-ratio all explicitly tested and behave correctly. However, is_insufficient_alone's documented invariant ('the top topic is never flagged for any ratio<=1') is FALSE when top_score is negative: e.g. top_score=-10, ratio=0.5 -> threshold=-5, and -10 < -5 is True, so the top-scored topic would be flagged despite the docstring's claim. No validation rejects negative TopicCandidate.score, and no test exercises a negative-score fixture, so this gap is undetected by the test suite. Likely low real-world impact if SearchCandidates scores are always >=0 (not enforced anywhere), but the docstring's stated guarantee is not actually upheld for the full domain of float scores it accepts. graph_neighbors raising an exception propagates uncaught (undocumented but not unreasonable for a DI seam)."
+    },
+    "security": {"status": "pass", "evidence": "No new I/O, auth, or trust-boundary surface; pure decision logic over already-validated (range-checked hops) local data."},
+    "performance": {"status": "pass", "evidence": "O(n) over selected topics, single max() pass; negligible for k+expansion-sized inputs."},
+    "maintainability": {"status": "pass", "evidence": "Heuristic and hop-depth-interpretation choices are explicitly disclosed as inventions in code comments (ratio-relative-to-top, always-max-hops), correctly noting neither the LLD nor issue specifies either -- good-faith, well-justified, non-speculative given the constraints found in docs/LLD/query-agent.md and engine/rpc/server.go."},
+    "test_coverage": {"status": "pass", "evidence": "16 tests cover: call-only-for-flagged, default/custom hop forwarding, all-sufficient/empty short-circuit, hops-out-of-range and negative-ratio validation, boundary (at-threshold not flagged), top-topic-never-flagged (positive-score case only)."},
+    "confidence": {"status": "pass", "evidence": "High confidence in the [0,2] validation claim (independently read server.go) and the additive-diff regression claim (independently read the diff). Medium confidence overall due to the negative-score edge case gap."},
+    "process": {
+      "status": "comment",
+      "evidence": "2-commit split confirmed cosmetic only: 7d2f3dd touches exclusively .cdr/runs/2026-07-11/018-implementation/{handoff.json,metadata.json} (48 insertions, 3 deletions) -- no application code. Not a code-review concern, at most a minor process/convention deviation (one logical change should ideally be one commit)."
+    }
+  },
+  "possible_improvements": [
+    "Reject or explicitly document behavior for negative TopicCandidate.score in is_insufficient_alone/expand_insufficient_topics, since the docstring's 'top topic never flagged' invariant does not hold for negative top_score.",
+    "Consider whether graph_neighbors exceptions should be caught/wrapped for a cleaner error boundary once real gRPC wiring lands."
+  ],
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "is_insufficient_alone's docstring invariant ('top topic never flagged for ratio<=1') is false for negative top_score; untested by current suite (positive-score fixtures only).",
+    "2-commit split (f65787b app code / 7d2f3dd .cdr docs) is a cosmetic convention deviation, not a functional issue."
+  ]
+}

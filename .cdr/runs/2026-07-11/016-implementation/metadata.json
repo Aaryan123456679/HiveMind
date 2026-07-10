@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-implementation",
+  "macro": "cdr-implementation",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "4.4.1-topic-selector-topk",
+  "git_head": "5cc0ea3",
+  "run_key": "sha256:issue23-4.4.1-topic_selector-topk-de70ac2",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-11T00:00:00Z",
+  "ended_at": "2026-07-11T00:30:00Z"
+}
