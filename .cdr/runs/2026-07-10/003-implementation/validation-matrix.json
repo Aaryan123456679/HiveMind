@@ -1,0 +1,29 @@
+{
+  "acceptance_criteria": [
+    {
+      "criterion": "shortlist returns a bounded candidate topic list (not the full catalog)",
+      "covered_by": ["test_shortlist_size_is_bounded_by_top_k", "test_shortlist_never_exceeds_pool_size"]
+    },
+    {
+      "criterion": "uses a cheap embedding/BM25 pre-filter against SearchCandidates",
+      "covered_by": ["test_shortlist_calls_search_candidates_with_broad_pool_query", "BM25 implementation exercised by relevance-ranking tests"]
+    },
+    {
+      "criterion": "relevant fixture topics included ahead of irrelevant ones",
+      "covered_by": ["test_relevant_topics_rank_ahead_of_irrelevant_ones"]
+    },
+    {
+      "criterion": "SearchCandidates mocked, no real gRPC/network calls in test_shortlist.py",
+      "covered_by": ["all tests use a plain Python callable/mock for search_candidates; test_grpc_client_translates_request_response uses a mock grpc.Channel-like stand-in, no real socket"]
+    },
+    {
+      "criterion": "Python gRPC client gap disclosed/handled",
+      "covered_by": ["GrpcSearchCandidatesClient class + test_grpc_client_translates_request_response"]
+    }
+  ],
+  "self_consistency_checks": [
+    "pytest agents/ingestion/test_shortlist.py -v",
+    "pytest agents/ -q (full regression)",
+    "ruff check agents/ingestion/shortlist.py agents/ingestion/test_shortlist.py"
+  ]
+}

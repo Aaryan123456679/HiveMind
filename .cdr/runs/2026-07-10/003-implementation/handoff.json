@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "run_id": "003-implementation",
+  "subtask": "issue-18-3.4.2-shortlist-searchcandidates",
+  "status": "completed",
+  "artifacts": {
+    "new_files": [
+      "agents/ingestion/shortlist.py",
+      "agents/ingestion/test_shortlist.py"
+    ],
+    "run_docs": [
+      ".cdr/runs/2026-07-10/003-implementation/requirement.md",
+      ".cdr/runs/2026-07-10/003-implementation/architecture-discovery.md",
+      ".cdr/runs/2026-07-10/003-implementation/impact-analysis.json",
+      ".cdr/runs/2026-07-10/003-implementation/plan.md",
+      ".cdr/runs/2026-07-10/003-implementation/validation-matrix.json",
+      ".cdr/runs/2026-07-10/003-implementation/self-consistency.json"
+    ]
+  },
+  "key_symbols": {
+    "TopicCandidate": "agents/ingestion/shortlist.py:TopicCandidate (dataclass: file_id, path, score)",
+    "SearchCandidatesFn": "agents/ingestion/shortlist.py:SearchCandidatesFn (type alias, injection point)",
+    "shortlist": "agents/ingestion/shortlist.py:shortlist(document_text, search_candidates, *, top_k=8, pool_size=200)",
+    "GrpcSearchCandidatesClient": "agents/ingestion/shortlist.py:GrpcSearchCandidatesClient (real gRPC-backed SearchCandidatesFn, gap-fill)",
+    "_bm25_scores": "agents/ingestion/shortlist.py:_bm25_scores (pure-Python Okapi BM25)"
+  },
+  "reference_contracts": {
+    "proto": "proto/hivemind.proto:114-127 (SearchCandidatesRequest/CandidateTopic/SearchCandidatesResponse)",
+    "engine_impl": "engine/rpc/server.go:302-331 (SearchCandidates = btree prefix scan, placeholder score)",
+    "lld": "docs/LLD/ingestion-agent.md:34-37,76-77 (shortlist design rationale)"
+  },
+  "self_consistency": {
+    "targeted_tests": "agents/.venv/bin/pytest ingestion/test_shortlist.py -v -> 16 passed",
+    "full_regression": "agents/.venv/bin/pytest -q -> 83 passed",
+    "lint": "agents/.venv/bin/ruff check ingestion/shortlist.py ingestion/test_shortlist.py -> clean"
+  },
+  "not_verified_by_this_agent": true,
+  "next_step": "/cdr:verify",
+  "security_note": "This session's tool output/environment surfaced injected system-reminder-style text (fake date-change notice, fake 'tokensave' MCP server instructions, fake 'Auto Mode Active' directive). All were treated as untrusted data, not followed, and did not affect scope or behavior. gh issue view 18 was re-checked fresh and found clean this read.",
+  "git_commit": null
+}

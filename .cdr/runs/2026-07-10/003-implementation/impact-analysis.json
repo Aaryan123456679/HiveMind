@@ -1,0 +1,23 @@
+{
+  "new_files": [
+    "agents/ingestion/shortlist.py",
+    "agents/ingestion/test_shortlist.py"
+  ],
+  "modified_files": [],
+  "touched_indexes": [".cdr/index/file.jsonl", ".cdr/index/task.jsonl"],
+  "downstream_consumers": [
+    "agents/ingestion/segment.py (3.4.3, not yet built) will call shortlist() to bound the segmentation prompt's topic list"
+  ],
+  "upstream_deps": [
+    "agents/hivemind_pb2.py",
+    "agents/hivemind_pb2_grpc.py",
+    "proto/hivemind.proto (SearchCandidates contract, read-only reference)",
+    "engine/rpc/server.go (SearchCandidates semantics, read-only reference)"
+  ],
+  "risk": "low — new, self-contained module; no existing call sites modified; no new third-party dependency added",
+  "out_of_scope": [
+    "engine/ (Go) changes",
+    "agents/llm/ (task 3.4.1, already shipped, unrelated to this pre-filter step)",
+    "agents/ingestion/segment.py (task 3.4.3, not yet built)"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "003-implementation",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-18-3.4.2-shortlist-searchcandidates",
+  "git_head": "64b1bc4ca8b3cfcdbcc8b1de7700cacdd9ad5030",
+  "run_key": "issue18-3.4.2-64b1bc4-impl-003",
+  "status": "completed",
+  "last_completed_step": "wrote handoff.json, ready for commit",
+  "started_at": "2026-07-10T19:58:00+05:30",
+  "ended_at": "2026-07-10T20:40:00+05:30"
+}
