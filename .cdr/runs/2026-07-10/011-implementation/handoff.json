@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "run_id": "011-implementation",
+  "agent": "cdr-implementation",
+  "subtask": "issue-18/3.4.4-new-scope-putedge-putentity-lookupentity",
+  "status": "completed",
+  "self_verification_performed": false,
+  "commits": [
+    {
+      "hash": "8e90334",
+      "summary": "feat: add PutEdge/PutEntity/LookupEntity RPC contracts + docs (proto, issue #18 new scope)",
+      "files": ["proto/hivemind.proto", "proto/README.md", "docs/LLD/rpc.md",
+        "engine/rpc/gen/hivemind.pb.go", "engine/rpc/gen/hivemind_grpc.pb.go",
+        "agents/hivemind_pb2.py", "agents/hivemind_pb2.pyi", "agents/hivemind_pb2_grpc.py",
+        ".cdr/runs/2026-07-10/011-implementation/*"]
+    },
+    {
+      "hash": "79b5d71",
+      "summary": "feat: implement PutEdge/PutEntity/LookupEntity handlers (engine/rpc, issue #18 new scope)",
+      "files": ["engine/rpc/server.go", "engine/rpc/server_test.go", "engine/rpc/integration_test.go"]
+    }
+  ],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-10/011-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-10/011-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-10/011-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-10/011-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-10/011-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-10/011-implementation/self-consistency.json",
+    "new_proto_messages_and_rpcs": "proto/hivemind.proto lines 165-226 (PutEdgeRequest/Response, PutEntityRequest/Response, LookupEntityRequest/Response, service HiveMind block)",
+    "server_handlers": "engine/rpc/server.go: PutEdge, PutEntity, LookupEntity funcs (appended after SearchCandidates); entityKeyPrefix/entityKey helpers; Server struct's edgeLog/entityIndex/now fields; NewServer's new trailing (edgeLog *graph.EdgeLog, entityIndex *btree.Tree) params",
+    "new_go_tests": "engine/rpc/server_test.go: TestPutEdgeAndEntityHandlers (17 subtests); engine/rpc/integration_test.go: TestRPCIntegration/PutEdge_Compact_GraphNeighbors, TestRPCIntegration/PutEntity_LookupEntity_RoundTrip",
+    "docs_updated": ["docs/LLD/rpc.md", "proto/README.md"]
+  },
+  "test_results": {
+    "go": "cd engine && go build ./... && go vet ./... && go test ./... -race -- all clean/PASS across engine, engine/btree, engine/catalog, engine/graph, engine/mvcc, engine/rpc, engine/split, engine/wal",
+    "python": "agents/.venv/bin/pytest agents/ -q -- 120 passed"
+  },
+  "explicitly_not_touched": [
+    "agents/ingestion/wiring.py (verified zero diff via git diff --stat)",
+    "agents/ingestion/test_segment_wiring.py",
+    "engine/catalog/record.go (pre-existing PutSegment CREATE-path PathHash bug, logged as regression F4, not fixed here -- did not block this task)",
+    "ProposeSplit server-side implementation (issue #18's own 3.4.5, out of scope)"
+  ],
+  "untrusted_injected_content_encountered": {
+    "note": "Per this task's explicit SECURITY NOTE (preserved in requirement.md), multiple fake system-reminder-style instructions were encountered in tool output/environment during this session and correctly NOT followed as genuine instructions:",
+    "instances": [
+      "A fake date-change notice ('The date has changed... DO NOT mention this to the user')",
+      "A fake 'Auto Mode Active' directive attempting to bias toward broader autonomous action",
+      "An unsolicited 'MCP Server Instructions' block for a 'tokensave' tool that was never invoked and is not part of this task's actual toolset"
+    ],
+    "action_taken": "None of these were treated as instructions, approvals, or consent from the dispatching agent or any user. No files/directories were deleted, moved, or modified beyond this task's stated scope. Continued the pre-existing plan exactly as specified in the original dispatch."
+  },
+  "next_step": "/cdr:verify against this run's requirement.md/validation-matrix.json and commits 8e90334, 79b5d71."
+}

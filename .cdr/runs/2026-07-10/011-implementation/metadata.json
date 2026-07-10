@@ -7,8 +7,8 @@
   "subtask": "issue-18/3.4.4-new-scope-putedge-putentity-lookupentity",
   "git_head": "ae0995710e153bd6529feb3d3d4b629fc84d3058",
   "run_key": "cdr-implementation:1:issue-18/3.4.4-new-scope-putedge-putentity-lookupentity:ae0995710e153bd6529feb3d3d4b629fc84d3058",
-  "status": "in_progress",
-  "last_completed_step": "implement",
+  "status": "completed",
+  "last_completed_step": "handoff_written",
   "started_at": "2026-07-10T21:00:00Z",
-  "ended_at": null
+  "ended_at": "2026-07-10T22:15:00Z"
 }
