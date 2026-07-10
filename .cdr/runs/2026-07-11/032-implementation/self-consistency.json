@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.6.2",
+  "note": "Internal sanity only (build green, validation matrix covered) -- NOT independent verification, per invariant I4. /cdr:verify performs verification separately.",
+  "checks": [
+    {
+      "cmd": "cd agents && python3 -m pytest query/test_query_e2e.py -v",
+      "result": "2 passed (test_e2e_valid_citation_resolves_to_real_seeded_file, test_e2e_hallucinated_citation_is_flagged)"
+    },
+    {
+      "cmd": "cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q",
+      "result": "293 passed, 2 failed -- the 2 failures are the pre-existing protobuf Gencode/Runtime VersionError (ingestion/test_shortlist.py::test_grpc_client_translates_request_response, test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist), unrelated to this change, tracked under issue #46. Baseline was 291 passed + 2 pre-existing failures before this run's 2 new tests; 291 + 2 new = 293, consistent."
+    },
+    {
+      "cmd": "cd agents && ruff check query/test_query_e2e.py",
+      "result": "All checks passed"
+    }
+  ],
+  "validation_matrix_coverage": "all 6 rows in validation-matrix.json covered (see that file)",
+  "no_production_code_modified": true,
+  "files_changed": ["agents/query/test_query_e2e.py (new)"]
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.6.2",
+  "files_added": [
+    "agents/query/test_query_e2e.py"
+  ],
+  "files_modified": [],
+  "files_deleted": [],
+  "modules_touched": ["agents/query"],
+  "public_api_changes": "none -- test-only addition; no change to pipeline.py, synthesizer.py, topic_selector.py, or intent_refiner.py",
+  "risk": "low",
+  "risk_rationale": "New, self-contained test file only. Uses only already-public, already-verified symbols (run_query_pipeline, PipelineError, QueryPipelineResult, TopicCandidate, GraphNeighbor, LLMClient). No production code path is touched, so no regression risk to existing passing suites.",
+  "dependencies": {
+    "depends_on_verified": ["task-4.6.1 (agents/query/pipeline.py)", "task-4.5.1/4.5.2 (agents/query/synthesizer.py, unknown_citations())", "task-4.4.1/4.4.2/4.4.3 (agents/query/topic_selector.py)", "task-4.3.x (agents/query/intent_refiner.py)", "task-3.4.1 (agents/llm/client.py LLMClient ABC)"],
+    "blocks": ["issue-25 close-out (this is the last subtask)"]
+  },
+  "backward_compatibility": "n/a (additive test file)",
+  "rollback_plan": "git revert the single commit; no other file is touched so rollback is trivial"
+}
