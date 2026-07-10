@@ -1,0 +1,48 @@
+{
+  "subtask": "4.4.3",
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "text": "Regardless of how many candidates/expansions are available, the final selected-file set never exceeds k+2k total files (system-wide invariant).",
+      "covered_by": [
+        "test_combine_and_cap_oversized_pool_truncated_to_k_plus_2k",
+        "test_combine_and_cap_default_k_matches_default_k_constant",
+        "test_combine_and_cap_k_zero_returns_empty_list"
+      ]
+    },
+    {
+      "id": "AC2 (test spec)",
+      "text": "pytest agents/query/test_topic_selector_cap.py: feed an oversized candidate+expansion set, assert final result length == min(available, k+2k).",
+      "covered_by": ["test_combine_and_cap_oversized_pool_truncated_to_k_plus_2k", "test_combine_and_cap_under_cap_returns_all_available"]
+    },
+    {
+      "id": "AC3 (design requirement, dispatch-mandated)",
+      "text": "A file reachable both as a direct top-k selection and as an expansion neighbor of a different topic counts once toward the cap (dedup).",
+      "covered_by": [
+        "test_combine_and_cap_dedups_file_reachable_both_ways",
+        "test_combine_and_cap_dedups_across_two_expansions"
+      ]
+    },
+    {
+      "id": "AC4 (implicit — priority)",
+      "text": "Directly-selected top-k files must not be silently dropped in favor of expansion neighbors when the pool exceeds the cap.",
+      "covered_by": ["test_combine_and_cap_prioritizes_selected_over_expansion_when_truncating"]
+    },
+    {
+      "id": "AC5 (regression)",
+      "text": "4.4.1/4.4.2 behavior unmodified.",
+      "covered_by": ["existing test_topic_selector.py (16 tests, unmodified)", "existing test_topic_selector_expansion.py (unmodified)", "full agents/ regression run"]
+    }
+  ],
+  "edge_cases": [
+    "empty selected + empty expansions -> []",
+    "expansion with empty neighbors list",
+    "duplicate file_id within selected",
+    "duplicate file_id across two expansions",
+    "neighbor file_id colliding with a selected file_id",
+    "k=0 -> []",
+    "negative k -> ValueError",
+    "order preservation: selected (score-desc) first, then expansion order"
+  ],
+  "status": "planned_pending_implementation"
+}

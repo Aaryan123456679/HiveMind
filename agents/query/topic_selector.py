@@ -317,3 +317,111 @@ def expand_insufficient_topics(
             results.append(ExpansionResult(topic=topic, neighbors=neighbors))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# 4.4.3 -- hard-cap enforcement on the combined (selected + expanded) result
+# ---------------------------------------------------------------------------
+#
+# Per issue #23 subtask 4.4.3 and `docs/LLD/query-agent.md`'s `topic_selector.py` section
+# ("The combined result is hard-capped at `k + 2k` total files to prevent context blow-up
+# -- this is a system-wide invariant, not just an implementation detail"; also restated in
+# `docs/HLD.md`'s "System-wide known risks" section), this section combines `select_top_k`'s
+# output with `expand_insufficient_topics`'s output into one final file list, and enforces
+# that hard cap. Neither the LLD nor the issue names a concrete function -- disclosed choice
+# below.
+#
+# Return shape -- disclosed choice: `list[int]` file_ids, not `list[TopicCandidate]`
+# ---------------------------------------------------------------------------
+# `selected` yields `TopicCandidate` (has `path`/`score`); `ExpansionResult.neighbors` yields
+# `GraphNeighbor` (has `edge_type`/`weight`/`hop`, no `path`/`score`). The only field shared by
+# both source types is `file_id`, so there is no common richly-typed shape to return without
+# fabricating fields for one side or the other. The issue's acceptance criteria and test spec
+# are phrased purely in terms of a *file-count* invariant ("final result length"), not in terms
+# of preserved per-item metadata, so this module returns the final deduplicated, capped list of
+# `file_id`s the query pipeline will fetch as context. Mapping `file_id`s back to file content
+# for the synthesizer prompt is left to a later subtask (out of scope here).
+#
+# Dedup -- disclosed choice: a file is counted once even if reachable both ways
+# ---------------------------------------------------------------------------
+# Issue wording: "the final *selected-file set* never exceeds k+2k total files"; LLD wording:
+# "The *combined result* is hard-capped at k + 2k total files". Both describe a set of distinct
+# files, not a multiset of (topic, neighbor) pairs. A file that is one of the top-k selections
+# AND is also returned as a `GraphNeighbor` of a *different* insufficient topic's expansion is
+# still physically one file -- counting it twice would inflate the reported context size without
+# adding new content, undermining the cap's own stated purpose ("prevent context blow-up").
+# Dedup by `file_id` is therefore applied before truncation, not after.
+#
+# Priority -- disclosed choice: selected topics are collected before expansion neighbors
+# ---------------------------------------------------------------------------
+# Top-k selected topics are the primary, directly-relevant results; expansion neighbors are
+# secondary, exploratory graph context requested only because a topic was judged insufficient
+# alone. If the combined, deduplicated pool exceeds `k + 2k`, truncation must never silently
+# drop a directly-selected topic's own file in favor of someone else's expansion neighbor. This
+# function therefore walks `selected` first (in the order given, i.e. `select_top_k`'s own
+# descending-score order), then `expansions` in the order given (per-topic order from
+# `expand_insufficient_topics`, and within each topic's neighbors, the engine's own
+# `GraphNeighborsFn` ordering, left untouched). First-seen `file_id` wins; later duplicates
+# (whether against an earlier selected id or an earlier neighbor id) are skipped without
+# recounting. The deduplicated, order-preserved list is then truncated to `k + 2k` entries.
+#
+# Cap formula -- disclosed choice: `k + 2k`, using this function's own `k` parameter
+# ---------------------------------------------------------------------------
+# The multiplier (`+2k`) is fixed by the LLD/issue wording, not tunable, so no new
+# `DEFAULT_CAP_MULTIPLIER`-style constant is introduced -- inventing a tunable multiplier would
+# be unfounded speculation beyond this subtask's scope, mirroring 4.4.1/4.4.2's own "disclosed
+# choice, not over-engineering" precedent. `k` defaults to `DEFAULT_K` (imported, not
+# redefined), matching `select_top_k`'s own `k` parameter, so a caller can pass the identical
+# `k` used for `select_top_k` to get a consistent cap.
+
+
+def combine_and_cap(
+    selected: Sequence[TopicCandidate],
+    expansions: Sequence[ExpansionResult],
+    *,
+    k: int = DEFAULT_K,
+) -> list[int]:
+    """Combine `selected` topics and `expansions`' neighbors into one final, deduplicated,
+    hard-capped list of `file_id`s.
+
+    Args:
+        selected: Topics chosen by `select_top_k` (or an equivalent sequence of
+            `TopicCandidate`s). Not mutated. Walked first, in the order given, so its
+            `file_id`s always take priority over expansion neighbors when truncating.
+        expansions: Result of `expand_insufficient_topics` (or an equivalent sequence of
+            `ExpansionResult`s). Not mutated. Walked second, in the order given (each
+            `ExpansionResult`'s `.neighbors` walked in the order given).
+        k: Same tunable hyperparameter used for `select_top_k`. Must be >= 0. The hard cap is
+            `k + 2 * k` total files. Defaults to `DEFAULT_K` (3), giving a default cap of 9.
+
+    Returns:
+        A list of `file_id`s (`int`), deduplicated (each distinct file counted once even if it
+        appears in both `selected` and one or more `expansions`, or in more than one
+        `ExpansionResult`), order-preserved (`selected`'s file_ids first in `selected`'s own
+        order, then newly-seen expansion neighbor file_ids in `expansions`'s own order), and
+        truncated to at most `k + 2 * k` entries. Never longer than
+        `min(k + 2 * k, number of distinct file_ids across selected and expansions)`.
+
+    Raises:
+        ValueError: If `k` is negative.
+    """
+    if k < 0:
+        raise ValueError(f"combine_and_cap: k must be >= 0, got {k}")
+
+    cap = k + 2 * k
+
+    combined: list[int] = []
+    seen: set[int] = set()
+
+    for topic in selected:
+        if topic.file_id not in seen:
+            seen.add(topic.file_id)
+            combined.append(topic.file_id)
+
+    for expansion in expansions:
+        for neighbor in expansion.neighbors:
+            if neighbor.file_id not in seen:
+                seen.add(neighbor.file_id)
+                combined.append(neighbor.file_id)
+
+    return combined[:cap]

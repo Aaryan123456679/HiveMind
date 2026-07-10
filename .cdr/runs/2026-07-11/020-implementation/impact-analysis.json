@@ -1,0 +1,29 @@
+{
+  "subtask": "4.4.3",
+  "issue": 23,
+  "files_modified": [
+    {
+      "path": "agents/query/topic_selector.py",
+      "change_type": "additive_extension",
+      "detail": "Append DEFAULT_CAP_MULTIPLIER-free (formula-based) new section: combine_and_cap(selected, expansions, *, k=DEFAULT_K) -> list[int]. No changes to any existing line from 4.4.1/4.4.2."
+    }
+  ],
+  "files_created": [
+    {
+      "path": "agents/query/test_topic_selector_cap.py",
+      "detail": "New test module per issue's exact test-spec file name; oversized candidate+expansion fixture, assert final length == min(available, k+2k); plus dedup and ordering/priority tests."
+    }
+  ],
+  "files_not_touched": [
+    "agents/query/test_topic_selector.py",
+    "agents/query/test_topic_selector_expansion.py",
+    "agents/ingestion/shortlist.py",
+    "docs/LLD/query-agent.md (no doc-formula ambiguity to resolve; existing text sufficient)"
+  ],
+  "downstream_consumers": {
+    "known": [],
+    "note": "No wiring/pipeline.py exists yet in agents/query/ (confirmed via LLD: 'Status: scaffold only'). 4.4.4 (integration test, explicitly out of scope for this dispatch) is the next consumer of combine_and_cap's output shape."
+  },
+  "risk_of_regression": "low — pure additive function; no existing symbol renamed, no existing function signature changed, no existing import touched.",
+  "backward_compatibility": "full — select_top_k, TopicCandidate, DEFAULT_K, SearchCandidatesFn (4.4.1) and is_insufficient_alone, expand_insufficient_topics, GraphNeighbor, GraphNeighborsFn, ExpansionResult, DEFAULT_INSUFFICIENCY_RATIO, DEFAULT_EXPANSION_HOPS (4.4.2) remain byte-for-byte unchanged."
+}
