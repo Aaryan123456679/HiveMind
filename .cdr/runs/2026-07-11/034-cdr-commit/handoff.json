@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "run_id": "034-cdr-commit",
+  "produced": {
+    "commit_doc": ".cdr/commits/task-issue-25-summary.md",
+    "feature_index_entries": [
+      {"feature": "hivemind-query-pipeline-wiring", "subtask": "4.6.1", "line_ref": ".cdr/index/feature.jsonl (appended, 2nd-to-last line)"},
+      {"feature": "hivemind-query-pipeline-e2e-test", "subtask": "4.6.2", "line_ref": ".cdr/index/feature.jsonl (appended, last line)"}
+    ]
+  },
+  "verified_inputs": {
+    "verification_4.6.1": ".cdr/runs/2026-07-11/031-verification/verification.json",
+    "verification_4.6.2": ".cdr/runs/2026-07-11/033-verification/verification.json"
+  },
+  "not_done_by_this_run": [
+    "task.jsonl update (deferred to separate step per instructions)",
+    "git push",
+    "GitHub issue #25 close",
+    "milestone #6 close",
+    "creation of new issue for real gRPC/HTTP wiring (recommended only, not created)"
+  ],
+  "notes": "Both subtasks' commit messages (00e5d9c, f660ab8) already follow Problem/Solution/Impact standard; no history rewrite performed or needed."
+}

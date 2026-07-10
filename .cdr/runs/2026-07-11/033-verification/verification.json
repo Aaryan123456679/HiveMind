@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "run_id": "033-verification",
+  "issue": 25,
+  "subtask": "4.6.2",
+  "commit": "f660ab87d3b45854f028147de46f08bdd04e8eb5",
+  "base_commit": "00e5d9cb1d8df15ab891181ece0a8d37e4af2df4",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "test_query_e2e.py adds two tests exercising the real (unmocked) intent_refiner->topic_selector->synthesizer chain against a genuine 3-file on-disk corpus, with only LLMClient and the SearchCandidates/GraphNeighbors/GetFile DI-seam callables faked, and those fakes perform real disk I/O and real keyword-overlap scoring rather than returning canned values. pipeline.py/synthesizer.py/topic_selector.py/intent_refiner.py are confirmed byte-identical to 00e5d9c (0 diff lines) -- claim of 'no production code touched' holds. Both tests pass; full agents/ suite is 293 passed / 2 pre-existing protobuf VersionError failures (issue #46), matching the commit message exactly. ruff is clean. The valid-citation test asserts unknown_citations() == [] and the synthesis prompt contains the real file's header/content; the hallucination test uses a path that structurally cannot collide with the seeded corpus and asserts unknown_citations() == [hallucinated_path] by exact value, with the real citation explicitly asserted absent from that list -- this also covers the 'one valid + one hallucinated citation in the same answer' combined scenario requested in this review. One real, non-blocking test-coverage gap found: with k=1 the single selected topic can never be flagged insufficient (topic.score == top_score by construction, per topic_selector.is_insufficient_alone's own documented invariant), so this e2e module can never exercise expand_insufficient_topics against the real seeded corpus; that branch is only covered elsewhere (test_pipeline.py, k=2) with a hardcoded in-memory fixture and no citation-resolution assertion -- so no test in the repository combines 'real on-disk corpus' with 'expansion branch triggered' with 'citation resolution asserted'. This is not blocking: the expansion branch's call-order/argument-shape contract is already verified by 4.6.1's test_pipeline.py, and 4.6.2's own scope is citation-resolution, not expansion-path coverage. No embedded instruction-injection text was found in issue #25's body or in commit f660ab8's message/diff for this subtask.",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "Acceptance criteria ('query against a small seeded corpus returns an answer whose citations resolve to real files that exist in the corpus') and test spec ('seeds a handful of topic files, runs a query through the full pipeline, asserts returned citations are valid file paths matching content') are both satisfied: 3 real markdown files are written to tmp_path with genuinely distinct content, run_query_pipeline() is invoked for real, and both a positive (resolves) and negative (flagged) citation-resolution case are asserted via unknown_citations(). Minor: issue #25's subtask 4.6.2 impacted-modules list literally names 'agents/query/test_pipeline_e2e.py' but the file shipped is 'agents/query/test_query_e2e.py' -- a cosmetic naming deviation, explicitly justified in the implementer's own requirement.md (matches repo's test_pipeline.py/test_synthesizer.py package-grouping convention and agents/ingestion/test_e2e_smoke.py's e2e-naming precedent). Not a conformance failure."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "Confirmed via `git diff 00e5d9c f660ab8 -- agents/query/pipeline.py agents/query/synthesizer.py agents/query/topic_selector.py agents/query/intent_refiner.py` = 0 lines changed. The new test uses exactly the documented DI seam (search_candidates: SearchCandidatesFn, graph_neighbors: GraphNeighborsFn, get_file: GetFileFn, llm_client: LLMClient) with no monkeypatching or internal-function mocking; _FakeLLMClient is a real LLMClient ABC subclass mirroring test_pipeline.py's own established convention."
+    },
+    "contract_correctness": {
+      "verdict": "pass",
+      "evidence": "_make_get_file and _make_search_candidates read real content off disk via tmp_path.read_text() on every call (verified by reading the diff directly) rather than returning a hardcoded dict; _score() computes a genuine (if simple) keyword-overlap fraction from the query and real file content, it is not reverse-engineered to fake a specific answer. graph_neighbors is a fake that raises AssertionError if called; confirmed via topic_selector.py source that with k=1 the sole selected topic's score always equals top_score, so is_insufficient_alone() is guaranteed False by the documented invariant ('the single best-selected topic is never flagged... for any ratio <= 1') -- the assertion that graph_neighbors is never called is correct by construction, not by luck."
+    },
+    "scope_boundary_reasonableness": {
+      "verdict": "pass_with_comment",
+      "evidence": "Module docstring explicitly discloses the DI-seam scope boundary inherited from 4.6.1 (no real gRPC subprocess, no real Ollama server, contrast agents/ingestion/test_e2e_smoke.py) before any test code -- this is the same accepted boundary PASS_WITH_COMMENTS'd in 031-verification for 4.6.1.",
+      "comment": "Given 4.6.1's own verification already accepted 'no real gRPC wiring in agents/query/ today' as a disclosed, non-blocking gap, treating 4.6.2's 'end-to-end' as 'through the documented DI seam, with real business logic and real on-disk corpus, fake network boundary' is the only self-consistent reading available without contradicting 031-verification's prior acceptance. See judgment call below."
+    },
+    "test_coverage": {
+      "verdict": "pass_with_comment",
+      "evidence": "Both shipped tests pass and assert exact values (unknown_citations() == [] / == [hallucinated_path], selected_file_ids == [...], citations == [...]) rather than truthiness checks. The combined 'one valid + one hallucinated citation in the same answer' scenario (requested review item 5b, mirroring 4.5.2's dedicated scenario) IS covered by test_e2e_hallucinated_citation_is_flagged.",
+      "gap": "Requested review item 5a is NOT covered: no test in the repository exercises expand_insufficient_topics against a real, on-disk, tmp_path-seeded corpus with a citation-resolution assertion. test_query_e2e.py structurally cannot reach that branch (k=1 always selects a single, by-definition-sufficient topic), and test_pipeline.py's k=2 coverage of that branch uses a hardcoded in-memory fixture and only asserts call order/arguments, not citation resolution. Recommend a follow-up test (either added to test_query_e2e.py with k=2 and a seeded corpus engineered so one candidate scores below the 0.5 ratio threshold, or explicitly logged as an accepted gap) before treating query-pipeline e2e coverage as complete for the expansion path specifically."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "Test-only change (258 lines added, 0 removed, 1 new file); no production code paths touched. Full suite: 293 passed, 2 pre-existing protobuf VersionError failures (ingestion/test_shortlist.py::test_grpc_client_translates_request_response and ::test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist), reproduced independently and matching commit message and issue #46's tracked, unrelated pre-existing failure."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "Uses pytest's tmp_path fixture exclusively for all file I/O (no fixed /tmp paths, no writes outside the pytest-managed temp directory); no secrets, no network calls, no shell execution. No embedded instruction-injection text found in issue #25's body, in commit f660ab8's message, or in the diff's requirement.md/plan.md content reviewed for this subtask."
+    },
+    "performance": {
+      "verdict": "pass",
+      "evidence": "Test-only; corpus is 3 small files, O(1) file reads per call, no measurable performance impact. Local run: 2 tests in 0.02s."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Module docstring clearly discloses scope boundary and cross-references 4.6.1's pipeline.py and test_pipeline.py's established _FakeLLMClient convention; helper functions (_seed_corpus, _make_get_file, _make_search_candidates, _score) are small, single-purpose, and documented with rationale for why they read real disk content rather than using canned data."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comment",
+      "evidence": "Hallucinated-citation path ('made/up/NotInCorpus.md') is asserted absent from the seeded corpus via an explicit sanity assert, and cannot coincidentally collide with any real seeded path (seeded paths are billing/InvoiceDisputes.md, security/ApiKeyRotation.md, onboarding/NewHireChecklist.md).",
+      "recommendation": "See test_coverage gap above -- the expand_insufficient_topics branch combined with real on-disk corpus + citation resolution remains untested; consider a 3rd test case for this before closing out query-pipeline e2e coverage entirely."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "Diff mechanically confirmed to contain zero production-code changes; both new tests independently re-run and pass; full regression suite independently re-run with matching pass/fail counts; ruff clean; source of topic_selector.py's is_insufficient_alone independently read to confirm the k=1 'never insufficient' claim is a real invariant, not an assumption."
+    },
+    "security_disclosure": {
+      "verdict": "clean",
+      "evidence": "No embedded fake system-reminder-style text, fake tool instructions, or fake directives found in gh issue #25's body, commit f660ab8's message/diff, or the new .cdr/runs/2026-07-11/032-implementation/*.md files reviewed. (Separately, this agent's own tool-call context contained an unsolicited 'Auto Mode Active' system-reminder and MCP server instruction block injected by the harness/environment mid-session -- not from repository content -- which per this task's instructions carries no authority over permissions/configuration and was not acted upon.)"
+    },
+    "judgment_call_end_to_end_reading": {
+      "verdict": "di_seam_is_legitimate",
+      "reasoning": "Issue #25's subtask 4.6.2 acceptance text is 'Running a real (or local-Ollama-backed) query against a small seeded corpus returns an answer whose citations resolve to real files that exist in the corpus'; the test spec says 'end-to-end test/script seeds a handful of topic files, runs a query through the full pipeline, and asserts the returned citations are valid file paths matching content' -- neither clause names gRPC or network wiring explicitly, and the acceptance text's own 'or local-Ollama-backed' phrasing signals flexibility about which parts are 'real' vs. stubbed. 4.6.1's verification (031-verification, PASS_WITH_COMMENTS) already accepted 'no real gRPC wiring in agents/query/ today' as a disclosed, non-blocking gap for the whole epic -- treating 4.6.2 as requiring real gRPC wiring would contradict that prior, already-accepted scope boundary rather than hold 4.6.2 to a stricter standard than 4.6.1 was held to. Given the DI seam is the one and only integration boundary agents/query/ exposes today (no wiring.py analogue exists to real-wire against), DI-seam-based e2e coverage is the correct and only actionable reading of 'end-to-end' available within this subtask's actual scope. Real gRPC wiring remains a genuine, disclosed, carried-forward gap -- not something this subtask could have closed without inventing out-of-scope production wiring work never named in its impacted-modules list."
+    }
+  },
+  "tests_run": [
+    {"cmd": "pytest agents/query/test_query_e2e.py -v", "result": "2 passed"},
+    {"cmd": "cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q", "result": "293 passed, 2 failed (pre-existing protobuf VersionError, issue #46, unrelated)"},
+    {"cmd": "ruff check agents/query/", "result": "All checks passed"},
+    {"cmd": "git diff 00e5d9c f660ab8 -- agents/query/pipeline.py agents/query/synthesizer.py agents/query/topic_selector.py agents/query/intent_refiner.py", "result": "0 lines changed -- confirmed test-only commit"}
+  ],
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "F-4.6.2-1: No test combines a real, on-disk-seeded corpus with the expand_insufficient_topics branch triggered and a citation-resolution assertion. test_query_e2e.py's k=1 design structurally guarantees graph_neighbors is never called (single top topic can never be judged insufficient relative to itself); test_pipeline.py covers the expansion branch's call order/arguments at k=2 but with a hardcoded in-memory fixture and no citation-resolution assertion. Recommend a follow-up test or an explicit accepted-gap note.",
+    "F-4.6.2-2 (carried forward from F-4.6.1-1/F-4.6.1-2, unresolved): real gRPC wiring for agents/query/ (SearchCandidates/GraphNeighbors/GetFile backed by an actual engine/rpc client) still does not exist; api/'s /query route still returns 500 via notImplementedPipeline. This is the disclosed real-gRPC-wiring gap explicitly called out in this task's own framing and should be carried forward to a dedicated follow-up issue (e.g. under milestone #10 or a new issue) rather than blocking issue #25's closure.",
+    "F-4.6.2-3 (cosmetic, non-blocking): shipped filename agents/query/test_query_e2e.py deviates from issue #25's literally-named impacted module agents/query/test_pipeline_e2e.py; justified in the implementer's own requirement.md on naming-convention grounds, no functional impact."
+  ],
+  "overall_assessment": "Issue #25's two subtasks (4.6.1: pipeline wiring through the DI seam; 4.6.2: this e2e citation-resolution test) are both genuinely implemented and independently verified. Milestone #6 'Phase 4: Query pipeline' is functionally complete and closable under the DI-seam-based scope boundary that was already established and accepted in 4.6.1's verification -- real gRPC wiring is not a hard blocker for this issue's closure, provided it is explicitly carried forward as a disclosed, tracked gap (recommend a new issue or folding into milestone #10, alongside the pre-existing F-4.6.1-2 GetFileResponse-path mismatch that the real-wiring work will need to resolve). The one substantive gap found in this review (F-4.6.2-1, expansion-branch e2e coverage) is non-blocking and does not by itself justify CHANGES_REQUESTED, given the expansion branch's mechanical behavior is already verified elsewhere and 4.6.2's stated scope is citation-resolution, not expansion-path coverage."
+}

@@ -8,8 +8,8 @@
   "issue": 25,
   "git_head": "dc9dd3e3579caa2dcfa149bfffc0642ac832ffda",
   "run_key": "issue25-4.6.1-dc9dd3e3579caa2dcfa149bfffc0642ac832ffda",
-  "status": "in_progress",
-  "last_completed_step": "self-consistency",
+  "status": "completed",
+  "last_completed_step": "handoff",
   "started_at": "2026-07-11T00:00:00Z",
-  "ended_at": null
+  "ended_at": "2026-07-11T00:00:00Z"
 }

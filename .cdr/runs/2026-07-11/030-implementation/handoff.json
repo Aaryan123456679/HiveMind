@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-030-implementation",
+  "macro": "cdr-implementation",
+  "agent": "implementation",
+  "issue": 25,
+  "subtask": "4.6.1",
+  "subtask_is_last_for_issue": false,
+  "status": "completed",
+  "commit": "00e5d9c",
+  "commit_pushed": false,
+  "parent_commit": "dc9dd3e3579caa2dcfa149bfffc0642ac832ffda",
+  "files_new": [
+    "agents/query/pipeline.py",
+    "agents/query/test_pipeline.py",
+    "api/routes/query.go",
+    "api/routes/query_test.go"
+  ],
+  "files_modified": [
+    "api/main.go"
+  ],
+  "run_docs": {
+    "requirement": ".cdr/runs/2026-07-11/030-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-11/030-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-11/030-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-11/030-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-11/030-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-11/030-implementation/self-consistency.json"
+  },
+  "acceptance_criteria": "A single pipeline function/class chains all three agents (intent_refiner, topic_selector, synthesizer) in order and is reachable through the api/ gateway's /query HTTP route.",
+  "test_spec": "go test ./api/... -run TestQueryRoute (agents/query pipeline mocked at the gRPC boundary) plus pytest agents/query/test_pipeline.py for the Python-side chain: assert correct call order and response shape end-to-end.",
+  "key_pointers": {
+    "python_pipeline_entry_point": "agents/query/pipeline.py:run_query_pipeline (lines ~146-232)",
+    "python_pipeline_result_type": "agents/query/pipeline.py:QueryPipelineResult (lines ~112-124)",
+    "python_new_di_type": "agents/query/pipeline.py:GetFileFn (line ~72) -- new injection-point callable (file_id -> (path, content)), not present before this subtask",
+    "python_test_file": "agents/query/test_pipeline.py (3 tests: call-order, response-shape, empty-selection error)",
+    "go_route_handler": "api/routes/query.go:NewQueryHandler / RegisterRoutes",
+    "go_boundary_interface": "api/routes/query.go:QueryPipeline (the gRPC-boundary seam mocked by TestQueryRoute)",
+    "go_test_file": "api/routes/query_test.go:TestQueryRoute (6 subtests: happy path, GET->405, empty query->400, malformed JSON->400, pipeline error->500, RegisterRoutes-via-mux)",
+    "go_main_wiring": "api/main.go: notImplementedPipeline stand-in + http.ListenAndServe on PORT env var (default 8080)"
+  },
+  "disclosed_decisions": [
+    {
+      "decision": "DI over real gRPC/HTTP wiring (choice (b) from dispatching instructions)",
+      "rationale": "proto/hivemind.proto's service HiveMind defines 9 RPCs (PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates, ProposeSplit, PutEdge, PutEntity, LookupEntity) and none of them is a query-pipeline entry point invokable from api/'s Go process. Extending the shared proto contract and regenerating both Go and Python stubs is out of scope for a single-commit subtask. agents/query/pipeline.py therefore takes search_candidates, graph_neighbors, and a new get_file callable as injected parameters (matching topic_selector.py's/synthesizer.py's own already-established DI convention, which topic_selector.py's own module docstring already discloses as a pre-existing gap: 'agents/query/ has no gRPC client wiring yet'). api/routes/query.go defines a QueryPipeline Go interface as the seam a later subtask's real client should satisfy; api/main.go wires in a notImplementedPipeline stand-in that returns a clear error rather than a fabricated network call.",
+      "remaining_gap_for_later_subtask": "Real cross-process wiring: (a) extend proto/hivemind.proto with a RunQuery-style RPC (or an HTTP/JSON bridge) between api/ and a Python process hosting run_query_pipeline, and (b) real GetFile/ReadPartial-backed implementation of the new GetFileFn (file_id -> (path, content)) resolving topic_selector.combine_and_cap()'s bare file_id output back to content for the synthesizer prompt -- topic_selector.py's own module comment already flagged this as 'left to a later subtask'."
+    },
+    {
+      "decision": "main.go now actually starts an HTTP server (http.ListenAndServe on PORT env var, default 8080)",
+      "rationale": "Acceptance criteria requires /query be 'reachable through the api/ gateway's /query HTTP route' -- a registered-but-never-served mux would not satisfy 'reachable'. No other server-lifecycle concerns (auth, rate limiting, other routes named in docs/HLD.md: /ingest /graph /files /admin) were added -- explicitly out of scope for this subtask."
+    }
+  ],
+  "test_results": {
+    "new_python_tests": "pytest agents/query/test_pipeline.py -v -> 3 passed",
+    "new_go_tests": "go test ./api/... -run TestQueryRoute -v -> PASS, 6/6 subtests",
+    "full_python_regression": "cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q -> 291 passed, 2 failed (pre-existing ingestion/test_shortlist.py protobuf gencode/runtime VersionError, tracked in issue #46, unrelated to this diff; baseline was 288 passed/2 failed before this subtask's +3 new tests)",
+    "full_go_engine_regression": "go test ./engine/... -> PASS across all packages",
+    "full_go_api_regression": "go test ./api/... -v -> PASS (routes package; api root package has no test files)",
+    "lint": "ruff check agents/query/pipeline.py agents/query/test_pipeline.py -> All checks passed; gofmt -l api/... -> clean; go vet ./api/... -> clean"
+  },
+  "prior_run_context": {
+    "prior_run": ".cdr/runs/2026-07-11/027-implementation (issue #24 subtask 4.5.2)",
+    "prior_commit": "b8da449",
+    "issue_24_closed_via": ".cdr/runs/2026-07-11/029-cdr-commit (commit dc9dd3e)"
+  },
+  "security_note": "gh issue view 25 and gh issue view 20/21/22/23/24 (all read fresh per dispatch instructions) contained no embedded fake system-reminder-style injection attempts -- clean plain markdown subtask lists only. Separately, this agent's own tool-call flow received several genuine harness-level system-reminder blocks (a 'date has changed' notice matching the date already given in the dispatching task, an 'Auto Mode Active' block, an MCP tokensave-server-instructions block, and a gofmt-autoformat notice for api/routes/query_test.go) -- treated as harness-level, not repo-content injection, and not acted upon beyond normal operation (no permission/config changes made).",
+  "next_step": "Not self-verified (invariant I4) -- /cdr:verify should independently review agents/query/pipeline.py, agents/query/test_pipeline.py, api/routes/query.go, api/routes/query_test.go, and api/main.go, and specifically the DI-vs-real-wiring disclosed decision above."
+}
