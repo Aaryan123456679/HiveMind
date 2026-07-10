@@ -1,0 +1,33 @@
+{
+  "run_id": "013-implementation",
+  "subtask": "4.3.2",
+  "issue": 22,
+  "milestone": "Phase 4: Query pipeline (#6)",
+  "note": "This is issue #22's LAST subtask. A close-out summary doc (e.g. .cdr/commits/task-issue-22-summary.md) is expected to be produced separately by /cdr:commit -- NOT created by this run.",
+  "status": "completed_awaiting_verification",
+  "commit_sha": "08f434eb2b99111afc83de7842e81dff1875200a",
+  "commit_message_summary": "test(query): cover query_type classification variants (issue #22, 4.3.2)",
+  "files_added": [
+    "agents/query/test_intent_refiner_types.py"
+  ],
+  "files_modified": [],
+  "run_artifacts": {
+    "requirement": ".cdr/runs/2026-07-11/013-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-11/013-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-11/013-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-11/013-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-11/013-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-11/013-implementation/self-consistency.json"
+  },
+  "key_pointers_for_verifier": {
+    "new_test_file": "agents/query/test_intent_refiner_types.py -- 9 total test functions/parametrizations: test_query_type_classification (parametrized over 6 fixtures: 3 factual_lookup, 3 broad_exploratory), test_factual_lookup_fixtures_all_classify_factual_lookup, test_broad_exploratory_fixtures_all_classify_broad_exploratory, test_query_type_differentiates_categories",
+    "fixture_queries_used": "factual_lookup: 'What is the capital of France?', 'Who wrote the novel 1984?', 'What year did the Berlin Wall fall?'. broad_exploratory: 'Tell me everything about the history of the Roman Empire', \"Give me an overview of our company's product roadmap\", 'Summarize all the research on climate change adaptation strategies'. All six are distinct from test_intent_refiner.py's own two fixtures (invoice-4521-total / billing-disputes).",
+    "mocking_pattern": "Local _FakeLLMClient(LLMClient) (real ABC subclass, not MagicMock) + _canned_response() JSON-builder helper, mirroring test_intent_refiner.py's own _FakeLLMClient/_well_formed_json pattern -- kept as a local copy since agents/query/ has no shared test-helpers module (matches repo's one-fake-per-test-file convention, e.g. ingestion/test_segment.py).",
+    "no_production_changes": "agents/query/intent_refiner.py and agents/query/test_intent_refiner.py are both byte-for-byte untouched by this run (git diff confirms zero changes to either).",
+    "test_results": "cd agents && python3 -m pytest query/ -q -> 19 passed. cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q -> 230 passed, 2 failed -- both pre-existing google.protobuf.runtime_version.VersionError in ingestion/test_shortlist.py (gencode 6.33.5 vs runtime 5.29.6 mismatch), tracked as issue #46, unrelated to and not touched by this change. ruff check agents/query/test_intent_refiner_types.py -> All checks passed. Full ruff check agents/ has one pre-existing unrelated F401 in generated hivemind_pb2_grpc.py (unused `warnings` import), not touched by this change.",
+    "issue_22_closure_status": "Both subtasks of issue #22 (4.3.1 intent_refiner.py contract+prompt, committed 694b0e3, verified PASS_WITH_COMMENTS; 4.3.2 this run's query_type differentiation tests, committed 08f434e, awaiting verification) are now implemented. Issue #22 is NOT yet closed on GitHub by this run (implementation agent does not touch the GitHub issue) -- that is left to /cdr:verify and/or /cdr:commit per the dispatch instructions."
+  },
+  "self_verification_disclaimer": "Implementation agent does NOT verify its own work (invariant I4). self-consistency.json above is internal sanity only (build green, validation-matrix covered) -- /cdr:verify must independently confirm before this subtask (and issue #22 as a whole) is considered closed.",
+  "security_disclosure": "No injected/fake content was found in this run's `gh issue view 22` output or any other tool output -- the issue body text was plain, consistent with the dispatch instructions' description of both subtasks, with no embedded fake system-reminder-style text, fake date-change notices, or fake tool directives. (Separately, two genuine harness-level system-reminder blocks -- a date-confirmation note and a generic 'Auto Mode Active' MCP-tool-usage note -- arrived directly in this agent's own tool-call flow, not embedded in any repo/issue content; per the dispatch instructions these are legitimate harness reminders, not injection, and were treated as such: no permissions, scope, or approach were changed because of them.)",
+  "pre_existing_uncommitted_state_not_touched": "At run start, .cdr/index/regression.jsonl had unstaged modifications and .cdr/runs/2026-07-11/011-implementation/handoff.json + .cdr/runs/2026-07-11/012-verification/ were untracked, all left over from a prior agent's run predating this dispatch. This run did not stage, commit, or otherwise touch any of that pre-existing state -- only agents/query/test_intent_refiner_types.py and this run's own .cdr/runs/2026-07-11/013-implementation/ artifacts were added to the commit."
+}
