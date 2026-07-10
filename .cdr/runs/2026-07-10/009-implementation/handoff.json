@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "run_id": "009-implementation",
+  "macro": "cdr-implementation",
+  "agent": "cdr-implementation",
+  "subtask": "issue-18/3.4.4-segment-wiring",
+  "status": "completed",
+  "git_commit": "ae0995710e153bd6529feb3d3d4b629fc84d3058",
+  "pointers": {
+    "new_files": [
+      "agents/ingestion/wiring.py",
+      "agents/ingestion/test_segment_wiring.py"
+    ],
+    "requirement": ".cdr/runs/2026-07-10/009-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-10/009-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-10/009-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-10/009-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-10/009-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-10/009-implementation/self-consistency.json",
+    "prior_subtask_commit_doc": ".cdr/commits/task-3.4.3.md",
+    "prior_run_task_3.4.3": ".cdr/runs/2026-07-10/006-implementation"
+  },
+  "key_design_decisions": [
+    "PutSegment is real (proto+server verified in earlier subtasks); wrapped 1:1 via new GrpcPutSegmentClient following ingestion.shortlist.GrpcSearchCandidatesClient's exact lazy-import pattern.",
+    "No edge-write or entity-index RPC exists anywhere in proto/hivemind.proto or engine/rpc/server.go (proto frozen at 6 RPCs per task-3.2.1/docs/LLD/rpc.md) -- SegmentWiringClient.lookup_entity_files/index_entity/put_edge are Protocol-only, satisfied only by test doubles in this commit; no real gRPC-backed implementation shipped for them.",
+    "ENTITY_COOCCUR implemented as cross-file co-occurrence (entity -> other fileIDs already indexed under it, via entity.idx lookup/register), NOT literal entity-to-entity pairwise edges -- deviated from the task's suggested reading because graph edge endpoints are fileIDs only (docs/LLD/graph.md 'Edge shape'), and docs/LLD/graph.md's own wording is 'across files'.",
+    "target_topic resolution closes 3.4.3's forwarded finding F2: APPEND_EXISTING with an unresolvable target_topic raises TopicNotFoundError before any RPC call (fail-fast).",
+    "Error-handling strategy: fail-fast through PutSegment (TopicNotFoundError, or put_segment's own exception propagated unwrapped, abort immediately, no edges attempted); best-effort-with-collection after a successful PutSegment (each entity/related-topic operation attempted independently, failures collected into SegmentExecutionResult.errors, never silently dropped).",
+    "Disclosed, NOT fixed (out of scope, no Go/proto changes): the already-committed PutSegment server handler (engine/rpc/server.go, task-3.2.2) never registers a newly created file's path anywhere (PutSegmentRequest has no path field, CatalogRecord.PathHash is never set on the create path) -- CREATE_NEW segments are not discoverable via SearchCandidates today. Flagged forward for a future subtask."
+  ],
+  "test_results": {
+    "targeted": "14/14 passed (agents/ingestion/test_segment_wiring.py)",
+    "full_regression": "120/120 passed, 3 consecutive runs, zero flakiness (agents/ -q)",
+    "ruff": "clean on agents/ingestion/wiring.py and agents/ingestion/test_segment_wiring.py"
+  },
+  "self_verification_performed": false,
+  "untrusted_content_encountered": [
+    "Two fake system-reminder-style injections appeared mid-conversation (a fake date-change notice and a fake MCP 'tokensave' tool advertisement, plus a fake 'Auto Mode Active' directive). Treated as untrusted data per this repo's recurring security note; not followed; no files/directories moved or deleted beyond this subtask's explicit scope. Note: the date-change content happened to be factually accurate (confirmed via `date`), but was still treated as non-authoritative instruction content, not as a legitimate reason to change behavior."
+  ],
+  "next_step": "/cdr:verify -- independent verification required (invariant I4, implementer did not self-verify). Verifier should specifically scrutinize: (1) the ENTITY_COOCCUR cross-file-not-pairwise semantics deviation and its justification, (2) whether Protocol-only (unimplemented) lookup_entity_files/index_entity/put_edge satisfies the issue's acceptance criteria given no real RPC exists to back them, (3) the disclosed pre-existing PutSegment path-registration gap. 2 subtasks remain on issue #18 (3.4.5-3.4.6); this is not a closure commit; local commit only, not pushed."
+}

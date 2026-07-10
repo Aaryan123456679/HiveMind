@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "010-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "issue-18-3.4.4-putsegment-wiring",
+  "git_head": "ae0995710e153bd6529feb3d3d4b629fc84d3058",
+  "run_key": "sha256:issue18-3.4.4-ae099571-wiring-verification",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T00:30:00Z"
+}

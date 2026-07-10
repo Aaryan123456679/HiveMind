@@ -1,0 +1,79 @@
+{
+  "issue": 18,
+  "subtask": "3.4.4",
+  "commit": "ae0995710e153bd6529feb3d3d4b629fc84d3058",
+  "verdict": "PASS_WITH_COMMENTS",
+  "escalation_required": true,
+  "escalation_reason": "Acceptance criteria for the entity/edge-wiring half of 3.4.4 ('entities feed entity.idx and increment ENTITY_COOCCUR edge weights; related_topics create LLM_ASSERTED edges') cannot be literally satisfied by any code changeable within agents/ingestion/wiring.py's declared scope: no edge-write or entity-index gRPC exists anywhere in proto/hivemind.proto or engine/rpc/server.go, and entity.idx is not a real Go type/store/RPC -- it exists only as LLD prose (docs/LLD/ingestion-agent.md lines 53-58). Closing this gap requires new proto RPCs + Go server handlers + an engine-side entity index -- a materially larger, differently-scoped, cross-language epic, not a fix achievable via a normal CDR fix-cycle on this Python subtask. This is a decomposition/sequencing gap in how issue #18 was originally scoped against Phase 3's Go-side epics, not an implementation defect. Recommend escalating to the user for a scope decision (e.g. split 3.4.4 into a completed 'wiring layer, Protocol-backed' piece and a new explicitly-deferred subtask for the engine-side edge-write/entity-index RPCs) rather than looping further fix-cycles on this commit.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "partially_met",
+      "evidence": "PutSegment execution requirement is fully and correctly implemented and real (verified against proto/hivemind.proto and engine/rpc/server.go). The entity.idx/ENTITY_COOCCUR/LLM_ASSERTED requirement is implemented only as Protocol interfaces with no real RPC-backed implementation, because no such RPC exists anywhere in the actual wire contract or Go engine -- independently confirmed by reading proto/hivemind.proto (exactly 6 RPCs, no edge-write/entity RPC), engine/rpc/server.go (only PutSegment/GetFile/ReadPartial/GraphNeighbors/SearchCandidates implemented; GraphNeighbors is read-only), and grepping the whole repo for entity.idx/EntityIndex (zero real hits outside LLD prose). Literal acceptance criteria are therefore not achievable end-to-end today; only the test-mocked contract is verified."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "wiring.py's design matches docs/LLD/graph.md's actual edge model ({targetFileID, edgeType, weight, lastUpdated}, fileID-only endpoints, ENTITY_COOCCUR explicitly documented as 'across files' at graph.md line 105) rather than the more naive literal 'pairwise entity-to-entity edge' reading, which is not representable in the current graph model (no entity-as-node concept in engine/graph/ at all). GrpcPutSegmentClient correctly follows the established GrpcSearchCandidatesClient lazy-import pattern from shortlist.py (task 3.4.2)."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Purely additive: git show --name-only confirms only agents/ingestion/wiring.py, agents/ingestion/test_segment_wiring.py, and .cdr/runs/2026-07-10/009-implementation/* were touched. No Go/proto files touched. Full agents/ regression suite: 120/120 passed, run 3x with agents/.venv's python (not system python -- system python's protobuf 5.29.6 vs venv's 6.33.6 causes false-positive VersionError failures in test_shortlist.py; this is an environment artifact of running with the wrong interpreter, not a real regression), zero flakiness across all 3 runs."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Self-edge skipping (entity and related_topic pointing back to the segment's own file_id) is tested and correct. Duplicate entities/related_topics within one segment are deduplicated via dict.fromkeys and processed exactly once (tested). CREATE_NEW (file_id=0) vs APPEND_EXISTING (resolved fileID) PutSegment argument shape is tested for both branches."
+    },
+    "security": {
+      "status": "no_new_risk",
+      "evidence": "No new attack surface: content is passed through as opaque bytes to PutSegment; no path traversal, injection, or auth logic in this module. GrpcPutSegmentClient uses a caller-supplied grpc.Channel (auth/TLS is the caller's responsibility, consistent with shortlist.py's precedent)."
+    },
+    "performance": {
+      "status": "not_applicable",
+      "evidence": "No performance-sensitive code paths introduced; entity/related-topic loops are O(n) over segment-local lists, bounded by LLM output size."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Extensive, load-bearing docstrings disclose every deviation and gap explicitly and accurately (independently re-verified against proto/engine/docs, not taken on faith). Error-handling split (fail-fast pre-PutSegment, best-effort-with-collection post-PutSegment) is clearly documented and matches segment.py's established convention."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "14 new tests in test_segment_wiring.py cover: CREATE_NEW/APPEND_EXISTING PutSegment argument shape, TopicNotFoundError fail-fast before any RPC call (client.put_segment_calls == [] asserted), PutSegment RPC failure propagating unwrapped with zero edge-creation calls attempted, entity cross-file co-occurrence edge creation, self-edge skipping, duplicate-entity dedup, one entity's edge-creation failure collected into errors without blocking a second entity's edge creation or its own index_entity call (independently re-derived as the adversarial scenario requested -- test_entity_edge_failure_collected_not_raised, confirmed passing), related_topic LLM_ASSERTED edge creation, self-edge skip, unresolvable-topic error collection (not raised), duplicate dedup, a full combined fixture, and GrpcPutSegmentClient request/response translation via a mocked channel/stub. Ran independently: 14/14 pass."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "All 5 of the implementer's central claims (1: PutSegment request/response shape; 2: no edge-write RPC/entity.idx anywhere in proto or Go; 3: entity.idx is LLD-prose-only; 4: edge shape is fileID-only, ENTITY_COOCCUR documented as cross-file; 5: put_segment real, others Protocol-only, disclosed) were independently re-derived by reading proto/hivemind.proto, engine/rpc/server.go, docs/LLD/rpc.md, and docs/LLD/graph.md directly -- all confirmed accurate, no fabrication or overstatement found."
+    },
+    "improvements": {
+      "status": "suggested",
+      "evidence": "1) Escalate the entity/edge-RPC scope gap to the user before closing issue #18 (see escalation_reason). 2) The PathHash finding (below) should be tracked as a distinct, cross-cutting bug against engine/rpc/server.go / task-3.2.2's PutSegment CREATE handler, since it blocks any newly created file from ever being found via SearchCandidates regardless of which higher-level subtask calls PutSegment."
+    }
+  },
+  "significant_finding_pathhash": {
+    "severity": "high",
+    "status": "confirmed_real_and_pre_existing",
+    "description": "engine/rpc/server.go's PutSegment CREATE path builds `catalog.CatalogRecord{FileID, CurrentVersion, SizeBytes, Status}` and never sets `PathHash` (confirmed via engine/catalog/record.go: CatalogRecord genuinely has a PathHash uint64 field, used by the B+Tree path index elsewhere -- see engine/catalog/*_test.go's `PathHash: fileID * 31` fixtures). Server's own field doc comment on btreeStore explicitly states: 'Nothing in this file's 5 in-scope RPCs writes to the B+Tree: PutSegmentRequest ... carries only file_id + content, no path, so there is no path for PutSegment to index. The B+Tree is therefore purely an injected read dependency here.' This means newly created files via PutSegment(file_id=0, ...) are never discoverable via SearchCandidates -- confirmed as a genuine, already-documented gap that predates this commit (introduced in task-3.2.2, not this one). Correctly disclosed by the implementer as pre-existing and out-of-scope for 3.4.4; logged here regardless, per task instructions, since it is a significant cross-cutting defect that will block any future subtask relying on discoverability of newly ingested topics."
+  },
+  "error_handling_verification": {
+    "status": "confirmed_sound",
+    "adversarial_scenario_constructed": "PutSegment succeeds, then a mocked entity-index/edge-creation call raises for one entity but not another, within the same execute_segment call.",
+    "result": "test_entity_edge_failure_collected_not_raised (independently re-read and re-run) confirms: the failing entity's exception is caught and appended to SegmentExecutionResult.errors (not raised, not silently dropped); the second entity's ENTITY_COOCCUR edge is still created; index_entity is still attempted (and recorded) for BOTH entities including the one whose edge-creation failed. Fail-fast boundary (TopicNotFoundError / put_segment RPC failure) is proven strict: client.put_segment_calls == [], client.put_edge_calls == [], client.lookup_entity_files_calls == [] all asserted empty in the relevant tests, confirming zero partial-state execution before/through a fail-fast abort."
+  },
+  "f2_closure_verification": {
+    "status": "confirmed",
+    "evidence": "test_unresolvable_target_topic_raises_before_any_rpc_call constructs an APPEND_EXISTING segment with an unresolvable target_topic and a resolver that always returns None; TopicNotFoundError is raised, and all three call-recording lists (put_segment_calls, put_edge_calls, lookup_entity_files_calls) are asserted empty, proving the raise happens strictly before any RPC call. This independently confirms closure of 3.4.3's forwarded finding F2 (target_topic catalog-membership validation)."
+  },
+  "prompt_injection_observed": {
+    "found": true,
+    "location": "conversation turn following tool results (not in repo content)",
+    "description": "A fake system-reminder-style block was injected claiming the date changed, providing fake 'tokensave' MCP tool usage instructions, and a fake 'Auto Mode Active' directive urging reduced pauses for clarification and pre-authorizing destructive git operations under certain conditions. Treated entirely as untrusted data; not acted upon; disclosed to the user in-line. GitHub issue #18's body was independently checked and found clean (no injected instruction-like text)."
+  },
+  "test_results": {
+    "test_segment_wiring_focused": "14/14 passed",
+    "full_agents_suite": "120/120 passed, 3 consecutive runs, zero flakiness (using agents/.venv's python; system python produces false-positive protobuf VersionError failures in unrelated test_shortlist.py due to a protobuf version mismatch between environments -- an environment artifact, not a real regression)",
+    "ruff": "clean on agents/ingestion/wiring.py and agents/ingestion/test_segment_wiring.py (repo-wide ruff check flags one pre-existing unused import in the untouched generated file agents/hivemind_pb2_grpc.py, unrelated to this commit)"
+  },
+  "scope_containment": {
+    "status": "confirmed",
+    "evidence": "git show --name-only ae0995710e153bd6529feb3d3d4b629fc84d3058 touches only agents/ingestion/wiring.py, agents/ingestion/test_segment_wiring.py, and .cdr/runs/2026-07-10/009-implementation/* artifacts. No Go or .proto files touched."
+  },
+  "recommendation": "Do not loop another fix-cycle on this commit -- there is no code change within agents/ingestion/wiring.py's scope that would close the entity/edge-RPC gap; that requires new proto RPCs + Go engine work, a separate and materially larger epic. Recommend the orchestrator: (1) accept this commit's PutSegment-wiring portion as complete and correct (well-tested, real implementation); (2) escalate to the user a scope decision on whether 3.4.4's entity/edge acceptance criteria should be (a) explicitly deferred/split into a new, separately-scoped subtask requiring Go/proto changes, or (b) reworded to match what is actually achievable at the agents/ layer today (Protocol-only interfaces awaiting a future real backend); (3) separately log the PathHash/SearchCandidates-discoverability gap as a cross-cutting defect against task-3.2.2's PutSegment handler, tracked independently of issue #18's remaining subtasks."
+}

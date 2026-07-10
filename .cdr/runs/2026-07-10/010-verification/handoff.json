@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "run_id": "010-verification",
+  "verdict": "PASS_WITH_COMMENTS",
+  "escalation_required": true,
+  "pointers": {
+    "verification_report": ".cdr/runs/2026-07-10/010-verification/verification.json",
+    "reviewed_diff": "agents/ingestion/wiring.py, agents/ingestion/test_segment_wiring.py @ commit ae0995710e153bd6529feb3d3d4b629fc84d3058",
+    "implementer_run": ".cdr/runs/2026-07-10/009-implementation/",
+    "proto_source_of_truth": "proto/hivemind.proto (lines 39-54 PutSegment, 157-169 service HiveMind: exactly 6 RPCs)",
+    "engine_server_source": "engine/rpc/server.go (lines 1-15 scope doc, 31-55 Server struct btreeStore field doc re: no path indexing, 95-141 PutSegment handler)",
+    "engine_catalog_record": "engine/catalog/record.go (PathHash field, line ~34-36)",
+    "lld_graph": "docs/LLD/graph.md (lines 97-109 Edge shape, line 105 ENTITY_COOCCUR 'across files' wording)",
+    "lld_ingestion_agent": "docs/LLD/ingestion-agent.md (lines 53-58 'What the Go engine does with each segment')",
+    "lld_rpc": "docs/LLD/rpc.md (Exposed RPCs section, 6-RPC frozen list)",
+    "pathhash_finding": "engine/rpc/server.go lines ~47-52 (btreeStore field doc) and ~95-125 (PutSegment CREATE path never sets CatalogRecord.PathHash)"
+  },
+  "next_action": "orchestrator escalates entity/edge-RPC scope gap to user for a decision; do not initiate a further fix-cycle on agents/ingestion/wiring.py"
+}
