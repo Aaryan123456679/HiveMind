@@ -1,0 +1,57 @@
+{
+  "verdict": "PASS_WITH_COMMENTS",
+  "subtask": "19-3.5.1",
+  "commit": "4883fc7",
+  "base": "6a03944",
+  "summary": "Bitext and Enron dataset loaders + tests verified against issue #19's literal acceptance criteria and test spec, both read directly via `gh issue view 19` (no embedded prompt-injection observed in issue text). Field mapping to existing normalizers is correct; personally ran 169 passed tests and clean ruff; lazy-import claim verified true with a bare non-venv python3.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass_with_comment",
+      "evidence": "Issue text (fetched independently): acceptance criteria require loaders that 'fetch/read the Bitext support-ticket dataset and an Enron email subsample from local/downloaded sources' and the test spec explicitly says to run against 'a small local fixture subset of each dataset' -- fixture-based testing is what the issue itself asks for, not a scope-narrowing invention. Real corpus / non-fixture usage is explicitly deferred to 3.5.2 ('against a real (non-fixture) dataset sample'). Bitext fixture is a genuine 30-row sample of the real public HF dataset (downloaded once, committed) -- squarely satisfies 'downloaded sources'. Enron fixture is NOT a subsample of the real corpus -- it is 3 hand-authored, format-faithful files; this is a literal (if disclosed and well-reasoned) gap against 'an Enron email subsample from local/downloaded sources', since hand-authored content is not a subsample of anything. Practically justified (423MB corpus, no lightweight raw-header API found) and the loader itself is fully general -- it will read a real maildir/ subtree unchanged -- so this is a fixture-only limitation, not a code defect. Flagged as a comment, not a blocker, but 3.5.2 will need to source an actual Enron subsample for its 'real (non-fixture) dataset sample' requirement; this repo does not yet have one."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "data/load_bitext.py: no import of ingestion.* at module level (verified via grep + running under bare /usr/bin/python3 with no agents/.venv on PATH -- import succeeded, iter_bitext_records() worked). data/load_enron.py: same, `from ingestion.dispatch import dispatch_email` is inside load_enron_documents(), confirmed lazy. Both wrap ingestion.dispatch imports only inside RawDocument-building functions, matching the module docstrings' claim."
+    },
+    "field_mapping_correctness": {
+      "status": "pass",
+      "evidence": "bitext_row_to_ticket_json output keys {ticket_id,subject,description,status,priority,category,requester,assignee,created_at,comments} match normalize_ticket_json's dict.get() reads exactly (agents/ingestion/normalize_ticket.py:153-174), no missing-required-field bug found (every TicketFields attribute is a str with _str() coercion, no field is truly required/non-nullable). Enron fixture files (RFC2822-ish headers + blank line + body) match normalize_email.py's documented on-disk format; msg_003 omits Cc/Bcc/X-* optional headers, exercising the normalizer's must-not-raise-on-absence contract, verified by test_load_enron_documents_missing_optional_headers_does_not_raise. RawDocument shape (id, source_type, text, structured_fields, timestamp) matches agents/ingestion/rawdoc.py's RawDocument dataclass fields."
+    },
+    "provenance_and_licensing": {
+      "status": "pass",
+      "evidence": "data/fixtures/bitext_sample.json (40,844 bytes, reasonable to commit) contains top-level _source, _license ('CDLA-Sharing-1.0'), _fetched_via keys with the exact datasets-server URL used -- genuine provenance metadata, not just a claim."
+    },
+    "enron_disclosure_honesty": {
+      "status": "pass",
+      "evidence": "load_enron.py's module docstring explicitly states 'Fixture sample is format-faithful, not a literal corpus download -- disclosed judgment call' and 'Message content is invented, not sourced from real Enron correspondence.' No fixture file itself claims to be real Enron content. Disclosure is honest and prominent, not buried."
+    },
+    "test_coverage": {
+      "status": "pass_with_comment",
+      "evidence": "Personally ran: agents/.venv/bin/pytest data/ agents/ -q -> 169 passed (matches implementer's claimed 14+155). agents/.venv/bin/ruff check data/ -> All checks passed (ruff check agents/ shows one pre-existing, unrelated F401 in generated agents/hivemind_pb2_grpc.py, not touched by this diff). test_bitext_row_to_ticket_json_ids_are_stable_and_unique is a real uniqueness check (would catch an off-by-one/collision bug in ticket_id derivation) but only asserts 'stability' by construction (deterministic f-string), never calling the function twice to actually prove idempotence across repeated calls -- minor test-naming overclaim, not a coverage gap."
+    },
+    "scope_containment": {
+      "status": "pass",
+      "evidence": "git show --name-only 4883fc7 contains no engine/, proto/, or agents/ingestion/{segment,wiring,propose_split,shortlist}.py paths -- confirmed via grep against the commit's file list; issue #18's closed scope is untouched."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "No existing agents/ingestion modules modified by this commit (dispatch.py, normalize_ticket.py, normalize_email.py, rawdoc.py all untouched); new code is additive-only under data/. Full agents/ test suite (155 tests) still passes."
+    },
+    "documentation_accuracy_nit": {
+      "status": "minor_finding",
+      "evidence": "load_bitext.py and load_enron.py module/function docstrings repeatedly reference 'agents.ingestion.dispatch' as the import target, but the actual code imports `from ingestion.dispatch import ...` (matching the existing agents/ package's internal convention where agents/ itself is the sys.path root, not agents.ingestion). Cosmetic only -- does not affect correctness, since the real import statements are correct and were verified to work."
+    }
+  },
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "Enron fixture is hand-authored, not a real corpus subsample -- acceptable per issue's own fixture-based test spec for 3.5.1, but 3.5.2 will need an actual real (non-fixture) Enron sample and none currently exists in the repo.",
+    "Docstrings say 'agents.ingestion.dispatch' where code correctly imports 'ingestion.dispatch' -- cosmetic doc inaccuracy."
+  ],
+  "tests_run_by_verifier": [
+    "agents/.venv/bin/pytest data/ agents/ -q => 169 passed",
+    "agents/.venv/bin/ruff check data/ => All checks passed",
+    "bare /usr/bin/python3 (no agents/.venv) import of data/load_bitext.py and data/load_enron.py => succeeded, confirming lazy-import claim"
+  ],
+  "ready_for_close_out": true,
+  "next_step": "3.5.2 full end-to-end ingestion smoke run; will require sourcing a real (non-fixture) Enron sample since 3.5.1's Enron fixture is intentionally synthetic"
+}

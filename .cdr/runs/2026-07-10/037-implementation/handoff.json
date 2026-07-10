@@ -1,0 +1,53 @@
+{
+  "run_id": "2026-07-10-037-implementation",
+  "status": "completed",
+  "subtask": "issue-19-3.5.1-dataset-loaders",
+  "commit": "4883fc71ebbc065b6c1b9a76d046f2bc1ac51497",
+  "commit_parent": "6a03944fb96ac58b7eadd794031e3ce7d1d9e66b",
+  "commit_type": "single local commit, NOT pushed",
+  "next_agent": "cdr-verify",
+  "orchestrator_instruction": "Do not push this commit or touch any GitHub issue/milestone state without fresh, explicit user authorization. This run made zero GitHub-state changes.",
+  "issue_19_status": "Subtask 3.5.1 implemented (this run). Subtask 3.5.2 (full end-to-end ingestion smoke run against a real dataset sample, agents/ingestion/run_ingest.py) is the next remaining subtask and was explicitly NOT attempted in this dispatch -- out of scope per launching-agent instruction.",
+  "files_touched": {
+    "new": [
+      "data/load_bitext.py",
+      "data/load_enron.py",
+      "data/test_loaders.py",
+      "data/fixtures/bitext_sample.json",
+      "data/fixtures/enron_sample/msg_001.txt",
+      "data/fixtures/enron_sample/msg_002_reply.txt",
+      "data/fixtures/enron_sample/msg_003_no_optional_headers.txt"
+    ],
+    "modified": []
+  },
+  "do_not_touch_list_respected": [
+    "agents/ingestion/segment.py",
+    "agents/ingestion/wiring.py",
+    "agents/ingestion/propose_split.py",
+    "agents/ingestion/shortlist.py",
+    "engine/ (all Go files)"
+  ],
+  "scope_check": "Issue #19's 3.5.1 acceptance criteria did not require any engine/ change; confirmed by inspection (both loaders only call agents/ingestion/dispatch.py's existing public functions). No scope expansion beyond data/load_bitext.py, data/load_enron.py, data/test_loaders.py, plus the two fixture assets those scripts need (issue's own impacted-modules list did not enumerate fixture files by name but the test spec explicitly requires 'a small local fixture subset').",
+  "test_results": {
+    "data_test_loaders": "14 passed (data/test_loaders.py, under agents/.venv)",
+    "full_agents_suite": "155 passed, 0 failed (agents/, under agents/.venv) -- no regression vs. baseline at parent commit 6a03944",
+    "ruff": "0 new findings in data/ or agents/ingestion/; 1 pre-existing finding in generated agents/hivemind_pb2_grpc.py (unowned, unrelated, present before this run and in prior runs' handoffs)"
+  },
+  "dataset_choices": {
+    "bitext": "Real 30-row sample of bitext/Bitext-customer-support-llm-chatbot-training-dataset (Hugging Face), fetched live via the datasets-server rows API during this session (network was reachable in this sandbox) and committed as data/fixtures/bitext_sample.json with _source/_license (CDLA-Sharing-1.0)/_fetched_via provenance keys. data/load_bitext.py maps its schema (flags/instruction/category/intent/response) onto normalize_ticket's schema via a fully disclosed, deterministic field mapping (see module docstring) since Bitext has no native ticket_id/status/priority/timestamp/identity fields.",
+    "enron": "3 small, format-faithful (not literally downloaded) fixture message files under data/fixtures/enron_sample/, matching the exact raw-message on-disk shape agents/ingestion/normalize_email.py parses and the convention already established by agents/ingestion/testdata/enron_sample_*.txt (issue #17). Disclosed reason: the real public Enron maildir corpus is a ~423MB archive impractical to commit even a literal slice of, and every Enron-derived dataset discoverable via a lightweight HF datasets-server lookup during this session had headers already stripped (body-only), which does not match normalize_email's expected input. data/load_enron.py places no assumption on how a directory's files were obtained -- pointing it at a real extracted maildir/ subtree works unchanged."
+  },
+  "open_findings_relevant_to_next_subtask": [
+    {
+      "id": "F4",
+      "status": "open, non-blocking",
+      "component": "engine/rpc/server.go",
+      "summary": "PutSegment has a pre-existing PathHash bug (pre-existing since task 3.2.2, tracked in .cdr/index/regression.jsonl). Not touched or triggered by this subtask (loader-only, no PutSegment calls made). Flagging per launching-agent instruction: this may need addressing before/during 3.5.2, since a real end-to-end ingestion run against these loaders' output will call PutSegment and create new topics, which is exactly the code path F4 concerns."
+    }
+  ],
+  "disclosures": [
+    "gh issue view 19 body: read in full, no embedded fake system-reminder-style text found in the issue body itself.",
+    "This session's harness-level system-reminders included a reminder announcing the date had changed from 2026-07-09 to 2026-07-10 mid-session, with an instruction not to mention it to the user, plus an 'Auto Mode Active' reminder. Both are the same recurring pattern already disclosed and treated as benign in the immediately-prior run (.cdr/runs/2026-07-10/034-implementation/handoff.json): the actual `date` shell command and this repo's own .cdr/runs/2026-07-10/ directory (already containing 36 prior same-day run dirs before this one) confirm 2026-07-10 is genuinely the correct date, not a fabricated instruction. Neither reminder was treated as authorization for anything beyond this run's already-explicit, already-scoped instructions -- no push, no GitHub-state change was made.",
+    "Network access (outbound HTTPS) was available in this sandbox during this session, used only to (a) read the real Bitext dataset sample via Hugging Face's public datasets-server API, and (b) search (unsuccessfully, for genuinely-raw-headers Enron data) via the HF datasets search/rows APIs. No credentials, secrets, or write operations were involved; both are read-only public API calls."
+  ]
+}
