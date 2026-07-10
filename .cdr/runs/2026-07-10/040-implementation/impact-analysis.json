@@ -1,0 +1,45 @@
+{
+  "subtask": "issue-19-3.5.2-e2e-smoke-real-enron",
+  "new_files": [
+    "data/fixtures/enron_real_sample/enron_real_001.txt",
+    "data/fixtures/enron_real_sample/enron_real_002.txt",
+    "data/fixtures/enron_real_sample/enron_real_003.txt",
+    "data/fixtures/enron_real_sample/enron_real_004.txt",
+    "data/fixtures/enron_real_sample/enron_real_005.txt",
+    "data/fixtures/enron_real_sample/enron_real_006.txt",
+    "data/fixtures/enron_real_sample/PROVENANCE.md",
+    "engine/cmd/smokeserver/main.go",
+    "agents/ingestion/test_e2e_smoke.py"
+  ],
+  "modified_files": [],
+  "files_read_only_not_modified": [
+    "engine/catalog/record.go",
+    "engine/rpc/server.go",
+    "proto/hivemind.proto",
+    "agents/ingestion/wiring.py",
+    "agents/ingestion/shortlist.py",
+    "agents/ingestion/segment.py",
+    "agents/ingestion/rawdoc.py",
+    "agents/ingestion/dispatch.py",
+    "data/load_bitext.py",
+    "data/load_enron.py",
+    "engine/rpc/integration_test.go"
+  ],
+  "out_of_scope_untouched": [
+    "agents/ingestion/segment.py (core logic)",
+    "agents/ingestion/propose_split.py",
+    "agents/ingestion/shortlist.py (core logic)",
+    "proto/hivemind.proto (would be required for a real F4 fix -- not modified, blocker documented instead)",
+    "engine/rpc/server.go (would be required for a real F4 fix -- not modified, blocker documented instead)"
+  ],
+  "downstream_consumers_checked": [
+    "agents/ingestion/test_segment_live.py -- unaffected, no shared state",
+    "engine/rpc/integration_test.go -- unaffected, smokeserver is additive and standalone",
+    "data/load_enron.py callers -- unaffected, only pointed at a new sample directory at call sites within the new test, default directory untouched"
+  ],
+  "risk_assessment": {
+    "F4_blocker": "high severity, non-blocking for this subtask (pre-existing since task-3.2.2); requires a proto/wire-contract change out of scope for this run; documented in handoff.json",
+    "new_llm_json_finding": "medium severity, non-blocking; real/reproducible malformed-JSON completions from llama3.1:8b on ~7/11 real documents; segment.py's parser intentionally not modified per scope; forwarded to .cdr/memory/pending.md",
+    "regression_risk": "none identified -- full agents/ pytest suite (170 passed), go test ./... -race (all packages ok), go vet (clean), ruff check (clean)"
+  }
+}

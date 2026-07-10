@@ -1,0 +1,50 @@
+{
+  "subtask": "issue-19-3.5.2-e2e-smoke-real-enron",
+  "criteria": [
+    {
+      "criterion": "Real (non-fixture) small Enron sample sourced with verifiable provenance",
+      "covered_by": "data/fixtures/enron_real_sample/*.txt + PROVENANCE.md",
+      "status": "met"
+    },
+    {
+      "criterion": "F4 assessed; fixed if simple, else documented as a clear blocker",
+      "covered_by": "architecture-discovery.md F4 section, handoff.json",
+      "status": "met (blocked, documented -- proto/wire-contract change required, out of scope)"
+    },
+    {
+      "criterion": "Real (non-mocked) local engine instance driven end-to-end",
+      "covered_by": "engine/cmd/smokeserver/main.go + agents/ingestion/test_e2e_smoke.py's running_engine fixture (real subprocess, real gRPC channel)",
+      "status": "met"
+    },
+    {
+      "criterion": "Full pipeline exercised: dataset loader -> normalize -> shortlist -> segment -> PutSegment/entity/edge wiring",
+      "covered_by": "agents/ingestion/test_e2e_smoke.py::test_full_pipeline_smoke",
+      "status": "met"
+    },
+    {
+      "criterion": "Assertions on real observable outcomes (no unhandled errors, files discoverable or F4's absence-of-discoverability observed, distinct fileIDs)",
+      "covered_by": "test_full_pipeline_smoke's 5 final assertions",
+      "status": "met"
+    },
+    {
+      "criterion": "segment.py core logic, propose_split.py, shortlist.py core logic left untouched",
+      "covered_by": "impact-analysis.json out_of_scope_untouched list; git diff shows no modifications to these files",
+      "status": "met"
+    },
+    {
+      "criterion": "Full regression suite green (agents/ pytest, go test -race, go vet, ruff)",
+      "covered_by": "self-consistency.md test run output",
+      "status": "met (170 passed / all Go packages ok / vet clean / ruff clean)"
+    },
+    {
+      "criterion": "Exactly one local commit, no push, no GitHub-state change",
+      "covered_by": "single commit created at end of this run; no push/gh mutation performed",
+      "status": "met"
+    },
+    {
+      "criterion": "handoff.json flags issue #19 final-subtask stop-and-ask + milestone #5 closability",
+      "covered_by": "handoff.json",
+      "status": "met"
+    }
+  ]
+}

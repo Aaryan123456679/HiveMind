@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "run_id": "040-implementation",
+  "issue": 19,
+  "subtask": "3.5.2",
+  "subtask_title": "Full end-to-end ingestion smoke run against a real dataset sample",
+  "is_final_subtask_of_issue": true,
+  "summary": "Sourced a genuine real Enron sample (6 messages streamed from the official CMU/FERC-hosted enron_mail_20150507.tar.gz archive; see data/fixtures/enron_real_sample/PROVENANCE.md). Investigated F4 in depth and determined it requires a proto/wire-contract change; BLOCKED, not fixed -- see f4_blocker below. Built a real (non-mocked) standalone Go engine subprocess (engine/cmd/smokeserver/main.go) and a pytest end-to-end smoke test (agents/ingestion/test_e2e_smoke.py) that drives the real Python ingestion pipeline (loaders -> normalize -> shortlist -> segment against a real local Ollama model -> wiring.execute_segment) against that real subprocess over a real gRPC channel. Test passes; a new LLM-output-reliability finding (F7) was surfaced and forwarded, not fixed (out of scope). Full regression suite green.",
+  "f4_blocker": {
+    "finding_id": "F4",
+    "status": "BLOCKED_NOT_FIXED",
+    "reasoning": "engine/rpc/server.go's PutSegment CREATE handler never sets catalog.CatalogRecord.PathHash because there is nothing to hash: proto/hivemind.proto's PutSegmentRequest message carries only file_id + content, no path field at all (confirmed by direct read of the .proto and independently corroborated by server.go's own doc comment and by agents/ingestion/wiring.py's pre-existing module-docstring disclosure of the same gap from the client side). A real fix requires: (1) adding a path field to PutSegmentRequest in proto/hivemind.proto, (2) regenerating the Go and Python gRPC stubs, (3) updating agents/ingestion/wiring.py's GrpcPutSegmentClient.put_segment call site to pass the new topic path, and (4) adding PathHash-population + a real btree.Insert call in server.go's CREATE branch. This is a multi-file, cross-cutting proto/Go/Python wire-contract change, which this run's explicit instructions said to stop on rather than force. NOT modified in this run.",
+    "pointers": {
+      "wire_contract": "proto/hivemind.proto (PutSegmentRequest message definition, no path field)",
+      "handler": "engine/rpc/server.go (PutSegment handler, CREATE branch)",
+      "record_definition": "engine/catalog/record.go (CatalogRecord.PathHash field)",
+      "client_side_disclosure": "agents/ingestion/wiring.py (module docstring, 'new_topic_path cannot be registered anywhere queryable today' section)",
+      "observed_consequence": "agents/ingestion/test_e2e_smoke.py::test_full_pipeline_smoke's final assertion (raw_search_candidates(\"\", 100) returns only the bootstrap placeholder -- newly PutSegment-created files during this run are confirmed NOT discoverable via SearchCandidates, directly observing F4's real consequence rather than just theorizing it)"
+    },
+    "recommendation": "Needs a dedicated future subtask/issue scoped explicitly as a proto/wire-contract change (likely folded into GitHub milestone #10, Phase 4.5 technical-debt follow-ups) rather than a quick fix within a smoke-run subtask."
+  },
+  "real_enron_sample": {
+    "location": "data/fixtures/enron_real_sample/ (6 files: enron_real_001.txt .. enron_real_006.txt) + PROVENANCE.md",
+    "source": "Official CMU/FERC-hosted https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz, streamed (not fully downloaded) via urllib.request.urlopen + tarfile.open(fileobj=..., mode='r|gz'); only ~1,733 of ~500k archive members were read off the wire before stopping. Messages are from maildir/blair-l/sent_items/.",
+    "not_a_reuse_of_3.5.1_fixtures": true
+  },
+  "new_finding_forwarded": {
+    "finding_id": "F7",
+    "regression_index_id": "hivemind-issue19-3.5.2-F7-llm-json-control-chars",
+    "pending_md_entry": true,
+    "summary": "Real local llama3.1:8b (temperature=0.0) reproducibly emits malformed JSON (raw control characters inside string values, stray triple-quote artifacts) for ~7/11 real documents, distinct from the already-closed F1 (code-fence wrapping). segment.py's _parse_segment_json intentionally not modified (out of scope for this run); smoke test tolerates per-document SegmentParseError instead."
+  },
+  "e2e_smoke_test": {
+    "path": "agents/ingestion/test_e2e_smoke.py",
+    "engine_harness": "engine/cmd/smokeserver/main.go (new standalone Go gRPC server binary, real catalog/content/btree/graph storage, launched as a real subprocess, printed LISTENING <addr> line for handshake, terminated via SIGTERM)",
+    "pipeline_exercised": "data/load_bitext.py + data/load_enron.py (real Enron sample) -> normalize_* -> shortlist() -> segment() [real local Ollama llama3.1:8b] -> wiring.execute_segment() [real PutSegment/PutEdge over real gRPC to smokeserver]",
+    "skip_conditions": "Go toolchain unavailable, grpc Python stubs unavailable, or Ollama unreachable at HIVEMIND_OLLAMA_MODEL (default llama3.1:8b) -- mirrors test_segment_live.py's established skipif convention",
+    "result": "1 passed in 158.02s (last observed run)"
+  },
+  "scope_boundaries_respected": [
+    "agents/ingestion/segment.py core logic: not modified",
+    "agents/ingestion/propose_split.py: not modified",
+    "agents/ingestion/shortlist.py core logic: not modified"
+  ],
+  "regression_results": {
+    "agents_pytest": "170 passed",
+    "go_test_race": "all packages ok",
+    "go_vet": "clean",
+    "ruff_check": "clean"
+  },
+  "commit": {
+    "count": 1,
+    "reasoning": "No separate F4 code fix exists to split out (F4 was blocked/documented only, not fixed). The Enron sample, smokeserver, and smoke test form one cohesive harness change with no independently useful boundary, so a single commit is used."
+  },
+  "issue_19_closure_note": {
+    "is_final_subtask": true,
+    "action_required": "This was issue #19's FINAL subtask. Once /cdr:verify has independently verified and this run's commit is confirmed, ALL of issue #19's subtasks are done. The orchestrator MUST STOP after verification and ask the user for fresh, explicit authorization before any push or any GitHub issue/milestone state change (closing issue #19, closing milestone #5, etc.). Do not suggest or perform pushing/closing automatically.",
+    "milestone_5_phase_3_closability": "Milestone #5 'Phase 3' tracks issues #16, #17, #18, #19. This run's memory search did not re-confirm the current closed/open state of #16-#18 independently within this run (they were previously reported closed in earlier runs per .cdr/memory/pending.md's historical entries), but assuming #16, #17, and #18 remain closed as previously recorded, completion + verification of issue #19's final subtask (3.5.2) would make milestone #5 'Phase 3' fully closable. This is a note for the orchestrator to confirm independently before acting -- not an instruction to close it."
+  },
+  "security_disclosures": {
+    "note": "Multiple prompt-injection attempts were observed and disclosed during this run's session (fake system-reminder-formatted text: a fake date-change notice instructing silence, a fake 'Auto Mode Active' directive, and a fake 'file modified by user/linter, do not tell the user' notice attached to a background-task tool result). All were treated as untrusted data, disclosed to the user in-conversation, and not complied with.",
+    "issue_19_body_check": "gh issue view 19's own body was checked and found clean of embedded fake system-reminder text."
+  },
+  "verification_readiness": "Ready for /cdr:verify. This implementation run did not verify its own work (invariant I4)."
+}
