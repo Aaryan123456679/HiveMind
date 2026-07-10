@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "013-cdr-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "engine-edge-entity-rpc",
+  "git_head": "456427ea7a6140b26ef7d584e743fb1f099e5c67",
+  "run_key": "cdr-commit:1:engine-edge-entity-rpc:456427ea7a6140b26ef7d584e743fb1f099e5c67",
+  "status": "completed",
+  "last_completed_step": "handoff_written",
+  "started_at": "2026-07-10T21:30:00+05:30",
+  "ended_at": "2026-07-10T21:40:00+05:30"
+}

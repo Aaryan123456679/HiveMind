@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "012-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "issue-18-new-scope-putedge-putentity-lookupentity",
+  "git_head": "456427ea7a6140b26ef7d584e743fb1f099e5c67",
+  "run_key": "sha256(cdr-verify,1,issue-18-new-scope-putedge-putentity-lookupentity,456427ea7a6140b26ef7d584e743fb1f099e5c67,8e90334+79b5d71)",
+  "status": "completed",
+  "last_completed_step": "wrote_verification_and_handoff",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T00:30:00Z"
+}

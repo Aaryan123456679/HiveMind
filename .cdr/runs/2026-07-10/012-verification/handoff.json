@@ -1,0 +1,17 @@
+{
+  "from": "012-verification",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "proto_diff": "proto/hivemind.proto (commit 8e90334, lines ~154-226)",
+    "server_impl": "engine/rpc/server.go (commit 79b5d71, lines ~52-513, new handlers at bottom)",
+    "compact_merge_logic": "engine/graph/compact.go:331-369 (mergeEdges)",
+    "btree_readnode_reserved": "engine/btree/lookup.go:59-62",
+    "btree_prefixscan": "engine/btree/scan.go:41",
+    "new_tests": "engine/rpc/server_test.go:531-816 (TestPutEdgeAndEntityHandlers, 17 subtests)",
+    "integration_tests": "engine/rpc/integration_test.go (new subtests: PutEdge_Compact_GraphNeighbors, PutEntity_LookupEntity_RoundTrip)",
+    "newserver_callsites": ["engine/rpc/server_test.go:191", "engine/rpc/integration_test.go:238"],
+    "python_stubs": "agents/hivemind_pb2.pyi:157-191, agents/hivemind_pb2_grpc.py:72-85"
+  },
+  "regression_entries_appended": ["F5-adversarial-weight-sum-gap"],
+  "next_step": "3.4.4b Python rewiring of agents/ingestion/wiring.py's SegmentWiringClient may proceed against these RPCs."
+}

@@ -1,0 +1,16 @@
+{
+  "from": "013-cdr-commit",
+  "verdict": "PASS_WITH_COMMENTS",
+  "subtask": "engine-edge-entity-rpc",
+  "pointers": {
+    "commit_doc": ".cdr/commits/task-3.4.4-engine-edge-rpc.md",
+    "feature_index_entry": ".cdr/index/feature.jsonl (feature=hivemind-engine-edge-entity-rpc)",
+    "task_index_entry": ".cdr/index/task.jsonl (id=engine-edge-entity-rpc)",
+    "pending_entry": ".cdr/memory/pending.md (F5)",
+    "verification_run": ".cdr/runs/2026-07-10/012-verification",
+    "implementation_commits": ["8e90334cc79a16d6bb5d45a60f9f8c358f394cda", "79b5d71c5233c5ad692fa584d72b8488d64b629e"]
+  },
+  "next_step": "task-3.4.4b: rewire agents/ingestion/wiring.py's SegmentWiringClient to call the new PutEdge/PutEntity/LookupEntity RPCs in place of its current Protocol-only stubs.",
+  "not_pushed": true,
+  "no_github_state_changed": true
+}

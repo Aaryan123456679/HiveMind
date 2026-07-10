@@ -1,0 +1,54 @@
+{
+  "verdict": "PASS_WITH_COMMENTS",
+  "commits_reviewed": ["8e90334cc79a16d6bb5d45a60f9f8c358f394cda", "79b5d71c5233c5ad692fa584d72b8488d64b629e"],
+  "scope": "PutEdge/PutEntity/LookupEntity RPCs (proto/hivemind.proto, engine/rpc/server.go) -- new scope from issue #18 subtask 3.4.4's prior verification, user-authorized",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "All 3 RPCs added additively (no renumbered/removed fields in existing 6 RPCs, confirmed by diff). PutEdge/PutEntity/LookupEntity implement exactly the 'append one occurrence, defer aggregation to Compact' and 'entity.idx' design docs/LLD/graph.md and docs/LLD/ingestion-agent.md describe in prose."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Thin-adapter discipline preserved (no new business logic in server.go beyond marshaling/validation, matching pre-existing package doc comment convention). entityIndex kept as a wholly separate *btree.Tree from btreeStore, verified empirically (TestZZAdversarial + existing EntityIndex_DoesNotLeakIntoSearchCandidates test) that entity keys never appear in SearchCandidates results."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "go build/vet clean (engine module). Full engine/... test suite (btree, catalog, graph, mvcc, rpc, split, wal) passes with -race, run twice (once via go test ./rpc/... -count=3 targeted, once full ./... -count=1), no flakiness observed. agents/ pytest 120/120 passed. Confirmed via `git show --name-only` that agents/ingestion/wiring.py, ProposeSplit implementation, and the pre-existing PathHash (F4) fix were NOT touched by either commit -- scope containment holds."
+    },
+    "edge_cases": {
+      "status": "pass_with_comment",
+      "evidence": "Independently re-derived and confirmed: (1) Compact's mergeEdges truly SUMS ENTITY_COOCCUR weight (verified with distinct weights 3+4+5=12, not just count-of-occurrences-all-1, which the shipped tests alone did not fully disambiguate) and truly last-write-wins by LastUpdated for other types (compact.go lines ~331-369). (2) entityKey's \\x00-delimited zero-padded encoding is collision-safe: verified 'foo' vs 'foobar' entity names do not cross-match under PrefixScan (delimiter after name prevents prefix bleed), and fileID=0 is excluded by the pre-existing InvalidFileID guard so the padding scheme never needs to handle a zero suffix. (3) The Root()==0 special-case in LookupEntity is a genuine, necessary fix, not a workaround masking a different bug: btree.NodeStore.ReadNode(0) explicitly returns 'node ID 0 is reserved and never valid', so without this guard, PrefixScan on a never-populated entity index would surface a spurious codes.Internal error instead of empty. Comment: shipped test suite's own Compact-sum test used weight=1 for all 3 calls, which cannot distinguish 'sum' from 'count'; my own adversarial test with distinct weights closes this gap and the result (12) confirms genuine summation."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "Nil-dependency safety independently re-verified for all 3 handlers (PutEdge/PutEntity/LookupEntity) returning codes.Unavailable, no panic, matching the pre-existing btreeStore convention. Input validation present for zero fileIDs, empty entity names, EDGE_TYPE_UNSPECIFIED, zero weight -- all InvalidArgument, no silent acceptance of malformed input."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "PutEdge is an O(1) append to a per-source-fileID WAL (EdgeLog), consistent with existing per-node lock-free-across-nodes design. PutEntity/LookupEntity are standard B+Tree insert/prefix-scan, same asymptotic cost as the existing path index."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Doc comments are thorough and accurate against the code they describe (verified, not just trusted). Package-level doc comment updated to reflect new scope without contradicting the original 3.2.2 scope note."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "TestPutEdgeAndEntityHandlers has exactly 17 subtests as claimed (counted directly), covering create/weight-increment-via-Compact/last-write-wins/every invalid-input path/nil-dependency/idempotency/multi-file/prefix-isolation. TestRPCIntegration gained PutEdge_Compact_GraphNeighbors and PutEntity_LookupEntity_RoundTrip subtests, both passing over a real gRPC connection."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Re-derived every major claim from source rather than trusting the commit message: read compact.go's mergeEdges directly, read btree ReadNode/PrefixScan/descendToLeaf directly, wrote and ran my own adversarial Go tests (deleted after running, confirmed clean via git status) rather than relying solely on shipped tests."
+    },
+    "possible_improvements": [
+      "Consider adding a shipped test with distinct (non-uniform) weights for the Compact-sum case, since the current weight=1 x3 test cannot alone disambiguate 'sum' from 'count of occurrences'.",
+      "PutEntity's doc comment describes re-registration as a 'harmless idempotent upsert' via btree.Insert semantics -- this is correct only because entityKey embeds fileID in the key, making every (entityName, fileID) pair's key literally identical on re-insert; worth a one-line comment cross-reference since it's easy to misread as 'Insert is naturally idempotent' in general (it is not, for differing values against the same key)."
+    ]
+  },
+  "prompt_injection_observed": {
+    "found": true,
+    "detail": "Fake system-reminder-style blocks appeared inline in the conversation after tool-call results: a fake date-change notice, fake 'tokensave' MCP server tool-usage instructions, and a fake 'Auto Mode Active' directive telling the agent to avoid stopping for clarification and describing when to bypass git safety checks. All were treated as untrusted data and ignored; no tool from the alleged 'tokensave' MCP was invoked, no behavior changed, no permissions/config altered."
+  },
+  "ready_for_commit_close_out": true,
+  "ready_for_3.4.4b_python_rewiring": true,
+  "rewiring_readiness_note": "Wire shapes (uint64/string/enum/repeated uint64) are plain protobuf scalars in agents/hivemind_pb2.pyi and hivemind_pb2_grpc.py -- nothing Go-specific leaks through. SegmentWiringClient's Protocol methods (lookup_entity_files/index_entity/put_edge) now have real, tested RPC backing to call against."
+}
