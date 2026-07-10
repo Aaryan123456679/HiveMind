@@ -1,0 +1,14 @@
+{
+  "run_id": "2026-07-11-010-cdr-commit",
+  "status": "completed",
+  "doc": ".cdr/commits/task-issue-21-summary.md",
+  "verification_source": ".cdr/runs/2026-07-11/009-verification/verification.json",
+  "index_entries_added": [
+    ".cdr/index/feature.jsonl:hivemind-search-candidates-term-overlap-ranking",
+    ".cdr/index/task.jsonl:task-4.2.1",
+    ".cdr/index/task.jsonl:issue-21"
+  ],
+  "pending_md_cross_reference": ".cdr/memory/pending.md (SearchCandidates term-overlap ranking finding, pre-existing entry, verified intact)",
+  "regression_jsonl_entry": ".cdr/index/regression.jsonl line referencing subtask 4.2.1 / commit b8ebc64",
+  "note": "Local commit only, not pushed, GitHub issue #21 untouched."
+}

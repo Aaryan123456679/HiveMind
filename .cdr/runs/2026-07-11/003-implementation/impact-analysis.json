@@ -1,0 +1,25 @@
+{
+  "subtask": "4.1.2",
+  "issue": 20,
+  "milestone": "Phase 4: Query pipeline",
+  "files_added": [
+    "agents/llm/gemini_client.py",
+    "agents/llm/test_gemini_client.py"
+  ],
+  "files_modified": [],
+  "files_deleted": [],
+  "dependencies_added": [],
+  "callers_impacted": [],
+  "concurrent_work_conflict_check": {
+    "conflicting_subtask": "4.1.1",
+    "conflicting_files": ["agents/llm/openrouter_client.py", "agents/llm/test_openrouter_client.py"],
+    "overlap_with_this_subtask": false,
+    "note": "4.1.1 already committed at 6109d13 by a concurrent agent before this run started; this run does not touch those files."
+  },
+  "out_of_scope_confirmed_not_touched": [
+    "agents/llm/factory.py",
+    "agents/llm/test_provider_selection.py"
+  ],
+  "risk_level": "low",
+  "risk_notes": "Purely additive new files; no existing call sites (agents/ingestion/, agents/query/) reference gemini_client.py yet, so no downstream breakage possible."
+}
