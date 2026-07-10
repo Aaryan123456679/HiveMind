@@ -3,11 +3,14 @@
 Shared `.proto` definitions for the gRPC boundary between the Go storage
 engine (`engine/rpc`) and the Python ML/agent service (`agents/`).
 
-`hivemind.proto` (task-3.2.1, issue #16) defines the single `HiveMind`
-service with all six RPCs `docs/LLD/rpc.md` documents: `PutSegment`,
+`hivemind.proto` (task-3.2.1, issue #16) originally defined the single
+`HiveMind` service with six RPCs `docs/LLD/rpc.md` documents: `PutSegment`,
 `GetFile`, `ReadPartial`, `GraphNeighbors`, `SearchCandidates` (Go engine as
 server) and `ProposeSplit` (Go engine as client of the Python agent
-service).
+service). `PutEdge`, `PutEntity`, `LookupEntity` were added later (Go engine
+as server for all three) as user-authorized new scope discovered during
+issue #18 subtask 3.4.4's verification -- see `docs/LLD/rpc.md`'s "Exposed
+RPCs" section.
 
 Generated Go/Python stubs ARE checked in (not regenerated at build time),
 consistent with this repo's tooling-light setup — no new Makefile/CI codegen

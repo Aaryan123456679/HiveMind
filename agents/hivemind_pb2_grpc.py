@@ -26,11 +26,11 @@ if _version_not_supported:
 
 
 class HiveMindStub:
-    """HiveMind is the single shared gRPC service exposing all six RPCs this
+    """HiveMind is the single shared gRPC service exposing every RPC this
     contract defines. A single service (rather than one per RPC-group) keeps
-    task-3.2.2/3.2.3/3.2.4/3.2.5's generated client/server surface simple --
-    engine/rpc/'s server implements HiveMindServer; engine/split/'s
-    proposer_grpc.go (task-3.2.3) only calls HiveMindClient.ProposeSplit.
+    the generated client/server surface simple -- engine/rpc/'s server
+    implements HiveMindServer; engine/split/'s proposer_grpc.go (task-3.2.3)
+    only calls HiveMindClient.ProposeSplit.
     """
 
     def __init__(self, channel):
@@ -69,14 +69,29 @@ class HiveMindStub:
                 request_serializer=hivemind__pb2.ProposeSplitRequest.SerializeToString,
                 response_deserializer=hivemind__pb2.ProposeSplitResponse.FromString,
                 _registered_method=True)
+        self.PutEdge = channel.unary_unary(
+                '/hivemind.v1.HiveMind/PutEdge',
+                request_serializer=hivemind__pb2.PutEdgeRequest.SerializeToString,
+                response_deserializer=hivemind__pb2.PutEdgeResponse.FromString,
+                _registered_method=True)
+        self.PutEntity = channel.unary_unary(
+                '/hivemind.v1.HiveMind/PutEntity',
+                request_serializer=hivemind__pb2.PutEntityRequest.SerializeToString,
+                response_deserializer=hivemind__pb2.PutEntityResponse.FromString,
+                _registered_method=True)
+        self.LookupEntity = channel.unary_unary(
+                '/hivemind.v1.HiveMind/LookupEntity',
+                request_serializer=hivemind__pb2.LookupEntityRequest.SerializeToString,
+                response_deserializer=hivemind__pb2.LookupEntityResponse.FromString,
+                _registered_method=True)
 
 
 class HiveMindServicer:
-    """HiveMind is the single shared gRPC service exposing all six RPCs this
+    """HiveMind is the single shared gRPC service exposing every RPC this
     contract defines. A single service (rather than one per RPC-group) keeps
-    task-3.2.2/3.2.3/3.2.4/3.2.5's generated client/server surface simple --
-    engine/rpc/'s server implements HiveMindServer; engine/split/'s
-    proposer_grpc.go (task-3.2.3) only calls HiveMindClient.ProposeSplit.
+    the generated client/server surface simple -- engine/rpc/'s server
+    implements HiveMindServer; engine/split/'s proposer_grpc.go (task-3.2.3)
+    only calls HiveMindClient.ProposeSplit.
     """
 
     def PutSegment(self, request, context):
@@ -115,6 +130,24 @@ class HiveMindServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PutEdge(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PutEntity(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def LookupEntity(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_HiveMindServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -148,6 +181,21 @@ def add_HiveMindServicer_to_server(servicer, server):
                     request_deserializer=hivemind__pb2.ProposeSplitRequest.FromString,
                     response_serializer=hivemind__pb2.ProposeSplitResponse.SerializeToString,
             ),
+            'PutEdge': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutEdge,
+                    request_deserializer=hivemind__pb2.PutEdgeRequest.FromString,
+                    response_serializer=hivemind__pb2.PutEdgeResponse.SerializeToString,
+            ),
+            'PutEntity': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutEntity,
+                    request_deserializer=hivemind__pb2.PutEntityRequest.FromString,
+                    response_serializer=hivemind__pb2.PutEntityResponse.SerializeToString,
+            ),
+            'LookupEntity': grpc.unary_unary_rpc_method_handler(
+                    servicer.LookupEntity,
+                    request_deserializer=hivemind__pb2.LookupEntityRequest.FromString,
+                    response_serializer=hivemind__pb2.LookupEntityResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'hivemind.v1.HiveMind', rpc_method_handlers)
@@ -157,11 +205,11 @@ def add_HiveMindServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class HiveMind:
-    """HiveMind is the single shared gRPC service exposing all six RPCs this
+    """HiveMind is the single shared gRPC service exposing every RPC this
     contract defines. A single service (rather than one per RPC-group) keeps
-    task-3.2.2/3.2.3/3.2.4/3.2.5's generated client/server surface simple --
-    engine/rpc/'s server implements HiveMindServer; engine/split/'s
-    proposer_grpc.go (task-3.2.3) only calls HiveMindClient.ProposeSplit.
+    the generated client/server surface simple -- engine/rpc/'s server
+    implements HiveMindServer; engine/split/'s proposer_grpc.go (task-3.2.3)
+    only calls HiveMindClient.ProposeSplit.
     """
 
     @staticmethod
@@ -316,6 +364,87 @@ class HiveMind:
             '/hivemind.v1.HiveMind/ProposeSplit',
             hivemind__pb2.ProposeSplitRequest.SerializeToString,
             hivemind__pb2.ProposeSplitResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutEdge(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hivemind.v1.HiveMind/PutEdge',
+            hivemind__pb2.PutEdgeRequest.SerializeToString,
+            hivemind__pb2.PutEdgeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutEntity(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hivemind.v1.HiveMind/PutEntity',
+            hivemind__pb2.PutEntityRequest.SerializeToString,
+            hivemind__pb2.PutEntityResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LookupEntity(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hivemind.v1.HiveMind/LookupEntity',
+            hivemind__pb2.LookupEntityRequest.SerializeToString,
+            hivemind__pb2.LookupEntityResponse.FromString,
             options,
             channel_credentials,
             insecure,

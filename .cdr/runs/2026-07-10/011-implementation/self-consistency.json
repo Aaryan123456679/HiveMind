@@ -1,0 +1,35 @@
+{
+  "note": "Internal sanity check only (build green, matrix covered). This is NOT verification -- self-verification (invariant I4) is explicitly out of scope for this agent; /cdr:verify performs real verification.",
+  "build": {
+    "cmd": "cd engine && go build ./...",
+    "result": "clean, no output"
+  },
+  "vet": {
+    "cmd": "cd engine && go vet ./...",
+    "result": "clean, no output"
+  },
+  "unit_and_integration_tests": {
+    "cmd": "cd engine && go test ./... -race",
+    "result": "PASS",
+    "packages": [
+      "engine", "engine/btree", "engine/catalog", "engine/graph", "engine/mvcc",
+      "engine/rpc", "engine/split", "engine/wal"
+    ],
+    "notable_new_tests": [
+      "TestPutEdgeAndEntityHandlers (engine/rpc/server_test.go): 17 subtests covering V1-V15",
+      "TestRPCIntegration/PutEdge_Compact_GraphNeighbors (engine/rpc/integration_test.go): V16",
+      "TestRPCIntegration/PutEntity_LookupEntity_RoundTrip (engine/rpc/integration_test.go): V17"
+    ],
+    "two_bugs_found_and_fixed_during_self_consistency_pass": [
+      "Test assumption error (not a product bug): initial PutEdge_WeightIncrement_ViaCompact/PutEdge_Compact_GraphNeighbors tests wrongly assumed a fixture-seeded ENTITY_COOCCUR edge would be folded in by graph.Compact; corrected once observed that f.graphPath/compacted-from-log is a fresh path distinct from the fixture's in-memory adjacency, so there is no pre-existing on-disk snapshot to sum with -- expected weight is exactly the sum of PutEdge calls in the test, not +7.",
+      "Real product gap in server.go's LookupEntity: PrefixScan does not special-case btree's reservedNodeID (0, i.e. an entity index that has never had anything inserted), and surfaced as codes.Internal instead of an empty result for LookupEntity_NotFound on a freshly-created (never-populated) entity index. Fixed by having LookupEntity check s.entityIndex.Root() == 0 and return an empty LookupEntityResponse{} directly in that case, before calling PrefixScan -- consistent with LookupEntity's documented not-found=empty-not-error contract."
+    ]
+  },
+  "python_side": {
+    "cmd": "agents/.venv/bin/pytest agents/ -q",
+    "result": "PASS (120 passed)",
+    "confirms": "regenerated hivemind_pb2*.py/.pyi stubs did not break any existing Python test; agents/ingestion/wiring.py has zero diff (git diff --stat confirms empty output)"
+  },
+  "validation_matrix_coverage": "All 19 rows (V1-V19) in validation-matrix.json exercised by the tests listed above plus the existing (unmodified) Python test suite for V19.",
+  "self_verification_performed": false
+}

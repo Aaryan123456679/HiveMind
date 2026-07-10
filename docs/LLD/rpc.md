@@ -12,7 +12,11 @@ Server handler implementations for `PutSegment`/`GetFile`/`ReadPartial`/`GraphNe
 `ProposeSplit`'s *server* side remains the generated `Unimplemented` stub: the real
 LLM-backed Python ingestion-agent service is out of scope for issue #16 (see issue #18).
 Per-call latency/cost interceptor (task-3.2.4) and the cross-process integration test
-(task-3.2.5) are not yet implemented. See [HLD.md](../HLD.md) for system context.
+(task-3.2.5) are implemented. `PutEdge`/`PutEntity`/`LookupEntity` were added later, as
+user-authorized new scope discovered during issue #18 subtask 3.4.4's verification (not
+one of issue #18's own numbered subtasks) -- see the "Exposed RPCs" section below and
+`engine/rpc/server.go`'s doc comments for their handlers. See [HLD.md](../HLD.md) for
+system context.
 
 ## Purpose
 
@@ -37,6 +41,18 @@ and — for split proposals — acting as a gRPC *client* of the Python agent se
 - `GraphNeighbors` — graph traversal, delegates to [graph.md](graph.md).
 - `SearchCandidates` — non-LLM candidate topic search consumed by the Python
   [query-agent](query-agent.md)'s topic-selector.
+- `PutEdge` — appends one occurrence of a graph edge (`ENTITY_COOCCUR`, `LLM_ASSERTED`,
+  `SPLIT_SIBLING`, or `REDIRECT`) between two fileIDs to `engine/graph`'s per-node edge log
+  (`EdgeLog.AppendEdge`). Weight-increment/dedup semantics across repeated occurrences are
+  performed later, by `engine/graph.Compact` (already implemented, task-3.1.3) -- `PutEdge`
+  itself does not sum weights. New scope, added during issue #18 subtask 3.4.4's
+  verification (see [graph.md](graph.md)'s "Edge shape").
+- `PutEntity` / `LookupEntity` — register/read the `entity.idx` association between an
+  entity name and one or more fileIDs (see [ingestion-agent.md](ingestion-agent.md)),
+  backed by a dedicated `engine/btree` tree keyed under a reserved
+  `"\x00entity\x00<name>\x00<fileID>"` prefix (see `engine/rpc/server.go`'s `PutEntity`/
+  `LookupEntity` doc comments for the exact key format and why a separate tree from the
+  path index is used). New scope, added during issue #18 subtask 3.4.4's verification.
 
 ## Consumed RPC (client side)
 

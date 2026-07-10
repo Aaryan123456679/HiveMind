@@ -153,3 +153,43 @@ class ProposeSplitResponse(_message.Message):
     files: _containers.RepeatedCompositeFieldContainer[SplitFileProposal]
     redirect_summary: str
     def __init__(self, files: _Optional[_Iterable[_Union[SplitFileProposal, _Mapping]]] = ..., redirect_summary: _Optional[str] = ...) -> None: ...
+
+class PutEdgeRequest(_message.Message):
+    __slots__ = ("source_file_id", "target_file_id", "edge_type", "weight")
+    SOURCE_FILE_ID_FIELD_NUMBER: _ClassVar[int]
+    TARGET_FILE_ID_FIELD_NUMBER: _ClassVar[int]
+    EDGE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    WEIGHT_FIELD_NUMBER: _ClassVar[int]
+    source_file_id: int
+    target_file_id: int
+    edge_type: EdgeType
+    weight: int
+    def __init__(self, source_file_id: _Optional[int] = ..., target_file_id: _Optional[int] = ..., edge_type: _Optional[_Union[EdgeType, str]] = ..., weight: _Optional[int] = ...) -> None: ...
+
+class PutEdgeResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class PutEntityRequest(_message.Message):
+    __slots__ = ("entity_name", "file_id")
+    ENTITY_NAME_FIELD_NUMBER: _ClassVar[int]
+    FILE_ID_FIELD_NUMBER: _ClassVar[int]
+    entity_name: str
+    file_id: int
+    def __init__(self, entity_name: _Optional[str] = ..., file_id: _Optional[int] = ...) -> None: ...
+
+class PutEntityResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class LookupEntityRequest(_message.Message):
+    __slots__ = ("entity_name",)
+    ENTITY_NAME_FIELD_NUMBER: _ClassVar[int]
+    entity_name: str
+    def __init__(self, entity_name: _Optional[str] = ...) -> None: ...
+
+class LookupEntityResponse(_message.Message):
+    __slots__ = ("file_ids",)
+    FILE_IDS_FIELD_NUMBER: _ClassVar[int]
+    file_ids: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, file_ids: _Optional[_Iterable[int]] = ...) -> None: ...

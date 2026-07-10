@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "subtask": "issue-18-new-scope/edge-and-entity-idx-rpcs",
+  "files_to_modify": [
+    "proto/hivemind.proto",
+    "proto/README.md",
+    "docs/LLD/rpc.md",
+    "engine/rpc/server.go",
+    "engine/rpc/server_test.go",
+    "engine/rpc/integration_test.go"
+  ],
+  "files_to_regenerate": [
+    "engine/rpc/gen/hivemind.pb.go",
+    "engine/rpc/gen/hivemind_grpc.pb.go",
+    "agents/hivemind_pb2.py",
+    "agents/hivemind_pb2_grpc.py",
+    "agents/hivemind_pb2.pyi"
+  ],
+  "files_new": [],
+  "files_new_note": "Originally planned a new engine/rpc/edge_entity_test.go; actual implementation instead extended the existing fixture/test files (engine/rpc/server_test.go's TestPutEdgeAndEntityHandlers, engine/rpc/integration_test.go's new PutEdge_Compact_GraphNeighbors/PutEntity_LookupEntity_RoundTrip subtests) since both files' existing fixture helpers (newFixture/newIntegrationFixture) already needed direct edits for the NewServer signature change, making a separate test file an unnecessary split.",
+  "files_explicitly_not_touched": [
+    "agents/ingestion/wiring.py",
+    "agents/ingestion/test_segment_wiring.py",
+    "engine/catalog/record.go",
+    "engine/rpc/server.go's PutSegment/GetFile/ReadPartial/GraphNeighbors/SearchCandidates handlers (read, not modified beyond adding new fields to Server struct/NewServer signature)"
+  ],
+  "call_sites_needing_signature_update": [
+    "engine/rpc/server_test.go:149 NewServer(cat, cs, idAlloc, g, store, rootNodeID)",
+    "engine/rpc/integration_test.go:197 rpc.NewServer(cat, cs, idAlloc, g, store, rootNodeID)"
+  ],
+  "breaking_changes": [
+    "NewServer gains two new trailing parameters (edgeLog *graph.EdgeLog, entityIndex *btree.Tree), both nil-valid -- matches existing btreeStore nil-valid convention. Both existing call sites (both in-repo tests) updated in this same commit."
+  ],
+  "risk_notes": [
+    "Proto change is additive only (3 new RPCs, 2 new message pairs, service line updated) -- no existing field/RPC renumbered or removed, so existing generated stubs for the original 6 RPCs are binary/wire compatible.",
+    "Python stub regeneration confirmed to not affect agents/ingestion/wiring.py (that file uses PutSegment/SearchCandidates only, via the lazy-import GrpcPutSegmentClient/GrpcSearchCandidatesClient pattern) -- full agents/ pytest run confirms this post-regen.",
+    "entityIndex uses a brand-new, separate *btree.Tree/NodeStore/NodeAllocator triple in tests -- does not share the existing path-index tree fixture, avoiding any risk to already-verified SearchCandidates behavior."
+  ]
+}

@@ -3,8 +3,8 @@
 // docs/LLD/rpc.md for the design notes this file implements (task-3.2.1,
 // GitHub issue #16, Epic Phase 3).
 //
-// Six RPCs, matching docs/LLD/rpc.md's "Exposed RPCs" (server-side, Go
-// engine as server) and "Consumed RPC" (client-side, Go engine as client of
+// Originally six RPCs, matching docs/LLD/rpc.md's "Exposed RPCs" (server-side,
+// Go engine as server) and "Consumed RPC" (client-side, Go engine as client of
 // the Python agent service) sections exactly:
 //   - PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates:
 //     implemented by engine/rpc/'s server (task-3.2.2), called by api/ and
@@ -13,9 +13,17 @@
 //     called by engine/split/ (task-3.2.3, replacing task-2b.2's
 //     MockSplitProposer).
 //
+// PutEdge, PutEntity, LookupEntity were added later, as user-authorized new
+// scope discovered during issue #18 subtask 3.4.4's verification (not one of
+// issue #18's own numbered subtasks): 3.4.4's Python-side segmentation-agent
+// wiring (agents/ingestion/wiring.py) needs a way to write graph edges and
+// maintain an entity->file index, and neither existed anywhere in this
+// contract or the Go engine before this addition. See docs/LLD/graph.md's
+// "Edge shape" and docs/LLD/ingestion-agent.md's "entity.idx" prose for the
+// intended shape these three RPCs implement.
+//
 // This file defines contracts only: no server/client implementation lives
-// here (see engine/rpc/server.go for 3.2.2, engine/split/proposer_grpc.go
-// for 3.2.3).
+// here (see engine/rpc/server.go for the server-side handlers).
 syntax = "proto3";
 
 package hivemind.v1;
@@ -154,11 +162,57 @@ message ProposeSplitResponse {
   string redirect_summary = 2;
 }
 
-// HiveMind is the single shared gRPC service exposing all six RPCs this
+// PutEdge creates or increments a graph edge of edge_type between
+// source_file_id and target_file_id. This does not implement "increment"
+// arithmetic itself: it appends one occurrence (source_file_id, {
+// target_file_id, edge_type, weight, now }) to engine/graph's per-node edge
+// log (see engine/graph/edgelog.go's EdgeLog.AppendEdge). Weight aggregation
+// across repeated occurrences of the same (source, target, ENTITY_COOCCUR)
+// triple -- summing weights, taking the max LastUpdated -- is performed by
+// engine/graph.Compact, already implemented (task-3.1.3); every other edge
+// type is deduplicated by Compact to the most-recently-observed occurrence
+// rather than summed, per docs/LLD/graph.md. See engine/rpc/server.go's
+// PutEdge doc comment for the full rationale.
+message PutEdgeRequest {
+  uint64 source_file_id = 1;
+  uint64 target_file_id = 2;
+  // edge_type must not be EDGE_TYPE_UNSPECIFIED.
+  EdgeType edge_type = 3;
+  // weight is this call's own occurrence weight (typically 1 for a single
+  // co-occurrence observation), not a running total -- must be > 0.
+  uint32 weight = 4;
+}
+
+message PutEdgeResponse {}
+
+// PutEntity registers file_id as associated with entity_name in the
+// "entity.idx" concept described by docs/LLD/ingestion-agent.md ("entities
+// feed entity.idx"). See engine/rpc/server.go's PutEntity doc comment for
+// the B+Tree-backed storage mechanism. Re-registering the same
+// (entity_name, file_id) pair is a harmless, idempotent no-op.
+message PutEntityRequest {
+  string entity_name = 1;
+  uint64 file_id = 2;
+}
+
+message PutEntityResponse {}
+
+// LookupEntity returns every file_id previously registered (via PutEntity)
+// against entity_name, in ascending file_id order. An entity_name with no
+// registered files returns an empty (not error) result.
+message LookupEntityRequest {
+  string entity_name = 1;
+}
+
+message LookupEntityResponse {
+  repeated uint64 file_ids = 1;
+}
+
+// HiveMind is the single shared gRPC service exposing every RPC this
 // contract defines. A single service (rather than one per RPC-group) keeps
-// task-3.2.2/3.2.3/3.2.4/3.2.5's generated client/server surface simple --
-// engine/rpc/'s server implements HiveMindServer; engine/split/'s
-// proposer_grpc.go (task-3.2.3) only calls HiveMindClient.ProposeSplit.
+// the generated client/server surface simple -- engine/rpc/'s server
+// implements HiveMindServer; engine/split/'s proposer_grpc.go (task-3.2.3)
+// only calls HiveMindClient.ProposeSplit.
 service HiveMind {
   rpc PutSegment(PutSegmentRequest) returns (PutSegmentResponse);
   rpc GetFile(GetFileRequest) returns (GetFileResponse);
@@ -166,4 +220,7 @@ service HiveMind {
   rpc GraphNeighbors(GraphNeighborsRequest) returns (GraphNeighborsResponse);
   rpc SearchCandidates(SearchCandidatesRequest) returns (SearchCandidatesResponse);
   rpc ProposeSplit(ProposeSplitRequest) returns (ProposeSplitResponse);
+  rpc PutEdge(PutEdgeRequest) returns (PutEdgeResponse);
+  rpc PutEntity(PutEntityRequest) returns (PutEntityResponse);
+  rpc LookupEntity(LookupEntityRequest) returns (LookupEntityResponse);
 }

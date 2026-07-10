@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {"id": "V1", "desc": "PutEdge create: single ENTITY_COOCCUR edge appended, visible via EdgeLog.ReadNode", "covered_by": "server_test.go PutEdge_Create"},
+    {"id": "V2", "desc": "PutEdge weight-increment: two PutEdge calls same (source,target,ENTITY_COOCCUR) -> Compact sums weight", "covered_by": "server_test.go PutEdge_WeightIncrement_ViaCompact"},
+    {"id": "V3", "desc": "PutEdge LLM_ASSERTED: two calls -> Compact dedups (last-write-wins), not summed", "covered_by": "server_test.go PutEdge_LLMAsserted_LastWriteWins"},
+    {"id": "V4", "desc": "PutEdge invalid: source_file_id==0 -> InvalidArgument", "covered_by": "server_test.go PutEdge_ZeroSourceFileID"},
+    {"id": "V5", "desc": "PutEdge invalid: target_file_id==0 -> InvalidArgument", "covered_by": "server_test.go PutEdge_ZeroTargetFileID"},
+    {"id": "V6", "desc": "PutEdge invalid: EDGE_TYPE_UNSPECIFIED -> InvalidArgument", "covered_by": "server_test.go PutEdge_UnspecifiedEdgeType"},
+    {"id": "V7", "desc": "PutEdge invalid: weight==0 -> InvalidArgument", "covered_by": "server_test.go PutEdge_ZeroWeight"},
+    {"id": "V8", "desc": "PutEdge with nil edgeLog -> Unavailable, not panic", "covered_by": "server_test.go PutEdge_NilEdgeLog"},
+    {"id": "V9", "desc": "PutEntity + LookupEntity round trip: single file", "covered_by": "server_test.go PutEntity_LookupEntity_SingleFile"},
+    {"id": "V10", "desc": "PutEntity twice with same (entity,file) is idempotent upsert", "covered_by": "server_test.go PutEntity_Idempotent"},
+    {"id": "V11", "desc": "PutEntity multiple files under same entity -> LookupEntity returns all, ascending fileID order", "covered_by": "server_test.go PutEntity_MultipleFiles"},
+    {"id": "V12", "desc": "LookupEntity for never-registered entity -> empty result, not error", "covered_by": "server_test.go LookupEntity_NotFound"},
+    {"id": "V13", "desc": "PutEntity/LookupEntity invalid: empty entity_name -> InvalidArgument", "covered_by": "server_test.go PutEntity_EmptyName / LookupEntity_EmptyName"},
+    {"id": "V14", "desc": "PutEntity with nil entityIndex -> Unavailable, not panic", "covered_by": "server_test.go PutEntity_NilEntityIndex"},
+    {"id": "V15", "desc": "Entity index keys never appear in SearchCandidates results (namespace isolation)", "covered_by": "server_test.go EntityIndex_DoesNotLeakIntoSearchCandidates"},
+    {"id": "V16", "desc": "Cross-process integration: PutEdge -> Compact -> GraphNeighbors reflects summed weight", "covered_by": "integration_test.go PutEdge_Compact_GraphNeighbors"},
+    {"id": "V17", "desc": "Cross-process integration: PutEntity -> LookupEntity round trip via real gRPC client", "covered_by": "integration_test.go PutEntity_LookupEntity"},
+    {"id": "V18", "desc": "Existing 6 RPCs unaffected by Server struct/NewServer signature change", "covered_by": "existing TestRPCServerHandlers / TestRPCIntegration continue passing unmodified in behavior"},
+    {"id": "V19", "desc": "Python stubs regenerate cleanly and agents/ pytest suite still passes", "covered_by": "manual: agents/.venv/bin/pytest agents/ -q"}
+  ]
+}
