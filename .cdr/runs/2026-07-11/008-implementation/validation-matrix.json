@@ -1,0 +1,89 @@
+{
+  "subtask": "4.2.1",
+  "matrix": [
+    {
+      "id": "V1",
+      "dimension": "acceptance_criteria",
+      "case": "Multi-term query ranks candidates by term overlap, higher overlap first",
+      "test": "TestSearchCandidates/RanksByTermOverlap (new)",
+      "expected": "docs/beta/graph-database (2/2 terms) before docs/alpha/graph-theory (1/2) before docs/gamma/unrelated-topic (0/2)"
+    },
+    {
+      "id": "V2",
+      "dimension": "acceptance_criteria",
+      "case": "Delegation still goes through btree.PrefixScan (not some other index)",
+      "test": "TestSearchCandidates/RanksByTermOverlap (new) -- fixture only has a btree, no other store backing candidates",
+      "expected": "candidates set == PrefixScan(query-prefix) filtered set, just reordered"
+    },
+    {
+      "id": "V3",
+      "dimension": "backward_compat",
+      "case": "Empty query is a ranking no-op, preserving shortlist()'s pool-retrieval contract",
+      "test": "TestSearchCandidates/EmptyQueryPreservesPrefixScanOrder (new)",
+      "expected": "resp order == raw btree.PrefixScan(store, root, \"\") order"
+    },
+    {
+      "id": "V4",
+      "dimension": "acceptance_criteria",
+      "case": "MaxResults caps the RANKED (not raw) list -- top-K semantics",
+      "test": "TestSearchCandidates/MaxResultsCapsRankedList (new)",
+      "expected": "single returned candidate is the highest-scoring match, not just any PrefixScan-order match"
+    },
+    {
+      "id": "V5",
+      "dimension": "regression",
+      "case": "Existing SearchCandidates subtest (single-prefix match) still passes",
+      "test": "engine/rpc/server_test.go TestRPCServerHandlers/SearchCandidates",
+      "expected": "unchanged -- only one match for \"topics/alpha/\", ranking is irrelevant with a 1-element result set"
+    },
+    {
+      "id": "V6",
+      "dimension": "regression",
+      "case": "max_results cap still returns exactly 1 result for a 2-match prefix",
+      "test": "engine/rpc/server_test.go TestRPCServerHandlers/SearchCandidates_MaxResultsCap",
+      "expected": "unchanged -- count assertion only, no order assertion; both fixture paths score equally for query \"topics/\" so rank-then-cap is stable"
+    },
+    {
+      "id": "V7",
+      "dimension": "regression",
+      "case": "No-match prefix still returns zero results",
+      "test": "engine/rpc/server_test.go TestRPCServerHandlers/SearchCandidates_NoMatches",
+      "expected": "unchanged -- ranking a zero-length slice is a no-op"
+    },
+    {
+      "id": "V8",
+      "dimension": "regression",
+      "case": "Cross-process integration test's SearchCandidates subtest still passes",
+      "test": "engine/rpc/integration_test.go TestRPCIntegration/SearchCandidates",
+      "expected": "unchanged -- test sorts both got/want path lists before comparing, so is order-independent"
+    },
+    {
+      "id": "V9",
+      "dimension": "error_handling",
+      "case": "negative max_results still rejected",
+      "test": "covered by existing TestRPCServerHandlers table-driven error cases (grep-confirmed during implementation) -- not re-tested in new file, no regression expected since that code path is untouched",
+      "expected": "codes.InvalidArgument"
+    },
+    {
+      "id": "V10",
+      "dimension": "error_handling",
+      "case": "nil btreeStore degraded mode still returns empty response, not an error",
+      "test": "covered by existing tests -- untouched code path",
+      "expected": "empty SearchCandidatesResponse, nil error"
+    },
+    {
+      "id": "V11",
+      "dimension": "build_hygiene",
+      "case": "go vet / gofmt clean on all touched/new files",
+      "test": "go vet ./engine/..., gofmt -l",
+      "expected": "no output / no issues"
+    },
+    {
+      "id": "V12",
+      "dimension": "full_regression",
+      "case": "whole engine module test suite stays green",
+      "test": "go test ./engine/... -v",
+      "expected": "PASS (aside from any pre-existing, already-tracked flakes unrelated to this change, e.g. TestReaderDuringSplit per task-2b.3.6's notes)"
+    }
+  ]
+}

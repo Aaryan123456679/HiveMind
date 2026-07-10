@@ -311,27 +311,40 @@ func (s *Server) GraphNeighbors(ctx context.Context, req *hivemindv1.GraphNeighb
 	return &hivemindv1.GraphNeighborsResponse{Neighbors: neighbors}, nil
 }
 
-// searchCandidateScore is a constant placeholder relevance score assigned to every
-// SearchCandidates result. engine/btree exposes no relevance-scoring primitive (PrefixScan
-// returns unranked (path, fileID) pairs in sorted-path order only) and no relevance-ranking
-// algorithm exists anywhere else in this codebase yet -- inventing one here would be new
-// business logic outside this subtask's thin-adapter scope. See
-// .cdr/runs/2026-07-09/002-implementation/impact-analysis.json.
-const searchCandidateScore float32 = 1.0
-
 // SearchCandidates performs a non-LLM candidate topic search, delegating to
-// engine/btree.PrefixScan. The issue's acceptance criteria names "btree" as
+// engine/btree.PrefixScan and then ranking the matches by simple term-overlap relevance
+// (task-4.2.1, GitHub issue #21). The issue's acceptance criteria names "btree" as
 // SearchCandidates' delegation target; PrefixScan is the only query-shaped read primitive
-// btree exposes (Lookup is exact-match only), so SearchCandidatesRequest.query is treated as
-// a literal string prefix, not a general/fuzzy query. See searchCandidateScore's doc comment
-// for why CandidateTopic.score is a constant placeholder rather than a computed value.
+// btree exposes (Lookup is exact-match only), so req.Query cannot be treated as a
+// general/fuzzy multi-term query for the PrefixScan call itself. Instead:
+//   - the btree pool is selected via PrefixScan using only prefixTerm(req.GetQuery())
+//     (search_candidates.go) -- req.Query's FIRST whitespace-separated token -- as the
+//     literal string prefix. This is fully backward compatible with task-3.2.2's original
+//     single-token-query usage (a query with no whitespace is its own only token, so
+//     prefixTerm is the identity function for every pre-existing caller, including
+//     agents/ingestion/shortlist.py's query="" pool-retrieval usage);
+//   - the FULL req.Query string (all its terms, not just the first) is tokenized and used
+//     to rank the resulting PrefixScan matches, via rankCandidates (search_candidates.go).
+//     This lets a genuinely multi-term query (e.g. "graph database") both select a
+//     literal-prefix-filtered pool (via its first term) AND rank that pool by how many of
+//     its OTHER terms also appear in each match's path -- the "term-overlap ranking" the
+//     issue's acceptance criteria asks for, without requiring btree to support anything
+//     beyond the single prefix-scan primitive it already has.
+//
+// See search_candidates.go's package doc comment for why term-overlap-against-path-tokens
+// is the only ranking signal available at this layer (engine/btree carries no other
+// candidate text), and for why an empty query is defined as a ranking no-op preserving
+// agents/ingestion/shortlist.py's (task-3.4.2) existing empty-query pool-retrieval usage.
 //
 // max_results semantics: unlike GraphNeighborsRequest.max_nodes (whose proto doc comment
 // explicitly defines 0 as "empty result"), SearchCandidatesRequest.max_results has no such
 // documented zero-value semantic in proto/hivemind.proto. This handler treats 0 as "no cap"
 // (return every PrefixScan match) rather than "return nothing", the more useful default for
-// a search-style RPC; a positive value caps the result count. This interpretation choice is
-// called out here explicitly since it is not dictated by the proto contract itself.
+// a search-style RPC; a positive value caps the RANKED result count (capping happens after
+// ranking, not before, so a positive max_results always returns the top-K matches by score
+// rather than an arbitrary max_results-sized slice of PrefixScan's raw sorted-path order).
+// This interpretation choice is called out here explicitly since it is not dictated by the
+// proto contract itself.
 func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCandidatesRequest) (*hivemindv1.SearchCandidatesResponse, error) {
 	if s.btreeStore == nil {
 		return &hivemindv1.SearchCandidatesResponse{}, nil
@@ -342,22 +355,15 @@ func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCan
 		return nil, status.Errorf(codes.InvalidArgument, "rpc: SearchCandidates: max_results %d must be >= 0", maxResults)
 	}
 
-	entries, err := btree.PrefixScan(s.btreeStore, s.btreeRootNodeID, req.GetQuery())
+	entries, err := btree.PrefixScan(s.btreeStore, s.btreeRootNodeID, prefixTerm(req.GetQuery()))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "rpc: SearchCandidates: %v", err)
 	}
 
-	if maxResults > 0 && len(entries) > maxResults {
-		entries = entries[:maxResults]
-	}
+	candidates := rankCandidates(req.GetQuery(), entries)
 
-	candidates := make([]*hivemindv1.CandidateTopic, len(entries))
-	for i, e := range entries {
-		candidates[i] = &hivemindv1.CandidateTopic{
-			FileId: e.FileID,
-			Path:   e.Path,
-			Score:  searchCandidateScore,
-		}
+	if maxResults > 0 && len(candidates) > maxResults {
+		candidates = candidates[:maxResults]
 	}
 
 	return &hivemindv1.SearchCandidatesResponse{Candidates: candidates}, nil
