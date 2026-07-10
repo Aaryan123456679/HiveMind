@@ -76,6 +76,14 @@ type integrationFixture struct {
 	btreeStore *btree.NodeStore
 	btreeRoot  uint64
 
+	// edgeLog/graphPath back PutEdge; entityIndex backs PutEntity/LookupEntity -- new scope
+	// added during issue #18 subtask 3.4.4's verification. Deliberately separate from
+	// btreeStore/btreeRoot above, matching server_test.go's fixture (see server.go's
+	// Server.entityIndex doc comment for why).
+	edgeLog     *graph.EdgeLog
+	graphPath   string
+	entityIndex *btree.Tree
+
 	client   hivemindv1.HiveMindClient
 	recorder *recordingRecorder
 
@@ -194,7 +202,40 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	}
 	g := graph.BuildCSR(adjacency)
 
-	srv, err := rpc.NewServer(cat, cs, idAlloc, g, store, rootNodeID)
+	// --- Separate edge log + entity-index tree (new scope: PutEdge/PutEntity/LookupEntity). ---
+	edgeLog, err := graph.OpenEdgeLog(filepath.Join(root, "edgelog"))
+	if err != nil {
+		t.Fatalf("graph.OpenEdgeLog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := edgeLog.Close(); err != nil {
+			t.Errorf("EdgeLog.Close: %v", err)
+		}
+	})
+	graphPath := filepath.Join(root, "graph.dat")
+
+	entityIdxFile, err := btree.OpenIndexFile(filepath.Join(root, "entity.idx"))
+	if err != nil {
+		t.Fatalf("btree.OpenIndexFile(entity.idx): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := entityIdxFile.Close(); err != nil {
+			t.Errorf("entity index file Close: %v", err)
+		}
+	})
+	entityStore := btree.NewNodeStore(entityIdxFile)
+	entityAlloc, err := btree.NewNodeAllocator(entityStore)
+	if err != nil {
+		t.Fatalf("btree.NewNodeAllocator(entity): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := entityAlloc.Close(); err != nil {
+			t.Errorf("entity NodeAllocator.Close: %v", err)
+		}
+	})
+	entityIndex := btree.NewTree(entityStore, entityAlloc, 0)
+
+	srv, err := rpc.NewServer(cat, cs, idAlloc, g, store, rootNodeID, edgeLog, entityIndex)
 	if err != nil {
 		t.Fatalf("rpc.NewServer: %v", err)
 	}
@@ -202,13 +243,16 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	client, rec := startRealServer(t, srv)
 
 	return &integrationFixture{
-		cs:         cs,
-		btreeStore: store,
-		btreeRoot:  rootNodeID,
-		client:     client,
-		recorder:   rec,
-		alphaID:    alphaID,
-		betaID:     betaID,
+		cs:          cs,
+		btreeStore:  store,
+		btreeRoot:   rootNodeID,
+		edgeLog:     edgeLog,
+		graphPath:   graphPath,
+		entityIndex: entityIndex,
+		client:      client,
+		recorder:    rec,
+		alphaID:     alphaID,
+		betaID:      betaID,
 	}
 }
 
@@ -422,6 +466,63 @@ func TestRPCIntegration(t *testing.T) {
 			if gotPaths[i] != wantPaths[i] {
 				t.Fatalf("SearchCandidates: paths = %v, want %v", gotPaths, wantPaths)
 			}
+		}
+	})
+
+	// PutEdge_Compact_GraphNeighbors and PutEntity_LookupEntity_RoundTrip exercise the new
+	// scope (PutEdge/PutEntity/LookupEntity, added during issue #18 subtask 3.4.4's
+	// verification) over the real gRPC transport, matching this file's cross-process intent
+	// -- see validation-matrix.json V16/V17 (.cdr/runs/2026-07-10/011-implementation/).
+	t.Run("PutEdge_Compact_GraphNeighbors", func(t *testing.T) {
+		for i := 0; i < 2; i++ {
+			_, err := f.client.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+				SourceFileId: f.alphaID,
+				TargetFileId: f.betaID,
+				EdgeType:     hivemindv1.EdgeType_ENTITY_COOCCUR,
+				Weight:       1,
+			})
+			if err != nil {
+				t.Fatalf("PutEdge call %d: %v", i, err)
+			}
+		}
+
+		compacted, err := graph.Compact(f.graphPath, f.edgeLog)
+		if err != nil {
+			t.Fatalf("graph.Compact: %v", err)
+		}
+
+		var found bool
+		for _, e := range compacted.Neighbors(f.alphaID) {
+			if e.Target == f.betaID && e.Type == graph.EdgeEntityCooccur {
+				found = true
+				// 2 PutEdge calls, weight 1 each, into f.graphPath -- a fresh path distinct
+				// from the fixture's in-memory adjacency, so Compact has no pre-existing
+				// on-disk snapshot to fold into: the summed result is exactly 2.
+				if e.Weight != 2 {
+					t.Fatalf("Compact: ENTITY_COOCCUR weight = %d, want 2", e.Weight)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("Compact: no ENTITY_COOCCUR edge %d->%d found", f.alphaID, f.betaID)
+		}
+	})
+
+	t.Run("PutEntity_LookupEntity_RoundTrip", func(t *testing.T) {
+		_, err := f.client.PutEntity(context.Background(), &hivemindv1.PutEntityRequest{
+			EntityName: "acme-corp",
+			FileId:     f.alphaID,
+		})
+		if err != nil {
+			t.Fatalf("PutEntity: %v", err)
+		}
+
+		resp, err := f.client.LookupEntity(context.Background(), &hivemindv1.LookupEntityRequest{EntityName: "acme-corp"})
+		if err != nil {
+			t.Fatalf("LookupEntity: %v", err)
+		}
+		if len(resp.GetFileIds()) != 1 || resp.GetFileIds()[0] != f.alphaID {
+			t.Fatalf("LookupEntity: got %v, want [%d]", resp.GetFileIds(), f.alphaID)
 		}
 	})
 

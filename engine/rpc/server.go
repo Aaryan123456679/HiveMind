@@ -4,20 +4,28 @@
 // request, calls the real underlying engine function, marshals the response, and maps
 // internal errors to gRPC status codes. No new business logic lives here.
 //
-// Scope: this file implements exactly the 5 RPCs docs/LLD/rpc.md's "Exposed RPCs" section
-// names -- PutSegment, GetFile, ReadPartial, GraphNeighbors, SearchCandidates -- the RPCs
-// engine/rpc/'s server SERVES. ProposeSplit is a client-side call this engine MAKES against
-// the Python agent service (engine/split/proposer_grpc.go, task-3.2.3); Server does not
-// implement it here and instead falls back to the generated
-// hivemindv1.UnimplementedHiveMindServer's default (codes.Unimplemented) via embedding. See
-// requirement.md/impact-analysis.json under
+// Scope: this file originally implemented exactly the 5 RPCs docs/LLD/rpc.md's "Exposed
+// RPCs" section named at the time -- PutSegment, GetFile, ReadPartial, GraphNeighbors,
+// SearchCandidates -- the RPCs engine/rpc/'s server SERVES. ProposeSplit is a client-side
+// call this engine MAKES against the Python agent service
+// (engine/split/proposer_grpc.go, task-3.2.3); Server does not implement it here and
+// instead falls back to the generated hivemindv1.UnimplementedHiveMindServer's default
+// (codes.Unimplemented) via embedding. See requirement.md/impact-analysis.json under
 // .cdr/runs/2026-07-09/002-implementation/ for the full scope-boundary justification.
+//
+// PutEdge/PutEntity/LookupEntity (bottom of this file) were added later, as
+// user-authorized new scope discovered during issue #18 subtask 3.4.4's verification (see
+// .cdr/runs/2026-07-10/011-implementation/requirement.md) -- not a renumbered 3.2.x
+// subtask. Same thin-adapter discipline applies: no new graph/btree business logic lives
+// here, only request/response marshaling over engine/graph.EdgeLog and a dedicated
+// engine/btree.Tree.
 package rpc
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -52,12 +60,34 @@ type Server struct {
 	// (SearchCandidates returns an empty result set rather than erroring).
 	btreeStore      *btree.NodeStore
 	btreeRootNodeID uint64
+
+	// edgeLog backs PutEdge (new scope, see this file's package doc comment above). A nil
+	// edgeLog is valid -- PutEdge returns codes.Unavailable rather than panicking or
+	// silently dropping the edge write, since (unlike SearchCandidates' empty-result
+	// degraded mode) silently discarding a caller's edge write would be a worse failure
+	// mode than a clear, immediate error.
+	edgeLog *graph.EdgeLog
+
+	// entityIndex backs PutEntity/LookupEntity (new scope, see this file's package doc
+	// comment above). Deliberately a SEPARATE *btree.Tree from btreeStore/btreeRootNodeID
+	// above (which stay read-only, exactly as before this change): entity-index writes
+	// need a concurrency-safe, self-tracking root (btree.Tree.Insert/Root), and keeping it
+	// in a wholly separate tree means entity keys can never leak into SearchCandidates'
+	// path-prefix scans, regardless of key-namespacing correctness. A nil entityIndex is
+	// valid -- PutEntity/LookupEntity return codes.Unavailable rather than panicking.
+	entityIndex *btree.Tree
+
+	// now is the entity-index/edge-timestamp clock, overridable by tests (see
+	// server_test.go) so weight/LastUpdated-ordering assertions don't depend on wall-clock
+	// timing. Defaults to time.Now in NewServer.
+	now func() time.Time
 }
 
 // NewServer constructs a Server backed by the given already-open engine dependencies. cat,
 // cs, and idAlloc must be non-nil (every in-scope RPC except GraphNeighbors/SearchCandidates
-// needs them); g and btreeStore may be nil (see their field docs above).
-func NewServer(cat *catalog.Catalog, cs *catalog.ContentStore, idAlloc *catalog.IDAllocator, g *graph.CSRGraph, btreeStore *btree.NodeStore, btreeRootNodeID uint64) (*Server, error) {
+// needs them); g, btreeStore, edgeLog, and entityIndex may all be nil (see their field docs
+// above).
+func NewServer(cat *catalog.Catalog, cs *catalog.ContentStore, idAlloc *catalog.IDAllocator, g *graph.CSRGraph, btreeStore *btree.NodeStore, btreeRootNodeID uint64, edgeLog *graph.EdgeLog, entityIndex *btree.Tree) (*Server, error) {
 	if cat == nil {
 		return nil, fmt.Errorf("rpc: NewServer: cat must not be nil")
 	}
@@ -74,6 +104,9 @@ func NewServer(cat *catalog.Catalog, cs *catalog.ContentStore, idAlloc *catalog.
 		g:               g,
 		btreeStore:      btreeStore,
 		btreeRootNodeID: btreeRootNodeID,
+		edgeLog:         edgeLog,
+		entityIndex:     entityIndex,
+		now:             time.Now,
 	}, nil
 }
 
@@ -328,4 +361,152 @@ func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCan
 	}
 
 	return &hivemindv1.SearchCandidatesResponse{Candidates: candidates}, nil
+}
+
+// entityIndexPrefix namespaces every entity.idx key under a leading NUL byte, which sorts
+// before every ordinary printable path SearchCandidates' own tree stores -- belt-and-
+// suspenders isolation, since entityIndex is already a wholly separate *btree.Tree from
+// btreeStore/btreeRootNodeID (see Server's field docs above), not something either
+// PutEntity/LookupEntity or SearchCandidates actually depends on for correctness today.
+const entityIndexPrefix = "\x00entity\x00"
+
+// entityKeyPrefix returns the common key prefix every (entityName, *) association is
+// stored under, used both by entityKey (below) and directly by LookupEntity's PrefixScan.
+func entityKeyPrefix(entityName string) string {
+	return entityIndexPrefix + entityName + "\x00"
+}
+
+// entityKey returns the unique B+Tree leaf key for one (entityName, fileID) association.
+// engine/btree.Insert upserts a single fileID per key (one entity name alone cannot map to
+// multiple files under that primitive) -- entityKey works around this by giving every
+// distinct fileID registered against the same entityName its own key, suffixed with
+// fileID itself, zero-padded to 20 base-10 digits (uint64's max width) so lexicographic
+// key order matches numeric fileID order, which is what LookupEntity's PrefixScan relies
+// on to return fileIDs in ascending order.
+func entityKey(entityName string, fileID uint64) string {
+	return fmt.Sprintf("%s%020d", entityKeyPrefix(entityName), fileID)
+}
+
+// PutEdge appends one occurrence of a graph edge (source_file_id -> target_file_id, of
+// edge_type, with this call's own weight) to engine/graph's per-node edge log
+// (graph.EdgeLog.AppendEdge). New scope: see this file's package doc comment above and
+// .cdr/runs/2026-07-10/011-implementation/architecture-discovery.md.
+//
+// This handler deliberately does NOT compute or apply any weight-increment arithmetic
+// itself: engine/graph.Compact (already implemented, task-3.1.3) is what sums Weight
+// across repeated (source, target, ENTITY_COOCCUR) occurrences when it later folds the
+// edge log into a fresh CSR snapshot (see compact.go's package doc comment,
+// "Weight-aggregation semantics") -- every other edge type is deduplicated there to the
+// most-recently-observed occurrence rather than summed. PutEdge's only job is to durably
+// record one such occurrence; repeated PutEdge calls for the same (source, target,
+// ENTITY_COOCCUR) triple are what "weight increments on repeated calls" (this task's
+// acceptance criterion) means in practice, once Compact runs.
+func (s *Server) PutEdge(ctx context.Context, req *hivemindv1.PutEdgeRequest) (*hivemindv1.PutEdgeResponse, error) {
+	if s.edgeLog == nil {
+		return nil, status.Error(codes.Unavailable, "rpc: PutEdge: server has no edge log configured")
+	}
+
+	sourceFileID := req.GetSourceFileId()
+	if sourceFileID == catalog.InvalidFileID {
+		return nil, status.Errorf(codes.InvalidArgument, "rpc: PutEdge: source_file_id %d is invalid (proto3 zero-value / unset field)", sourceFileID)
+	}
+	targetFileID := req.GetTargetFileId()
+	if targetFileID == catalog.InvalidFileID {
+		return nil, status.Errorf(codes.InvalidArgument, "rpc: PutEdge: target_file_id %d is invalid (proto3 zero-value / unset field)", targetFileID)
+	}
+
+	edgeType, err := protoEdgeTypeToGraph(req.GetEdgeType())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "rpc: PutEdge: %v", err)
+	}
+	if edgeType == graph.EdgeTypeInvalid {
+		return nil, status.Error(codes.InvalidArgument, "rpc: PutEdge: edge_type must not be EDGE_TYPE_UNSPECIFIED")
+	}
+
+	weight := req.GetWeight()
+	if weight == 0 {
+		return nil, status.Error(codes.InvalidArgument, "rpc: PutEdge: weight must be > 0")
+	}
+
+	edge, err := graph.NewCSREdge(targetFileID, edgeType, weight, s.now().Unix())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "rpc: PutEdge: %v", err)
+	}
+
+	if err := s.edgeLog.AppendEdge(sourceFileID, edge); err != nil {
+		return nil, status.Errorf(codes.Internal, "rpc: PutEdge: %v", err)
+	}
+
+	return &hivemindv1.PutEdgeResponse{}, nil
+}
+
+// PutEntity registers file_id as associated with entity_name in the entity.idx concept
+// (docs/LLD/ingestion-agent.md: "entities feed entity.idx"). New scope: see this file's
+// package doc comment above.
+//
+// Storage mechanism: entity.idx is implemented as ordinary leaf entries in a dedicated
+// engine/btree.Tree (Server.entityIndex), keyed by entityKey (above) -- reusing the
+// existing B+Tree/PrefixScan primitive SearchCandidates already relies on, rather than
+// inventing a new storage mechanism, per this task's design guidance. Re-registering the
+// same (entity_name, file_id) pair is a harmless, idempotent upsert (btree.Tree.Insert's
+// own upsert semantics: re-inserting an identical key/value pair is a no-op write).
+func (s *Server) PutEntity(ctx context.Context, req *hivemindv1.PutEntityRequest) (*hivemindv1.PutEntityResponse, error) {
+	if s.entityIndex == nil {
+		return nil, status.Error(codes.Unavailable, "rpc: PutEntity: server has no entity index configured")
+	}
+
+	entityName := req.GetEntityName()
+	if entityName == "" {
+		return nil, status.Error(codes.InvalidArgument, "rpc: PutEntity: entity_name must not be empty")
+	}
+	fileID := req.GetFileId()
+	if fileID == catalog.InvalidFileID {
+		return nil, status.Errorf(codes.InvalidArgument, "rpc: PutEntity: file_id %d is invalid (proto3 zero-value / unset field)", fileID)
+	}
+
+	if err := s.entityIndex.Insert(entityKey(entityName, fileID), fileID); err != nil {
+		return nil, status.Errorf(codes.Internal, "rpc: PutEntity: %v", err)
+	}
+
+	return &hivemindv1.PutEntityResponse{}, nil
+}
+
+// LookupEntity returns every file_id previously registered (via PutEntity) against
+// entity_name, in ascending file_id order (see entityKey's doc comment for why
+// zero-padding makes PrefixScan's lexicographic order match numeric fileID order). An
+// entity_name with no registered files returns an empty (not error) result, mirroring
+// SearchCandidates'/btree.PrefixScan's own not-found=empty-slice convention. New scope:
+// see this file's package doc comment above.
+func (s *Server) LookupEntity(ctx context.Context, req *hivemindv1.LookupEntityRequest) (*hivemindv1.LookupEntityResponse, error) {
+	if s.entityIndex == nil {
+		return nil, status.Error(codes.Unavailable, "rpc: LookupEntity: server has no entity index configured")
+	}
+
+	entityName := req.GetEntityName()
+	if entityName == "" {
+		return nil, status.Error(codes.InvalidArgument, "rpc: LookupEntity: entity_name must not be empty")
+	}
+
+	rootNodeID := s.entityIndex.Root()
+	if rootNodeID == 0 {
+		// 0 is btree's reservedNodeID sentinel for "this tree has never had anything
+		// inserted into it" (see btree/lookup.go's reservedNodeID doc comment). Unlike
+		// Lookup, PrefixScan does NOT special-case this root value itself (by design, per
+		// its own doc comment) -- callers are expected to. An empty entity index means
+		// entity_name (and every other name) simply has zero registered files, which is
+		// LookupEntity's normal not-found outcome (empty result, nil error), not an error.
+		return &hivemindv1.LookupEntityResponse{}, nil
+	}
+
+	entries, err := btree.PrefixScan(s.entityIndex.Store, rootNodeID, entityKeyPrefix(entityName))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "rpc: LookupEntity: %v", err)
+	}
+
+	fileIDs := make([]uint64, len(entries))
+	for i, e := range entries {
+		fileIDs[i] = e.FileID
+	}
+
+	return &hivemindv1.LookupEntityResponse{FileIds: fileIDs}, nil
 }

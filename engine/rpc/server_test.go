@@ -27,6 +27,13 @@ type fixture struct {
 	btreeRoot  uint64
 	srv        *Server
 
+	// edgeLog/graphPath back PutEdge; entityIndex backs PutEntity/LookupEntity. Both are
+	// wholly separate from btreeStore/btreeRoot above (the pre-existing, read-only path
+	// index) -- see server.go's Server.entityIndex doc comment for why.
+	edgeLog     *graph.EdgeLog
+	graphPath   string
+	entityIndex *btree.Tree
+
 	alphaID, betaID uint64
 }
 
@@ -146,7 +153,42 @@ func newFixture(t *testing.T) *fixture {
 	}
 	g := graph.BuildCSR(adjacency)
 
-	srv, err := NewServer(cat, cs, idAlloc, g, store, rootNodeID)
+	// --- Separate edge log + entity-index tree (new scope: PutEdge/PutEntity/LookupEntity). ---
+	edgeLog, err := graph.OpenEdgeLog(filepath.Join(root, "edgelog"))
+	if err != nil {
+		t.Fatalf("graph.OpenEdgeLog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := edgeLog.Close(); err != nil {
+			t.Errorf("EdgeLog.Close: %v", err)
+		}
+	})
+	f.edgeLog = edgeLog
+	f.graphPath = filepath.Join(root, "graph.dat")
+
+	entityIdxFile, err := btree.OpenIndexFile(filepath.Join(root, "entity.idx"))
+	if err != nil {
+		t.Fatalf("btree.OpenIndexFile (entity index): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := entityIdxFile.Close(); err != nil {
+			t.Errorf("entity index file Close: %v", err)
+		}
+	})
+	entityStore := btree.NewNodeStore(entityIdxFile)
+	entityAlloc, err := btree.NewNodeAllocator(entityStore)
+	if err != nil {
+		t.Fatalf("btree.NewNodeAllocator (entity index): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := entityAlloc.Close(); err != nil {
+			t.Errorf("entity index NodeAllocator.Close: %v", err)
+		}
+	})
+	entityIndex := btree.NewTree(entityStore, entityAlloc, 0)
+	f.entityIndex = entityIndex
+
+	srv, err := NewServer(cat, cs, idAlloc, g, store, rootNodeID, edgeLog, entityIndex)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -480,6 +522,296 @@ func TestEdgeTypeConversionRoundTrip(t *testing.T) {
 			t.Fatalf("graphEdgeTypeToProto(%v) = %v, want %v", c.graph, gotProto, c.proto)
 		}
 	}
+}
+
+// TestPutEdgeAndEntityHandlers covers the new scope added during issue #18 subtask 3.4.4's
+// verification (see .cdr/runs/2026-07-10/011-implementation/): PutEdge (edge-log append,
+// weight-increment semantics verified end-to-end via graph.Compact) and
+// PutEntity/LookupEntity (entity.idx round trip, backed by a dedicated B+Tree).
+func TestPutEdgeAndEntityHandlers(t *testing.T) {
+	t.Run("PutEdge_Create", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+			SourceFileId: f.alphaID,
+			TargetFileId: f.betaID,
+			EdgeType:     hivemindv1.EdgeType_LLM_ASSERTED,
+			Weight:       1,
+		})
+		if err != nil {
+			t.Fatalf("PutEdge: %v", err)
+		}
+
+		edges, err := f.edgeLog.ReadNode(f.alphaID)
+		if err != nil {
+			t.Fatalf("EdgeLog.ReadNode: %v", err)
+		}
+		if len(edges) != 1 {
+			t.Fatalf("EdgeLog.ReadNode: got %d edges, want 1", len(edges))
+		}
+		if edges[0].Target != f.betaID || edges[0].Type != graph.EdgeLLMAsserted || edges[0].Weight != 1 {
+			t.Fatalf("EdgeLog.ReadNode: got %+v, want Target=%d Type=%v Weight=1", edges[0], f.betaID, graph.EdgeLLMAsserted)
+		}
+	})
+
+	t.Run("PutEdge_WeightIncrement_ViaCompact", func(t *testing.T) {
+		f := newFixture(t)
+		for i := 0; i < 3; i++ {
+			_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+				SourceFileId: f.alphaID,
+				TargetFileId: f.betaID,
+				EdgeType:     hivemindv1.EdgeType_ENTITY_COOCCUR,
+				Weight:       1,
+			})
+			if err != nil {
+				t.Fatalf("PutEdge call %d: %v", i, err)
+			}
+		}
+
+		compacted, err := graph.Compact(f.graphPath, f.edgeLog)
+		if err != nil {
+			t.Fatalf("graph.Compact: %v", err)
+		}
+
+		neighbors := compacted.Neighbors(f.alphaID)
+		var found bool
+		for _, e := range neighbors {
+			if e.Target == f.betaID && e.Type == graph.EdgeEntityCooccur {
+				found = true
+				// 3 PutEdge calls, weight 1 each, into f.graphPath -- a fresh path distinct
+				// from the fixture's in-memory adjacency (f.srv's graph.CSRGraph), so there
+				// is no pre-existing on-disk snapshot for Compact to fold into: the summed
+				// result is exactly the 3 fresh log occurrences.
+				if e.Weight != 3 {
+					t.Fatalf("Compact: ENTITY_COOCCUR weight = %d, want 3 (summed across 3 PutEdge calls)", e.Weight)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("Compact: no ENTITY_COOCCUR edge %d->%d found in %+v", f.alphaID, f.betaID, neighbors)
+		}
+	})
+
+	t.Run("PutEdge_LLMAsserted_LastWriteWins", func(t *testing.T) {
+		f := newFixture(t)
+		for i := 0; i < 2; i++ {
+			_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+				SourceFileId: f.alphaID,
+				TargetFileId: f.betaID,
+				EdgeType:     hivemindv1.EdgeType_LLM_ASSERTED,
+				Weight:       1,
+			})
+			if err != nil {
+				t.Fatalf("PutEdge call %d: %v", i, err)
+			}
+		}
+
+		compacted, err := graph.Compact(f.graphPath, f.edgeLog)
+		if err != nil {
+			t.Fatalf("graph.Compact: %v", err)
+		}
+
+		var count int
+		for _, e := range compacted.Neighbors(f.alphaID) {
+			if e.Target == f.betaID && e.Type == graph.EdgeLLMAsserted {
+				count++
+				if e.Weight != 1 {
+					t.Fatalf("Compact: LLM_ASSERTED weight = %d, want 1 (deduplicated, not summed)", e.Weight)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("Compact: got %d LLM_ASSERTED edges %d->%d, want exactly 1 (deduplicated)", count, f.alphaID, f.betaID)
+		}
+	})
+
+	t.Run("PutEdge_ZeroSourceFileID", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+			SourceFileId: 0,
+			TargetFileId: f.betaID,
+			EdgeType:     hivemindv1.EdgeType_LLM_ASSERTED,
+			Weight:       1,
+		})
+		assertCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("PutEdge_ZeroTargetFileID", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+			SourceFileId: f.alphaID,
+			TargetFileId: 0,
+			EdgeType:     hivemindv1.EdgeType_LLM_ASSERTED,
+			Weight:       1,
+		})
+		assertCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("PutEdge_UnspecifiedEdgeType", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+			SourceFileId: f.alphaID,
+			TargetFileId: f.betaID,
+			EdgeType:     hivemindv1.EdgeType_EDGE_TYPE_UNSPECIFIED,
+			Weight:       1,
+		})
+		assertCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("PutEdge_ZeroWeight", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+			SourceFileId: f.alphaID,
+			TargetFileId: f.betaID,
+			EdgeType:     hivemindv1.EdgeType_LLM_ASSERTED,
+			Weight:       0,
+		})
+		assertCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("PutEdge_NilEdgeLog", func(t *testing.T) {
+		f := newFixture(t)
+		f.srv.edgeLog = nil
+		_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
+			SourceFileId: f.alphaID,
+			TargetFileId: f.betaID,
+			EdgeType:     hivemindv1.EdgeType_LLM_ASSERTED,
+			Weight:       1,
+		})
+		assertCode(t, err, codes.Unavailable)
+	})
+
+	t.Run("PutEntity_LookupEntity_SingleFile", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEntity(context.Background(), &hivemindv1.PutEntityRequest{
+			EntityName: "acme-corp",
+			FileId:     f.alphaID,
+		})
+		if err != nil {
+			t.Fatalf("PutEntity: %v", err)
+		}
+
+		resp, err := f.srv.LookupEntity(context.Background(), &hivemindv1.LookupEntityRequest{EntityName: "acme-corp"})
+		if err != nil {
+			t.Fatalf("LookupEntity: %v", err)
+		}
+		if len(resp.GetFileIds()) != 1 || resp.GetFileIds()[0] != f.alphaID {
+			t.Fatalf("LookupEntity: got %v, want [%d]", resp.GetFileIds(), f.alphaID)
+		}
+	})
+
+	t.Run("PutEntity_Idempotent", func(t *testing.T) {
+		f := newFixture(t)
+		for i := 0; i < 2; i++ {
+			_, err := f.srv.PutEntity(context.Background(), &hivemindv1.PutEntityRequest{
+				EntityName: "acme-corp",
+				FileId:     f.alphaID,
+			})
+			if err != nil {
+				t.Fatalf("PutEntity call %d: %v", i, err)
+			}
+		}
+		resp, err := f.srv.LookupEntity(context.Background(), &hivemindv1.LookupEntityRequest{EntityName: "acme-corp"})
+		if err != nil {
+			t.Fatalf("LookupEntity: %v", err)
+		}
+		if len(resp.GetFileIds()) != 1 {
+			t.Fatalf("LookupEntity: got %v, want exactly 1 entry (idempotent re-registration)", resp.GetFileIds())
+		}
+	})
+
+	t.Run("PutEntity_MultipleFiles", func(t *testing.T) {
+		f := newFixture(t)
+		// Insert in descending fileID order to confirm LookupEntity returns ascending
+		// order regardless of insertion order (zero-padded key encoding, not insertion
+		// order, determines PrefixScan's returned order).
+		for _, id := range []uint64{f.betaID, f.alphaID} {
+			_, err := f.srv.PutEntity(context.Background(), &hivemindv1.PutEntityRequest{
+				EntityName: "shared-entity",
+				FileId:     id,
+			})
+			if err != nil {
+				t.Fatalf("PutEntity(%d): %v", id, err)
+			}
+		}
+		resp, err := f.srv.LookupEntity(context.Background(), &hivemindv1.LookupEntityRequest{EntityName: "shared-entity"})
+		if err != nil {
+			t.Fatalf("LookupEntity: %v", err)
+		}
+		got := resp.GetFileIds()
+		if len(got) != 2 {
+			t.Fatalf("LookupEntity: got %v, want 2 entries", got)
+		}
+		lo, hi := f.alphaID, f.betaID
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		if got[0] != lo || got[1] != hi {
+			t.Fatalf("LookupEntity: got %v, want ascending [%d, %d]", got, lo, hi)
+		}
+	})
+
+	t.Run("LookupEntity_NotFound", func(t *testing.T) {
+		f := newFixture(t)
+		resp, err := f.srv.LookupEntity(context.Background(), &hivemindv1.LookupEntityRequest{EntityName: "never-registered"})
+		if err != nil {
+			t.Fatalf("LookupEntity: %v", err)
+		}
+		if len(resp.GetFileIds()) != 0 {
+			t.Fatalf("LookupEntity: got %v, want empty", resp.GetFileIds())
+		}
+	})
+
+	t.Run("PutEntity_EmptyName", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEntity(context.Background(), &hivemindv1.PutEntityRequest{EntityName: "", FileId: f.alphaID})
+		assertCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("LookupEntity_EmptyName", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.LookupEntity(context.Background(), &hivemindv1.LookupEntityRequest{EntityName: ""})
+		assertCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("PutEntity_NilEntityIndex", func(t *testing.T) {
+		f := newFixture(t)
+		f.srv.entityIndex = nil
+		_, err := f.srv.PutEntity(context.Background(), &hivemindv1.PutEntityRequest{EntityName: "x", FileId: f.alphaID})
+		assertCode(t, err, codes.Unavailable)
+	})
+
+	t.Run("LookupEntity_NilEntityIndex", func(t *testing.T) {
+		f := newFixture(t)
+		f.srv.entityIndex = nil
+		_, err := f.srv.LookupEntity(context.Background(), &hivemindv1.LookupEntityRequest{EntityName: "x"})
+		assertCode(t, err, codes.Unavailable)
+	})
+
+	t.Run("EntityIndex_DoesNotLeakIntoSearchCandidates", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := f.srv.PutEntity(context.Background(), &hivemindv1.PutEntityRequest{
+			EntityName: "topics", // deliberately chosen to share a prefix with the seeded
+			// "topics/alpha/intro" / "topics/beta/intro" path-index entries, to prove
+			// namespace isolation is real, not just "different prefix, never tested".
+			FileId: f.alphaID,
+		})
+		if err != nil {
+			t.Fatalf("PutEntity: %v", err)
+		}
+
+		resp, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{Query: "topics"})
+		if err != nil {
+			t.Fatalf("SearchCandidates: %v", err)
+		}
+		for _, c := range resp.GetCandidates() {
+			if c.GetPath() == "" {
+				t.Fatalf("SearchCandidates: got a candidate with empty path %+v -- entity-index key leaked into path search", c)
+			}
+		}
+		if len(resp.GetCandidates()) != 2 {
+			t.Fatalf("SearchCandidates: got %d candidates, want exactly the 2 pre-seeded topic paths (entity index must not add/remove results)", len(resp.GetCandidates()))
+		}
+	})
 }
 
 func assertCode(t *testing.T, err error, want codes.Code) {
