@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "006-implementation",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-18-3.4.3-segment-json-parsing",
+  "git_head": "c6025705791e6703f6ece1ab7b73caa9636738df",
+  "run_key": "issue18-3.4.3-c602570-impl-006",
+  "status": "completed",
+  "last_completed_step": "wrote handoff.json, committed 659306f1b77872ced38f585eafa333cc7f362d15",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T00:30:00Z"
+}

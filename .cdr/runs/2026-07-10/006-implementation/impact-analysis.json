@@ -1,0 +1,21 @@
+{
+  "subtask": "issue-18-3.4.3-segment-json-parsing",
+  "new_files": [
+    "agents/ingestion/segment.py",
+    "agents/ingestion/test_segment.py"
+  ],
+  "modified_files": [],
+  "deleted_files": [],
+  "upstream_dependencies": [
+    {"module": "agents/llm/client.py", "symbols": ["LLMClient", "LLMError"], "state": "verified (task-3.4.1)"},
+    {"module": "agents/ingestion/shortlist.py", "symbols": ["TopicCandidate"], "state": "verified (task-3.4.2)"},
+    {"module": "agents/ingestion/rawdoc.py", "symbols": ["RawDocument"], "state": "verified (task-3.3.4)"}
+  ],
+  "downstream_consumers_not_yet_built": [
+    {"module": "agents/ingestion/wiring.py", "note": "3.4.4, will call segment() and translate SegmentResult into PutSegment RPC + graph edges; not in scope here"},
+    {"module": "agents/ingestion/propose_split.py", "note": "3.4.5, separate LLM call pathway; may reuse segment.py's JSON-parsing helpers but not required for this subtask"}
+  ],
+  "blast_radius": "purely additive; no existing module imports or is imported by the new files except read-only dependency on already-verified agents/llm/client.py, agents/ingestion/shortlist.py, agents/ingestion/rawdoc.py. No existing file modified.",
+  "risk": "low — new isolated module + new isolated test file, no shared mutable state, no changes to already-verified modules",
+  "regression_scope": "full agents/ test suite run as self-consistency check to confirm no accidental breakage of task-3.4.1/3.4.2 or normalizer tests"
+}

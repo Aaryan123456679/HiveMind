@@ -1,0 +1,20 @@
+{
+  "subtask": "issue-18-3.4.3-segment-json-parsing",
+  "matrix": [
+    {"case": "well-formed JSON, topic_action=APPEND_EXISTING", "expected": "SegmentResult with matching fields, no exception", "covered_by": "test_segment.py::test_segment_appends_existing_topic"},
+    {"case": "well-formed JSON, topic_action=CREATE_NEW", "expected": "SegmentResult with matching fields, no exception", "covered_by": "test_segment.py::test_segment_creates_new_topic"},
+    {"case": "unparseable JSON (not valid JSON at all)", "expected": "SegmentParseError, message mentions JSON decode failure", "covered_by": "test_segment.py::test_unparseable_json_raises"},
+    {"case": "valid JSON but not a JSON object (e.g. a list/string at top level)", "expected": "SegmentParseError", "covered_by": "test_segment.py::test_non_object_json_raises"},
+    {"case": "valid JSON object missing a required field (each of the 6 keys)", "expected": "SegmentParseError naming the missing field", "covered_by": "test_segment.py::test_missing_field_raises (parametrized)"},
+    {"case": "valid JSON object, wrong type for a field (e.g. entities as a string not a list)", "expected": "SegmentParseError naming the field/expected type", "covered_by": "test_segment.py::test_wrong_type_field_raises (parametrized)"},
+    {"case": "topic_action value outside the two literals", "expected": "SegmentParseError", "covered_by": "test_segment.py::test_invalid_topic_action_value_raises"},
+    {"case": "topic_action=APPEND_EXISTING with empty target_topic", "expected": "SegmentParseError (cross-field consistency)", "covered_by": "test_segment.py::test_append_existing_without_target_topic_raises"},
+    {"case": "topic_action=CREATE_NEW with empty new_topic_path", "expected": "SegmentParseError (cross-field consistency)", "covered_by": "test_segment.py::test_create_new_without_new_topic_path_raises"},
+    {"case": "prompt sent to LLMClient.complete embeds document text + shortlist paths", "expected": "assertion on captured prompt string", "covered_by": "test_segment.py::test_prompt_includes_document_and_shortlist"},
+    {"case": "LLMError raised by llm_client.complete() itself", "expected": "propagates unwrapped, not converted to SegmentParseError", "covered_by": "test_segment.py::test_llm_error_propagates_unwrapped"}
+  ],
+  "acceptance_criteria_mapping": {
+    "returns_and_correctly_parses_structured_result": ["test_segment_appends_existing_topic", "test_segment_creates_new_topic"],
+    "rejects_malformed_llm_output_with_clear_error": ["test_unparseable_json_raises", "test_non_object_json_raises", "test_missing_field_raises", "test_wrong_type_field_raises", "test_invalid_topic_action_value_raises", "test_append_existing_without_target_topic_raises", "test_create_new_without_new_topic_path_raises"]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "run_id": "007-verification",
+  "macro": "cdr-verify",
+  "agent": "verification",
+  "subtask": "issue-18-3.4.3-segment-json-parsing",
+  "status": "completed",
+  "git_commit": "659306f1b77872ced38f585eafa333cc7f362d15",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_artifact": ".cdr/runs/2026-07-10/007-verification/verification.json",
+  "findings_summary": [
+    "F1 (medium): markdown-code-fence-wrapped JSON responses are rejected, not parsed -- real risk once wired to live Ollama in 3.4.4/3.4.6",
+    "F2 (low): target_topic not validated against catalog existence -- explicitly out-of-scope by design, flag for 3.4.4 acceptance criteria"
+  ],
+  "regression_index_entries": ".cdr/index/regression.jsonl (appended F1, F2)",
+  "next_step": "close out 3.4.3 milestone doc; carry F1/F2 forward as tracked follow-ups (F1 ideally resolved by 3.4.6, F2 by 3.4.4 acceptance criteria)"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "007-verification",
+  "macro": "cdr-verify",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "issue-18-3.4.3-segment-json-parsing",
+  "git_head": "659306f1b77872ced38f585eafa333cc7f362d15",
+  "run_key": "sha256:issue18-3.4.3-verify-659306f",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T00:30:00Z"
+}
