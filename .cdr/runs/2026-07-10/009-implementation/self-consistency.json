@@ -1,0 +1,10 @@
+{
+  "note": "Internal sanity only, per invariant I4 -- this is NOT verification. Independent verification is deferred to /cdr:verify.",
+  "build_green": true,
+  "targeted_tests": {"file": "agents/ingestion/test_segment_wiring.py", "result": "14/14 passed", "runs": 1},
+  "full_regression": {"file": "agents/ -q", "result": "120/120 passed", "runs": 3, "flaky": false},
+  "lint": {"tool": "ruff check", "files": ["agents/ingestion/wiring.py", "agents/ingestion/test_segment_wiring.py"], "result": "All checks passed"},
+  "validation_matrix_covered": true,
+  "no_go_or_proto_files_touched": true,
+  "self_verification_performed": false
+}

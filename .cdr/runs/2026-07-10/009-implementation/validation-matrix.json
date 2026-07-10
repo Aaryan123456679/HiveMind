@@ -1,0 +1,38 @@
+{
+  "acceptance_criteria": [
+    {
+      "criterion": "APPEND_EXISTING/CREATE_NEW executed via PutSegment RPC",
+      "tests": ["test_create_new_calls_put_segment_with_zero_file_id", "test_append_existing_calls_put_segment_with_resolved_file_id"]
+    },
+    {
+      "criterion": "entities feed entity.idx",
+      "tests": ["test_entities_are_indexed_after_processing", "test_duplicate_entities_indexed_once"]
+    },
+    {
+      "criterion": "entities increment ENTITY_COOCCUR edge weights",
+      "tests": ["test_entity_cooccurrence_creates_edge_to_other_file", "test_entity_cooccurrence_skips_self_edge"]
+    },
+    {
+      "criterion": "related_topics create LLM_ASSERTED edges",
+      "tests": ["test_related_topics_create_llm_asserted_edges", "test_related_topic_self_edge_skipped"]
+    },
+    {
+      "criterion": "target_topic not resolvable in catalog is rejected/handled (3.4.3 F2)",
+      "tests": ["test_unresolvable_target_topic_raises_before_any_rpc_call"]
+    },
+    {
+      "criterion": "partial failure after successful PutSegment is not silently lost",
+      "tests": ["test_entity_edge_failure_collected_not_raised", "test_unresolvable_related_topic_collected_not_raised"]
+    },
+    {
+      "criterion": "PutSegment failure fails fast, no edge calls attempted",
+      "tests": ["test_put_segment_failure_propagates_and_skips_edges"]
+    },
+    {
+      "criterion": "dedup of duplicate entities/related_topics within one segment",
+      "tests": ["test_duplicate_entities_indexed_once", "test_duplicate_related_topics_single_edge"]
+    }
+  ],
+  "regression": "full agents/ -q pytest run + ruff check on new files",
+  "verification_deferred_to": "/cdr:verify (I4 -- implementer does not self-verify)"
+}

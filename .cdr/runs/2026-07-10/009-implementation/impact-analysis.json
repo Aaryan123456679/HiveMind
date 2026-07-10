@@ -1,0 +1,25 @@
+{
+  "new_files": [
+    "agents/ingestion/wiring.py",
+    "agents/ingestion/test_segment_wiring.py"
+  ],
+  "modified_files": [],
+  "deleted_files": [],
+  "dependents_of_new_module": [
+    "3.4.5 (ProposeSplit real impl) may reuse execute_segment/SegmentWiringClient",
+    "3.4.6 (fixture/live suite) will exercise wiring.py end-to-end against mocked/live client"
+  ],
+  "upstream_dependencies": [
+    "agents/ingestion/segment.py (SegmentResult, task 3.4.3, verified+committed)",
+    "agents/ingestion/shortlist.py (TopicCandidate, GrpcSearchCandidatesClient pattern precedent, task 3.4.2)",
+    "agents/hivemind_pb2.py / agents/hivemind_pb2_grpc.py (generated stubs, task-3.2.1)"
+  ],
+  "no_go_changes": true,
+  "no_proto_changes": true,
+  "risk_areas": [
+    "entity.idx / edge-write RPCs do not exist in the real engine -- SegmentWiringClient.lookup_entity_files/index_entity/put_edge are Protocol-only, no real gRPC-backed implementation possible in this commit",
+    "PutSegment's real request shape has no path field -- new_topic_path cannot be registered anywhere queryable by the engine today (pre-existing gap in already-committed engine/rpc/server.go, not fixed here)",
+    "target_topic -> file_id resolution requires a caller-supplied resolver since PutSegmentRequest takes file_id not path"
+  ],
+  "regression_surface": "purely additive; agents/ingestion/segment.py, shortlist.py, dispatch.py, rawdoc.py, normalize_*.py all untouched"
+}
