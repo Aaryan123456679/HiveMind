@@ -1,0 +1,23 @@
+Message-ID: <25987351.1075851234567.JavaMail.evans@thyme>
+Date: Wed, 6 Dec 2000 08:41:00 -0800 (PST)
+From: kay.mann@enron.com
+To: mark.taylor@enron.com
+Subject: Master agreement redline
+Cc:
+Bcc:
+X-From: Kay Mann
+X-To: Mark Taylor
+X-cc:
+X-bcc:
+X-Folder: \Kay_Mann_June2001\Notes Folders\Sent
+X-Origin: Mann-K
+X-FileName: kmann.nsf
+
+Mark,
+
+Attached is the redline on the master agreement we discussed. I think
+we're close on everything except section 9.2 (the termination notice
+period). Can you take a look and call me before the end of the week?
+
+Thanks,
+Kay

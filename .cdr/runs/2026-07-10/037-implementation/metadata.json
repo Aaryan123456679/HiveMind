@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-037-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "cdr-implementation",
+  "subtask": "issue-19-3.5.1-dataset-loaders",
+  "git_head": "6a03944fb96ac58b7eadd794031e3ce7d1d9e66b",
+  "run_key": "19b805630a6eacefe0144bd817fb3c8955e0caf27b29fb02682f5211584d0e3b",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-10T22:40:00Z",
+  "ended_at": "2026-07-10T23:10:00Z"
+}
