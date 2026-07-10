@@ -7,8 +7,8 @@
   "subtask": "issue-18/3.4.3-segment-json-parsing",
   "git_head": "659306f1b77872ced38f585eafa333cc7f362d15",
   "run_key": "cdr-commit:1:issue-18/3.4.3-segment-json-parsing:659306f1b77872ced38f585eafa333cc7f362d15",
-  "status": "in_progress",
-  "last_completed_step": "read_task-3.4.2_precedent_and_verification_artifacts",
+  "status": "completed",
+  "last_completed_step": "committed_docs_indexes_and_pending_findings",
   "started_at": "2026-07-10T15:00:00Z",
-  "ended_at": null
+  "ended_at": "2026-07-10T15:20:00Z"
 }

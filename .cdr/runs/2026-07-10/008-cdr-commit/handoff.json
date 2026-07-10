@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-cdr-commit",
+  "macro": "cdr-commit",
+  "agent": "cdr-commit",
+  "subtask": "issue-18/3.4.3-segment-json-parsing",
+  "status": "completed",
+  "git_commit": "06aabd4",
+  "pointers": {
+    "commit_doc": ".cdr/commits/task-3.4.3.md",
+    "verification_run": ".cdr/runs/2026-07-10/007-verification",
+    "implementation_run": ".cdr/runs/2026-07-10/006-implementation",
+    "task_index_entry": "task-3.4.3",
+    "feature_index_entry": "hivemind-segment-json-parsing",
+    "pending_findings": ["F1 (forward to 3.4.4/3.4.6)", "F2 (forward to 3.4.4)"]
+  },
+  "next_step": "3 subtasks remain on issue #18 (3.4.4-3.4.6); no GitHub state changed; local commit only, not pushed"
+}
