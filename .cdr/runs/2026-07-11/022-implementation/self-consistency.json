@@ -1,0 +1,31 @@
+{
+  "note": "Internal sanity check only (build green + validation-matrix coverage) -- NOT verification. Per invariant I4, the implementer never verifies its own work; /cdr:verify is a separate dispatch.",
+  "checks": [
+    {
+      "check": "agents/query/ suite (pytest query/ -q)",
+      "result": "59 passed (56 pre-existing + 3 new in test_topic_selector_integration.py)"
+    },
+    {
+      "check": "full regression suite (pytest . --ignore=ingestion/test_e2e_smoke.py -q)",
+      "result": "270 passed, 2 failed",
+      "detail": "The 2 failures (ingestion/test_shortlist.py::test_grpc_client_translates_request_response, test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist) are a pre-existing protobuf Gencode/Runtime version mismatch (gencode 6.33.5 vs runtime 5.29.6) in the environment, unrelated to this change. Confirmed by `git stash -u` (removing this run's new file entirely) and re-running: identical 2 failures, 14 passed in ingestion/test_shortlist.py alone -- same failures exist on a clean checkout of ff4cbe9."
+    },
+    {
+      "check": "ruff check query/test_topic_selector_integration.py",
+      "result": "All checks passed!"
+    },
+    {
+      "check": "ruff check . (full repo)",
+      "result": "1 pre-existing finding (F401 unused `warnings` import in generated hivemind_pb2_grpc.py), unrelated to this change -- confirmed present identically via git stash before this file existed."
+    },
+    {
+      "check": "validation-matrix.json coverage",
+      "result": "All 9 assertion-block entries (S1-topk-order .. S3-distinct-count-not-cap-limited) implemented as described in validation-matrix.json, each mapped to a concrete assertion in the 3 new test functions."
+    },
+    {
+      "check": "topic_selector.py untouched",
+      "result": "git status confirms only agents/query/test_topic_selector_integration.py is new; no existing file modified."
+    }
+  ],
+  "conclusion": "Build green (apart from pre-existing, unrelated environment issues), matrix covered. Ready for handoff to /cdr:verify -- self-consistency does not constitute verification."
+}
