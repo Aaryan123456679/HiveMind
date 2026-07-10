@@ -7,8 +7,9 @@
   "subtask": "19-3.5.1",
   "git_head": "4883fc71ebbc065b6c1b9a76d046f2bc1ac51497",
   "run_key": "cdr-commit-19-3.5.1-4883fc7",
-  "status": "in_progress",
-  "last_completed_step": "indexes_and_pending_updated",
+  "status": "completed",
+  "last_completed_step": "commit_created",
   "started_at": "2026-07-10T18:05:00Z",
-  "ended_at": null
+  "ended_at": "2026-07-10T18:20:00Z",
+  "resulting_commit": "7c563ca"
 }
