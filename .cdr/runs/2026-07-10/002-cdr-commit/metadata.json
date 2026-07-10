@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "002-cdr-commit",
+  "macro": "cdr-commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "issue-18-3.4.1-llmclient-ollama",
+  "git_head": "987b5f6eafe0745f577d4f8c5a7d11f89f74c9ea",
+  "run_key": "issue18-3.4.1-987b5f6-commit-002",
+  "status": "completed",
+  "last_completed_step": "wrote commit doc, updated indexes/pending.md, staged for git commit",
+  "started_at": "2026-07-10T20:00:00+05:30",
+  "ended_at": "2026-07-10T20:15:00+05:30"
+}
