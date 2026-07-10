@@ -1,0 +1,37 @@
+{
+  "subtask": "4.3.1",
+  "issue": 22,
+  "new_files": [
+    "agents/query/intent_refiner.py",
+    "agents/query/test_intent_refiner.py"
+  ],
+  "modified_files": [],
+  "deleted_files": [],
+  "dependencies_added": [
+    {
+      "from": "agents/query/intent_refiner.py",
+      "to": "agents/llm/client.py",
+      "kind": "TYPE_CHECKING-only import of LLMClient/LLMError",
+      "rationale": "established DI pattern from issue #18/#20; no runtime coupling"
+    },
+    {
+      "from": "agents/query/intent_refiner.py",
+      "to": "agents/ingestion/_json_fences.py",
+      "kind": "runtime import of strip_code_fences",
+      "rationale": "reuse shared helper (F1 closure precedent) instead of duplicating regex"
+    }
+  ],
+  "downstream_consumers_not_yet_built": [
+    "agents/query/topic_selector.py (LLD scaffold only, not in this issue)",
+    "agents/query/synthesizer.py (LLD scaffold only, not in this issue)",
+    "agents/query/test_intent_refiner_types.py (issue #22 subtask 4.3.2, separate future dispatch)"
+  ],
+  "risk_notes": [
+    "Contract shape and query_type taxonomy are being authored now (not pre-specified in an LLD doc); chosen to align with 4.3.2's own hint (factual_lookup vs. broad_exploratory) so 4.3.2 doesn't need a breaking contract change. Disclosed as a design choice, not a hidden assumption.",
+    "No changes to any existing file; purely additive, so no regression risk to ingestion/llm suites beyond the new cross-package import of ingestion._json_fences (read-only import, no ingestion behavior change)."
+  ],
+  "test_impact": {
+    "targeted": "cd agents && python3 -m pytest query/ llm/ -q",
+    "full_regression": "cd agents && python3 -m pytest . -q (known pre-existing collection error in ingestion/test_e2e_smoke.py, protobuf/issue #46, out of scope)"
+  }
+}

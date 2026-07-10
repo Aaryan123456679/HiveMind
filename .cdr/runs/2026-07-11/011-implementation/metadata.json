@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "011-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "cdr-implementation",
+  "subtask": "4.3.1 (issue #22, milestone #6 Phase 4: Query pipeline) -- intent-refiner input/output contract + prompt",
+  "git_head": "4a4aec4dc66f1f925fd5793e3f934ccf2d732a6a",
+  "run_key": "issue22-4.3.1-intent_refiner-4a4aec4",
+  "status": "completed",
+  "last_completed_step": "self-consistency",
+  "started_at": "2026-07-11T00:00:00Z",
+  "ended_at": "2026-07-11T00:30:00Z"
+}
