@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "035-verification",
+  "macro": "cdr:verify",
+  "macro_version": "1",
+  "agent": "cdr-verification",
+  "subtask": "issue-18-3.4.6-segment-fixtures-live-smoke-f1-closure",
+  "git_head": "48f1845f48479634f02df981e2c99aa767dd0f57",
+  "run_key": "505c1e2473fba79cc51fb7af2013580623cc4bc7a071a17e5c6ea0432bfb60c4",
+  "status": "completed",
+  "last_completed_step": "write_verification_and_regression",
+  "started_at": "2026-07-10T22:20:00Z",
+  "ended_at": "2026-07-10T22:45:00Z"
+}

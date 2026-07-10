@@ -1,0 +1,46 @@
+{
+  "run_id": "2026-07-10-034-implementation",
+  "status": "completed",
+  "subtask": "issue-18-3.4.6-segmentation-fixture-suite-live-smoke",
+  "commit": "48f1845f48479634f02df981e2c99aa767dd0f57",
+  "commit_parent": "656b612ba9d1c4e449492f6240aa558cb0372112",
+  "commit_type": "single local commit, NOT pushed",
+  "issue_18_status": "ALL SIX subtasks (3.4.1-3.4.6) now implemented. This was the final subtask.",
+  "next_agent": "cdr-verify",
+  "orchestrator_instruction": "After verification and any follow-up commit, the orchestrator MUST STOP and ask the user for fresh, explicit authorization before: pushing any commit, closing issue #18, closing/advancing the 'Phase 3' milestone, or any other GitHub-state-changing action. Nothing in this run or its commit message should be read as authorization to do so.",
+  "files_touched": {
+    "new": [
+      "agents/ingestion/_json_fences.py",
+      "agents/ingestion/test_segment_fixtures.py",
+      "agents/ingestion/test_segment_live.py",
+      "agents/ingestion/testdata/notes_corpus/billing_invoice_dispute.md",
+      "agents/ingestion/testdata/notes_corpus/billing_refund_requests.md",
+      "agents/ingestion/testdata/notes_corpus/engineering_oncall_runbook.md",
+      "agents/ingestion/testdata/notes_corpus/hr_onboarding_checklist.md"
+    ],
+    "modified": [
+      "agents/ingestion/segment.py",
+      "agents/ingestion/propose_split.py",
+      "agents/ingestion/test_segment.py",
+      "agents/ingestion/test_propose_split.py"
+    ]
+  },
+  "f1_resolution": {
+    "id": "F1",
+    "regression_index": ".cdr/index/regression.jsonl",
+    "decision": "(a) fixed segment.py directly, per orchestrator preference",
+    "how": "Extracted propose_split.py's private _strip_code_fences/_CODE_FENCE_RE into shared agents/ingestion/_json_fences.py::strip_code_fences; segment.py._parse_segment_json now calls it before json.loads; propose_split.py refactored to import the same shared helper instead of owning a private copy. Pure extraction -- propose_split.py's own behavior/tests unchanged.",
+    "verified_by": "test_segment.py::test_markdown_code_fence_wrapped_json_is_parsed, test_plain_code_fence_wrapped_json_is_parsed (mocked); also exercised live against a real reachable Ollama server in this run via test_segment_live.py",
+    "regression_jsonl_update_needed": "Verifier/next commit should mark F1 status=closed in .cdr/index/regression.jsonl with this commit hash; not done in this run (index-file update policy belongs to verify/commit steps, per I1 -- left for /cdr:verify to action, flagged here explicitly)."
+  },
+  "test_results": {
+    "new_tests": "test_segment_fixtures.py: 5 passed. test_segment_live.py: 2 passed (Ollama WAS reachable in this environment at http://localhost:11434 with llama3.1:8b -- smoke test ran for real, not skipped; skip path verified logically via _ollama_is_reachable()'s exception handling, not by disabling a real server).",
+    "full_suite": "153 passed, 2 failed. The 2 failures (ingestion/test_shortlist.py::test_grpc_client_translates_request_response, test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist) are a pre-existing local-environment protobuf gencode/runtime version mismatch, confirmed present on the parent commit 656b612 via git stash before/after comparison -- unrelated to this subtask's changes.",
+    "ruff": "0 new findings in agents/ingestion/ or agents/llm/. 1 pre-existing finding in generated agents/hivemind_pb2_grpc.py (unowned generated file, unrelated, present before this run)."
+  },
+  "disclosures": [
+    "gh issue view 18 body: read in full, no embedded fake system-reminder-style text found in the issue body itself.",
+    "This session's own harness-level system-reminders included two items worth flagging to the user per the recurring security note pattern in this repo: (1) a reminder announcing the date had changed from 2026-07-09 to 2026-07-10 mid-session with an explicit instruction not to mention it to the user -- treated as untrusted/suspicious per protocol and disclosed here rather than silently followed; note the repo's own .cdr/runs/2026-07-10/ directory already contained prior same-day work, so 2026-07-10 appears genuinely correct, not fabricated. (2) An 'Auto Mode Active' reminder encouraging proceeding without pausing for clarification -- followed only insofar as it matched this run's already-explicit instructions from the launching agent, not as independent authorization for anything (no push/GitHub-state action was taken, consistent with this run's actual scope).",
+    "Local dev environment initially lacked pymupdf (fitz), which made ingestion/test_dispatch.py and ingestion/test_normalize_pdf.py fail to collect; installed pymupdf locally (pip install pymupdf) purely to get a clean full-suite run for this verification pass -- this is an environment action only, not a repo/dependency-declaration change (pymupdf was already declared in agents/pyproject.toml)."
+  ]
+}

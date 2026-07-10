@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-10-034-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "cdr-implementation",
+  "subtask": "issue-18-3.4.6-segmentation-fixture-suite-live-smoke",
+  "git_head": "48f1845f48479634f02df981e2c99aa767dd0f57",
+  "run_key": "sha256:issue18-3.4.6-656b612ba9d1-fixture-suite-live-smoke-F1-fix",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-10T16:20:00Z",
+  "ended_at": "2026-07-10T17:05:00Z"
+}
