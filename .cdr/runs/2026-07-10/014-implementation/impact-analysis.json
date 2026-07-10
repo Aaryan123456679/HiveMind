@@ -1,0 +1,39 @@
+{
+  "subtask": "3.4.4b",
+  "files_modified": [
+    {
+      "path": "agents/ingestion/wiring.py",
+      "change_type": "extend",
+      "summary": "Added GrpcEntityEdgeClient (real LookupEntity/PutEntity/PutEdge client) and GrpcSegmentWiringClient (composes GrpcPutSegmentClient + GrpcEntityEdgeClient into one full SegmentWiringClient). Updated module docstring's 'Real vs. Protocol-only RPC surface' section and SegmentWiringClient's/GrpcPutSegmentClient's docstrings to reflect that the gap is now closed. No changes to execute_segment's logic, SegmentWiringClient's Protocol method signatures, TopicNotFoundError, PutSegmentResult, SegmentExecutionResult, or GrpcPutSegmentClient's existing put_segment behavior."
+    },
+    {
+      "path": "agents/ingestion/test_segment_wiring.py",
+      "change_type": "extend",
+      "summary": "Added 7 new tests covering GrpcEntityEdgeClient's three methods (request/response translation, default weight_delta, RPC-error propagation) and GrpcSegmentWiringClient (delegation across all four methods, and one end-to-end execute_segment test against the composed real-shaped client). Updated module docstring's bullet list and imports. No existing test modified or removed."
+    }
+  ],
+  "files_not_touched": [
+    "proto/hivemind.proto",
+    "engine/rpc/server.go",
+    "agents/hivemind_pb2.py",
+    "agents/hivemind_pb2_grpc.py",
+    "agents/hivemind_pb2.pyi",
+    "agents/ingestion/segment.py",
+    "agents/ingestion/shortlist.py",
+    "engine/catalog/record.go",
+    "docs/LLD/ingestion-agent.md"
+  ],
+  "out_of_scope_confirmed_untouched": [
+    "ProposeSplit (subtask 3.4.5)",
+    "engine/catalog/record.go PathHash bug (finding F4)",
+    "Go/proto files (3.4.4a already complete)"
+  ],
+  "downstream_consumers": {
+    "agents/ingestion/wiring.py": "No known callers yet wire GrpcSegmentWiringClient into a production entrypoint -- that integration (constructing a real grpc.Channel and calling execute_segment against it end-to-end, e.g. from an ingestion pipeline/CLI) is not part of 3.4.4b's scope per the task brief's impacted-module list, and is expected to land as part of subtask 3.4.6 (fixture suite + live-Ollama smoke test)."
+  },
+  "risk_assessment": {
+    "backward_compatibility": "Fully additive: two new classes added, no existing public name removed or resignatured. SegmentWiringClient Protocol's method signatures unchanged, so any existing test double or caller keeps working unmodified.",
+    "test_coverage_delta": "14 -> 21 tests in test_segment_wiring.py (+7). Full agents/ suite: 120 -> 127 (+7), matching exactly.",
+    "runtime_risk": "None observed against a live engine (out of scope for this subtask per task brief point 5's testing approach -- mocked channel/stub only, no live server). grpc.RpcError-shaped propagation confirmed at the client level; execute_segment's pre-existing broad except Exception clauses were already sufficient and needed no change."
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "verdict": "PASS",
+  "commit_reviewed": "b796ec52c9a5467b94a45fdec437584b911dadca",
+  "base": "fb64e31",
+  "scope": "agents/ingestion/wiring.py (GrpcEntityEdgeClient, GrpcSegmentWiringClient) + agents/ingestion/test_segment_wiring.py (+7 tests). Rewires SegmentWiringClient's Protocol-only lookup_entity_files/index_entity/put_edge to call real LookupEntity/PutEntity/PutEdge RPCs added in 3.4.4a.",
+  "dimensions": {
+    "requirements": {
+      "status": "pass",
+      "evidence": "Diff is purely additive to wiring.py: execute_segment's fail-fast (PutSegment) vs best-effort-with-collection (entity/edge) logic is byte-for-byte unchanged (confirmed via git diff fb64e31 b796ec5 -- wiring.py, no hunks touch execute_segment's body). New GrpcEntityEdgeClient implements lookup_entity_files->LookupEntityRequest(entity_name=..), index_entity->PutEntityRequest(entity_name=.., file_id=..), put_edge->PutEdgeRequest(source_file_id=.., target_file_id=.., edge_type=EdgeType.Value(..), weight=weight_delta). GrpcSegmentWiringClient composes GrpcPutSegmentClient + GrpcEntityEdgeClient and satisfies the full SegmentWiringClient Protocol with zero Protocol signature changes."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "Field names/types cross-checked against proto/hivemind.proto (lines 176-211): PutEdgeRequest{source_file_id, target_file_id, edge_type, weight}, PutEntityRequest{entity_name, file_id}, LookupEntityRequest{entity_name}/LookupEntityResponse{file_ids} -- all match GrpcEntityEdgeClient's request construction exactly. Cross-checked against engine/rpc/server.go's actual handlers (PutEdge L404-441, PutEntity L453-472, LookupEntity L480-512), not just proto comments -- field usage matches (GetSourceFileId/GetTargetFileId/GetEdgeType/GetWeight, GetEntityName/GetFileId). EdgeType enum wire names (ENTITY_COOCCUR=1, LLM_ASSERTED=2 per proto L39-45) match the module's own ENTITY_COOCCUR/LLM_ASSERTED string constants exactly, so hivemind_pb2.EdgeType.Value(edge_type) always resolves for the two values execute_segment ever passes. Lazy-import pattern (_import_hivemind_grpc_modules, try/except ImportError + sys.path fallback) matches GrpcPutSegmentClient/GrpcSearchCandidatesClient's established CWD-independent pattern exactly -- verified by reading both classes' __init__ side by side."
+    },
+    "weight_semantics": {
+      "status": "pass",
+      "evidence": "execute_segment calls put_edge(.., weight_delta=1) at both call sites (entity co-occurrence and related-topic edges) -- unchanged by this diff. GrpcEntityEdgeClient.put_edge maps weight_delta directly onto PutEdgeRequest.weight with no delta/running-total semantics applied client-side. This is CORRECT per the RPC contract: proto's PutEdge doc comment and task-3.4.4-engine-edge-rpc.md both state weight is 'this call's own occurrence weight (typically 1), not a running total'; engine/rpc/server.go's PutEdge handler enforces weight>0 and appends one raw occurrence to EdgeLog, with summing/dedup deferred to engine/graph.Compact. Sending weight=1 per occurrence-call is exactly right; there is no off-by-semantics bug. The Protocol parameter name 'weight_delta' is slightly misleading terminology (implies delta/increment rather than occurrence-weight) but is pre-existing (unchanged by this diff) and does not cause any behavioral mismatch since execute_segment only ever passes 1."
+    },
+    "error_handling_granularity": {
+      "status": "pass_with_comment",
+      "evidence": "execute_segment's best-effort phase catches bare `Exception` (with `# noqa: BLE001` acknowledging the broadness), not `grpc.RpcError` specifically -- confirmed unchanged from pre-3.4.4b code (git diff shows zero changes to these except blocks). This is intentional per the module's own docstring ('Error-handling strategy' section: 'catching and collecting any exception'), and is not a regression introduced by this commit. It does mean a bug in the module's own code within the try block (e.g. a TypeError from bad data) would be silently swallowed into errors rather than surfacing as a real fault, but that tradeoff was made in an earlier subtask (3.4.3/3.4.4a) and is out of scope for 3.4.4b to change. GrpcEntityEdgeClient itself (the new code) does not catch any exceptions -- RPC errors propagate unwrapped out of lookup_entity_files/index_entity/put_edge, exactly matching GrpcPutSegmentClient's convention and verified by test_grpc_entity_edge_client_rpc_error_propagates_unwrapped."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Diff to wiring.py is additive-only: two new classes (GrpcEntityEdgeClient, GrpcSegmentWiringClient) appended, plus docstring updates. No existing function body, exception type, or Protocol signature was modified. Full agents/ test suite: 127 passed (up from 120 pre-3.4.4a baseline + 7 new tests in this commit = 127), 0 failed. ruff check clean on both changed files."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Tests cover: LookupEntity response translation (list(response.file_ids)), PutEntity call with empty response, PutEdge weight/edge_type translation, default weight_delta=1, RPC-error propagation unwrapped, and GrpcSegmentWiringClient delegating all four Protocol methods to the two sub-clients including an end-to-end execute_segment run. All 7 new tests read and independently verified as testing what they claim (e.g. test_grpc_entity_edge_client_put_edge_translates_edge_type_and_weight actually asserts PutEdgeRequest kwargs, not just call count)."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "No new attack surface: entity/file_id values pass through to server-side validation (InvalidArgument on empty entity_name, invalid fileID, weight<=0) already exercised in task-3.4.4-engine-edge-rpc's own verification. Client performs no unsafe deserialization or dynamic code execution; EdgeType.Value(edge_type) is a bounded enum lookup with only two possible inputs from this codebase's own constants."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "No new hot loops; each entity/related_topic still performs O(1) additional RPC calls exactly as before (previously no-op stubs, now real network calls -- an expected and required behavior change of this subtask, not a regression)."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Docstrings accurately describe the code (verified field-by-field against actual implementation, not trusted). GrpcSegmentWiringClient uses composition (not multiple inheritance), documented rationale is sound (keeps each sub-client's lazy-import/__init__ independent)."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "127/127 tests pass. All three new RPC-facing methods on GrpcEntityEdgeClient have dedicated request/response-translation tests plus one error-propagation test; GrpcSegmentWiringClient has both a delegation test and an execute_segment end-to-end test. No test asserts against real network/engine -- consistent with the issue's 'engine RPC client mocked' test spec."
+    },
+    "scope_containment": {
+      "status": "pass",
+      "evidence": "git diff fb64e31 b796ec5 --stat shows only agents/ingestion/wiring.py, agents/ingestion/test_segment_wiring.py, and .cdr/ bookkeeping files changed. Zero engine/ or proto/ files touched (git diff fb64e31 b796ec5 -- engine/ proto/ is empty). engine/catalog/record.go last modified at f974b49 (pre-existing, well before this commit) -- F4 (PathHash bug) untouched. No ProposeSplit-related files touched."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Read wiring.py and test_segment_wiring.py in full post-commit (not relying on stale docstrings), cross-checked wire-level field usage against both proto/hivemind.proto and engine/rpc/server.go's actual handler code, ran the full test suite and ruff myself, and independently verified the diff was additive-only."
+    },
+    "possible_improvements": [
+      "Consider renaming the Protocol/client parameter 'weight_delta' to something like 'weight' or 'occurrence_weight' in a future cleanup -- it's pre-existing and not introduced by this commit, but the name invites the exact 'delta vs. occurrence weight' confusion this review had to explicitly rule out.",
+      "Bare `except Exception` in execute_segment's best-effort phase (pre-existing, unchanged) could in principle mask a genuine client-side bug (e.g. a TypeError) as a benign RPC failure -- not a required fix for this subtask, but worth a forwarded note if a future subtask revisits error-handling granularity."
+    ]
+  },
+  "prompt_injection_observed": {
+    "found": true,
+    "detail": "None found embedded in the reviewed diff/commit/test content itself. Separately, during this session two suspicious environment-level system-reminders appeared mid-task: one claiming 'The date has changed... DO NOT mention this to the user' and one titled 'Auto Mode Active' urging the agent to proceed without stopping for clarification -- the latter phrase matches this repo's known pattern of injected fake directives. Neither originated from the reviewed commit/diff/test content (they arrived as environment system-reminders, not as data read from files), and neither was treated as authorization for anything; disclosing per the recurring-injection protocol."
+  },
+  "ready_for_commit_close_out": true,
+  "closes_issue_18_subtask_3_4_4": true,
+  "closure_note": "Combined with 3.4.4a (task-3.4.4-engine-edge-rpc, commits 8e90334/79b5d71, already verified PASS_WITH_COMMENTS), this commit makes SegmentWiringClient's all four methods real-RPC-backed with execute_segment's fail-fast/best-effort semantics unchanged and verified. Issue #18 subtask 3.4.4 can be considered functionally complete."
+}

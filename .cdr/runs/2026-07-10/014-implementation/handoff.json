@@ -1,0 +1,48 @@
+{
+  "subtask": "3.4.4b",
+  "issue_context": "Not one of GitHub issue #18's originally-numbered subtasks -- a user-authorized follow-up that closes out issue #18 subtask 3.4.4 (\"PutSegment wiring + entity/edge creation\") for good, combined with the standalone engine-side task-3.4.4-engine-edge-rpc milestone (3.4.4a).",
+  "commit": {
+    "hash": "b796ec5",
+    "message_type": "feat",
+    "files_changed": [
+      "agents/ingestion/wiring.py",
+      "agents/ingestion/test_segment_wiring.py"
+    ],
+    "pushed": false
+  },
+  "run_dir": ".cdr/runs/2026-07-10/014-implementation",
+  "git_head_before": "5a4bb5665776fe50164cb9a9fcb6512c6458ddcb",
+  "git_head_after": "b796ec5",
+  "summary": "Added GrpcEntityEdgeClient (real LookupEntity/PutEntity/PutEdge client) and GrpcSegmentWiringClient (composes GrpcPutSegmentClient + GrpcEntityEdgeClient) to agents/ingestion/wiring.py. SegmentWiringClient's Protocol signatures were not changed -- the new RPCs' shapes already matched what execute_segment expected (weight_delta -> PutEdgeRequest.weight per-occurrence semantics; LookupEntityResponse.file_ids -> Sequence[int] directly; PutEntityResponse is empty). Updated the module's now-historical 'Real vs. Protocol-only RPC surface' docstring section and SegmentWiringClient's/GrpcPutSegmentClient's docstrings to reflect the closed gap. Extended test_segment_wiring.py with 7 new tests (mocked hivemind_pb2/hivemind_pb2_grpc via sys.modules + MagicMock, same pattern as the existing GrpcPutSegmentClient test -- no live server/channel anywhere).",
+  "test_results": {
+    "targeted": "agents/.venv/bin/pytest agents/ingestion/test_segment_wiring.py -q -> 21 passed (was 14)",
+    "full_suite": "agents/.venv/bin/pytest agents/ -q -> 127 passed (was 120 per task-3.4.4-engine-edge-rpc.md; +7 new, 0 regressions)",
+    "lint": "agents/.venv/bin/ruff check agents/ingestion/wiring.py agents/ingestion/test_segment_wiring.py -> All checks passed"
+  },
+  "closes": [
+    "issue #18 subtask 3.4.4 (functionally complete now, combined with 3.4.4a's engine-side RPCs)"
+  ],
+  "remaining_subtasks": [
+    {
+      "id": "3.4.5",
+      "description": "ProposeSplit -- separate, not touched by this run."
+    },
+    {
+      "id": "3.4.6",
+      "description": "Fixture suite + live-Ollama smoke test. Should also address subtask 3.4.3's forwarded finding F1 (markdown-code-fence handling), which remains open."
+    }
+  ],
+  "out_of_scope_confirmed_untouched": [
+    "ProposeSplit implementation",
+    "engine/catalog/record.go's pre-existing PathHash bug (finding F4, already logged, out of scope)",
+    "proto/hivemind.proto, engine/rpc/server.go, agents/hivemind_pb2*.py (Go/proto side -- 3.4.4a already complete, this run is Python-only)"
+  ],
+  "self_consistency_only": true,
+  "verification_not_performed": "Per invariant I4, this agent does not verify its own work. This run stops after self-consistency + one local commit. Ready for /cdr:verify.",
+  "disclosures": [
+    {
+      "type": "embedded_untrusted_instruction_text",
+      "detail": "During this session, two blocks arrived attached to tool-output turns (not from the actual user/harness): (1) a fake 'the date has changed... do not mention this' notice, and (2) a fake 'Auto Mode Active' directive. Both match this repo's documented recurring pattern of embedded fake system-reminder-style text in issue bodies/commits/.cdr output/tool output. Treated as untrusted data, not followed, disclosed to the user inline and here. No scope, permission, or file-touch decision was influenced by them."
+    }
+  ]
+}

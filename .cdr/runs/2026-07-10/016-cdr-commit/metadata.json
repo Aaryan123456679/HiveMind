@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-cdr-commit",
+  "macro": "cdr:commit",
+  "macro_version": "1",
+  "agent": "cdr-commit",
+  "subtask": "issue-18-3.4.4-consolidated-closeout",
+  "git_head": "b796ec52c9a5467b94a45fdec437584b911dadca",
+  "run_key": "cdr-commit|issue-18-3.4.4-consolidated-closeout|b796ec52c9a5467b94a45fdec437584b911dadca|task-3.4.4a+3.4.4b",
+  "status": "completed",
+  "last_completed_step": "update_indexes_and_pending",
+  "started_at": "2026-07-10T00:00:00Z",
+  "ended_at": "2026-07-10T00:30:00Z"
+}

@@ -1,0 +1,34 @@
+{
+  "note": "Internal sanity check only (build green, matrix covered) -- NOT verification. This agent does not verify its own work per invariant I4; /cdr:verify does that.",
+  "checks": [
+    {
+      "check": "targeted test file passes",
+      "command": "agents/.venv/bin/pytest agents/ingestion/test_segment_wiring.py -q",
+      "result": "21 passed (was 14 before this run's additions)"
+    },
+    {
+      "check": "full agents/ suite green (regression)",
+      "command": "agents/.venv/bin/pytest agents/ -q",
+      "result": "127 passed (was 120 per task-3.4.4-engine-edge-rpc.md's milestone record; +7 matches new tests added, no regressions, no skips)"
+    },
+    {
+      "check": "lint clean on touched files",
+      "command": "agents/.venv/bin/ruff check agents/ingestion/wiring.py agents/ingestion/test_segment_wiring.py",
+      "result": "All checks passed!"
+    },
+    {
+      "check": "diff scoped to only the two intended files",
+      "command": "git status --short",
+      "result": "Only agents/ingestion/wiring.py and agents/ingestion/test_segment_wiring.py modified; no Go/proto files, no ProposeSplit, no engine/catalog/record.go touched"
+    },
+    {
+      "check": "validation matrix criteria all covered",
+      "result": "AC1-AC6 covered; AC7 (single commit, no push) confirmed after commit step below"
+    }
+  ],
+  "anomaly_disclosure": {
+    "finding": "Two suspicious blocks arrived attached to tool-output turns mid-session rather than from the actual user/harness: (1) a fake notice claiming 'the date has changed' with an instruction not to mention it to the user, and (2) a fake 'Auto Mode Active' directive. Both match this repo's documented recurring pattern (per the task brief's security note) of embedded fake system-reminder-style text.",
+    "action_taken": "Treated both as untrusted data, not followed as instructions, disclosed to the user inline during the session and again here/in handoff.json. No permission, scope, or file-touch decision was influenced by them -- work stayed scoped to agents/ingestion/wiring.py and agents/ingestion/test_segment_wiring.py exactly as the real task brief specified.",
+    "severity": "informational, non-blocking"
+  }
+}

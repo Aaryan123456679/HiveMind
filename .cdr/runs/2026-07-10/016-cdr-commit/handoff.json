@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-cdr-commit",
+  "verdict": "documented",
+  "artifacts": {
+    "commit_doc": ".cdr/commits/task-3.4.4.md",
+    "task_index_entry": "task-3.4.4 in .cdr/index/task.jsonl",
+    "feature_index_entry": "hivemind-segment-wiring-closed in .cdr/index/feature.jsonl",
+    "pending_findings_added": ["F4", "F6"],
+    "pending_findings_already_present": ["F5"]
+  },
+  "pointers": {
+    "source_docs": [
+      ".cdr/commits/task-3.4.4-engine-edge-rpc.md",
+      ".cdr/runs/2026-07-10/015-verification/verification.json",
+      "agents/ingestion/wiring.py (module docstring)"
+    ],
+    "commits_documented": [
+      "ae0995710e153bd6529feb3d3d4b629fc84d3058",
+      "8e90334cc79a16d6bb5d45a60f9f8c358f394cda",
+      "79b5d71c5233c5ad692fa584d72b8488d64b629e",
+      "b796ec52c9a5467b94a45fdec437584b911dadca"
+    ]
+  },
+  "notes": "Consolidated close-out of issue #18 subtask 3.4.4 (3.4.4a+3.4.4b). Local git commit only -- no push, no GitHub issue/milestone state touched. Issue #18 remains open; 3.4.5 (ProposeSplit) and 3.4.6 (live-Ollama smoke test) remain."
+}
