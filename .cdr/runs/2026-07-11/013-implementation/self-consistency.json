@@ -1,0 +1,14 @@
+{
+  "subtask": "4.3.2",
+  "note": "Internal sanity only per invariant I4 -- this is NOT verification. /cdr:verify must independently confirm.",
+  "checks": [
+    {"check": "new file only, no modification to intent_refiner.py or test_intent_refiner.py", "result": "pass", "evidence": "git status shows only agents/query/test_intent_refiner_types.py untracked; no other files under agents/query/ touched"},
+    {"check": "cd agents && python3 -m pytest query/ -q", "result": "pass", "evidence": "19 passed (13 pre-existing from test_intent_refiner.py + 6-fixture-parametrized + 3 new tests here = 19 total in query/)"},
+    {"check": "cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q", "result": "pass_with_known_exception", "evidence": "2 failed, 230 passed -- the 2 failures are ingestion/test_shortlist.py::test_grpc_client_translates_request_response and test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist, both google.protobuf.runtime_version.VersionError (gencode 6.33.5 vs runtime 5.29.6), pre-existing and tracked as issue #46, unrelated to and not touched by this change"},
+    {"check": "ruff check agents/query/test_intent_refiner_types.py", "result": "pass", "evidence": "All checks passed!"},
+    {"check": "ruff check agents/ (full)", "result": "pass_with_known_exception", "evidence": "1 pre-existing F401 in generated hivemind_pb2_grpc.py (unused `warnings` import), unrelated generated-code file, not touched by this change"},
+    {"check": "validation-matrix.json rows all covered", "result": "pass", "evidence": "V1-V7 all covered=true"},
+    {"check": "fixture non-duplication vs test_intent_refiner.py", "result": "pass", "evidence": "new file's 6 fixture queries (capital of France, 1984 author, Berlin Wall, Roman Empire, product roadmap, climate change research) are all distinct strings from the sibling file's two fixtures (invoice 4521 total, billing disputes)"}
+  ],
+  "self_verification_disclaimer": "This agent does not verify its own work (invariant I4). All results above are self-reported sanity checks for handoff purposes only."
+}

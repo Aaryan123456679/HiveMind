@@ -1,0 +1,48 @@
+{
+  "subtask": "4.3.2",
+  "issue": 22,
+  "rows": [
+    {
+      "id": "V1",
+      "requirement": "differentiates factual_lookup category, verified across multiple fixture queries",
+      "test": "test_intent_refiner_types.py::test_query_type_classification[factual_lookup fixtures x3]",
+      "covered": true
+    },
+    {
+      "id": "V2",
+      "requirement": "differentiates broad_exploratory category, verified across multiple fixture queries",
+      "test": "test_intent_refiner_types.py::test_query_type_classification[broad_exploratory fixtures x3]",
+      "covered": true
+    },
+    {
+      "id": "V3",
+      "requirement": "mocked LLM responses covering each category (test spec)",
+      "test": "test_intent_refiner_types.py::_FakeLLMClient + _well_formed_json returning query_type matching each fixture's expected category",
+      "covered": true
+    },
+    {
+      "id": "V4",
+      "requirement": "refiner correctly differentiates categories (not just independently correct)",
+      "test": "test_intent_refiner_types.py::test_query_type_differentiates_categories -- asserts two results from distinct fixtures have query_type values that differ from each other",
+      "covered": true
+    },
+    {
+      "id": "V5",
+      "requirement": "no duplication of 4.3.1's existing two fixtures / no modification to intent_refiner.py",
+      "test": "manual diff review: new file only, fixture query strings distinct from test_intent_refiner.py's two fixtures, git diff confirms intent_refiner.py untouched",
+      "covered": true
+    },
+    {
+      "id": "V6",
+      "requirement": "ruff clean",
+      "test": "ruff check agents/query/test_intent_refiner_types.py",
+      "covered": true
+    },
+    {
+      "id": "V7",
+      "requirement": "full regression suite green modulo known pre-existing issue #46",
+      "test": "cd agents && python3 -m pytest . --ignore=ingestion/test_e2e_smoke.py -q",
+      "covered": true
+    }
+  ]
+}
