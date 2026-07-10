@@ -1,0 +1,28 @@
+{
+  "subtask": "4.1.3",
+  "files_added": [
+    "agents/llm/factory.py",
+    "agents/llm/test_provider_selection.py"
+  ],
+  "files_modified": [],
+  "files_explicitly_not_touched": [
+    "agents/llm/client.py",
+    "agents/llm/ollama_client.py",
+    "agents/llm/openrouter_client.py",
+    "agents/llm/gemini_client.py",
+    "agents/llm/test_ollama_client.py",
+    "agents/llm/test_openrouter_client.py",
+    "agents/llm/test_gemini_client.py",
+    "agents/ingestion/*"
+  ],
+  "downstream_consumers": {
+    "agents/ingestion/segment.py": "depends only on LLMClient interface (type-only); no change needed, no direct dependency on factory required by this subtask (ingestion currently wires OllamaClient explicitly per docs/LLD/ingestion-agent.md's cost rationale) -- factory is additive infra for future query-time wiring, not a forced migration of ingestion's existing wiring in this run.",
+    "agents/query/": "empty package (__init__.py only); no existing call site to migrate. Future subtasks that add query/intent-refiner etc. are expected to call agents.llm.factory.create_llm_client() rather than importing a concrete provider class."
+  },
+  "risk": [
+    "Low: purely additive new module + new test file, no existing passing test or production code path is modified.",
+    "Naming/convention risk: LLD did not specify an env var name; PROVIDER_ENV_VAR='LLM_PROVIDER' is this run's own choice, documented in requirement.md and factory.py's docstring for future subtasks/reviewers to follow consistently."
+  ],
+  "test_impact": "New test file only; existing 52 passing tests in agents/llm/ untouched and must remain green (regression check).",
+  "regression_scope": "cd agents && python3 -m pytest llm/ -q (all of agents/llm/, not just the new file) plus ruff on the two new files."
+}

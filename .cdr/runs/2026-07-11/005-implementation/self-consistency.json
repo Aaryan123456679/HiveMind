@@ -1,0 +1,29 @@
+{
+  "subtask": "4.1.3",
+  "note": "Internal sanity only, per invariant I4 -- this is NOT verification. /cdr:verify must run independently.",
+  "checks": [
+    {
+      "check": "targeted suite green",
+      "command": "cd agents && python3 -m pytest llm/ -q",
+      "result": "71 passed (52 pre-existing + 19 new in test_provider_selection.py)"
+    },
+    {
+      "check": "lint clean on new files",
+      "command": "cd agents && python3 -m ruff check llm/factory.py llm/test_provider_selection.py",
+      "result": "All checks passed"
+    },
+    {
+      "check": "broader regression sanity (whole agents/ suite, excluding known pre-existing live/e2e smoke tests that need a real Ollama server)",
+      "command": "cd agents && python3 -m pytest -q --ignore=ingestion/test_segment_live.py --ignore=ingestion/test_e2e_smoke.py",
+      "result": "209 passed, 2 failed -- both pre-existing and unrelated to this change: ingestion/test_shortlist.py::test_grpc_client_translates_request_response and ::test_grpc_client_is_a_valid_search_candidates_fn_for_shortlist fail due to a local environment protobuf gencode/runtime version mismatch (google.protobuf.runtime_version.VersionError), not touched by or related to agents/llm/. Confirmed these two files are outside this run's changed-file set."
+    },
+    {
+      "check": "validation-matrix coverage",
+      "result": "All 13 matrix entries (V1-V13) map to an implemented test or command; see validation-matrix.json."
+    },
+    {
+      "check": "no modification to already-verified 4.1.1/4.1.2 files",
+      "result": "git diff --stat confirms only agents/llm/factory.py and agents/llm/test_provider_selection.py are new; no existing file under agents/llm/ or agents/ingestion/ was modified."
+    }
+  ]
+}
