@@ -1,0 +1,38 @@
+{
+  "subtask": "4.5.2",
+  "acceptance_criteria": "Any citation in the synthesized answer must reference a file path that was actually present in the selected-file input set; citations to unknown paths are flagged/rejected.",
+  "rows": [
+    {
+      "criterion": "Citation matching a provided file path is not flagged",
+      "test": "test_valid_citation_not_flagged_as_unknown",
+      "covered": true
+    },
+    {
+      "criterion": "Hallucinated citation (no matching '## File:' header in selected_markdown) is detected/flagged",
+      "test": "test_hallucinated_citation_is_flagged_as_unknown",
+      "covered": true
+    },
+    {
+      "criterion": "Mixed valid + hallucinated citation set: only the hallucinated one is flagged, valid one is not",
+      "test": "test_mixed_valid_and_hallucinated_citations_only_hallucinated_flagged",
+      "covered": true
+    },
+    {
+      "criterion": "Detection is order-independent (hallucinated citation first vs. second in answer/citations)",
+      "test": "test_hallucinated_citation_flagged_regardless_of_position",
+      "covered": true
+    },
+    {
+      "criterion": "Flagging surfaces to the caller as a distinct signal without silently mutating/dropping the raw citations list",
+      "test": "test_mixed_valid_and_hallucinated_citations_only_hallucinated_flagged (asserts result.citations unchanged)",
+      "covered": true
+    },
+    {
+      "criterion": "End-to-end via synthesize_answer() + LLMClient-mocked fixture (not unit-testing unknown_citations() on a hand-built SynthesizerResult in isolation)",
+      "test": "all tests in file call synthesize_answer() through _FakeLLMClient",
+      "covered": true
+    }
+  ],
+  "gaps": [],
+  "note": "General unknown_citations() correctness (dedup, order-preservation) is already covered by test_synthesizer.py (4.5.1) and intentionally not re-duplicated here; this file's tests are scoped to the specific one-valid+one-hallucinated end-to-end scenario 4.5.2's acceptance criteria/test spec describe."
+}

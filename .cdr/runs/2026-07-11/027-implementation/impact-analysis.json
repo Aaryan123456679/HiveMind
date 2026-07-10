@@ -1,0 +1,19 @@
+{
+  "subtask": "4.5.2",
+  "issue": 24,
+  "files_new": [
+    "agents/query/test_synthesizer_citations.py"
+  ],
+  "files_modified": [],
+  "files_read_only_reference": [
+    "agents/query/synthesizer.py",
+    "agents/query/test_synthesizer.py",
+    "agents/llm/client.py",
+    "docs/LLD/query-agent.md"
+  ],
+  "downstream_consumers_of_synthesizer": [],
+  "downstream_consumers_note": "grep confirms no module outside agents/query/synthesizer.py and its own test file calls synthesize_answer() yet; topic_selector.py only has a forward-reference comment ('mapping file_ids back to file content for synthesizer prompt is left to a later subtask'), no actual call site. Zero risk of breaking existing callers.",
+  "api_surface_changes": "none -- no changes to synthesizer.py's public API (SynthesizerResult, unknown_citations(), synthesize_answer(), SynthesizerError, SynthesizerParseError all unchanged)",
+  "risk_level": "low",
+  "risk_rationale": "Purely additive new test file exercising already-shipped, already-partially-tested behavior (unknown_citations()) in a dedicated end-to-end scenario. No production code path touched."
+}
