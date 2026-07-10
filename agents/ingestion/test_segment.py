@@ -262,3 +262,35 @@ def test_create_new_without_new_topic_path_raises() -> None:
 
     with pytest.raises(SegmentParseError, match="new_topic_path"):
         segment(_make_doc(), _make_shortlist(), client)
+
+
+# ---------------------------------------------------------------------------
+# Markdown-code-fence tolerance (closes forwarded finding F1)
+# ---------------------------------------------------------------------------
+
+
+def test_markdown_code_fence_wrapped_json_is_parsed() -> None:
+    """Regression guard for F1 (`.cdr/index/regression.jsonl`): a real
+    Ollama-backed model that ignores the prompt's "no markdown code fences"
+    instruction and wraps its otherwise well-formed JSON in a ```` ```json ... ``` ````
+    fence must still parse successfully via the shared
+    `ingestion._json_fences.strip_code_fences` helper, not raise `SegmentParseError`.
+    """
+    fenced = "```json\n" + json.dumps(_VALID_APPEND_PAYLOAD) + "\n```"
+    client = _FakeLLMClient(response=fenced)
+
+    result = segment(_make_doc(), _make_shortlist(), client)
+
+    assert result.topic_action == "APPEND_EXISTING"
+    assert result.target_topic == "billing/InvoiceDisputes"
+
+
+def test_plain_code_fence_wrapped_json_is_parsed() -> None:
+    """Same as above, but an untagged ``` ``` ``` fence (no `json` language tag)."""
+    fenced = "```\n" + json.dumps(_VALID_CREATE_PAYLOAD) + "\n```"
+    client = _FakeLLMClient(response=fenced)
+
+    result = segment(_make_doc(), _make_shortlist(), client)
+
+    assert result.topic_action == "CREATE_NEW"
+    assert result.new_topic_path == "billing/DuplicateCharges"

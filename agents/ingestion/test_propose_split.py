@@ -177,9 +177,11 @@ def test_llm_error_propagates_unwrapped() -> None:
 
 
 def test_markdown_code_fence_wrapped_json_is_parsed() -> None:
-    """Regression guard: proactively avoid segment.py's open F1 finding
-    (`.cdr/index/regression.jsonl`) -- a fenced but otherwise well-formed JSON
-    response must still parse successfully, not raise `ProposeSplitParseError`.
+    """Regression guard for the shared `ingestion._json_fences.strip_code_fences`
+    helper (originally this module's own private code, extracted in 3.4.6 when
+    `segment.py`'s equivalent gap was closed as F1, `.cdr/index/regression.jsonl`) --
+    a fenced but otherwise well-formed JSON response must still parse successfully,
+    not raise `ProposeSplitParseError`.
     """
     fenced = "```json\n" + json.dumps(_VALID_PAYLOAD) + "\n```"
     client = _FakeLLMClient(response=fenced)

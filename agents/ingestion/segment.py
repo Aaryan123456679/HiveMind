@@ -71,6 +71,22 @@ so a legitimate existing topic the shortlist happened not to surface would
 be incorrectly rejected by a strict membership check. Validation here stays
 about the JSON's own *structural* correctness, not a second-guessing of the
 model's topic-selection judgment.
+
+Markdown-code-fence tolerance -- F1 closed (subtask 3.4.6)
+------------------------------------------------------------
+Previously (3.4.3), this module called `json.loads` on the raw completion string
+unconditionally, so a real Ollama-backed model that ignored the prompt's "no markdown
+code fences" instruction and wrapped its JSON in ` ```json ... ``` ` would be rejected
+outright by `SegmentParseError("... is not valid JSON ...")`, even though the enclosed
+payload was perfectly well-formed. This was flagged forward as finding F1
+(`.cdr/index/regression.jsonl`), non-blocking at the time because 3.4.3's own tests
+were mocked and never exercised a real model's response shape.
+`ingestion.propose_split` (3.4.5) already had to solve the exact same problem and
+carried its own private fence-stripping helper. Subtask 3.4.6 closes F1 by extracting
+that helper into the shared `ingestion._json_fences.strip_code_fences` (both modules
+now import it, rather than segment.py re-deriving the same regex independently or
+propose_split.py's copy silently drifting out of sync), and calling it here before
+`json.loads`, mirroring `propose_split.py`'s existing, already-proven pattern.
 """
 
 from __future__ import annotations
@@ -78,6 +94,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Sequence
+
+from ingestion._json_fences import strip_code_fences
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
@@ -202,8 +220,9 @@ def _parse_segment_json(raw: str) -> SegmentResult:
         SegmentParseError: On any parse or validation failure. See the class
             docstring for the exact failure cases covered.
     """
+    stripped = strip_code_fences(raw)
     try:
-        payload = json.loads(raw)
+        payload = json.loads(stripped)
     except json.JSONDecodeError as exc:
         raise SegmentParseError(
             f"segment: LLM response is not valid JSON: {exc}"

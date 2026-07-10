@@ -58,16 +58,21 @@ itself one contiguous slice of the overall partition). Scattered/interleaved
 multi-range files are not attempted; flagged forward as a disclosed scope reduction,
 not a defect.
 
-Markdown-code-fence defensiveness -- proactively avoiding a known open finding
+Markdown-code-fence defensiveness -- shared helper, F1 now closed
 ------------------------------------------------------------------------------------
-`agents/ingestion/segment.py` (3.4.3) has an open, non-blocking finding (F1,
-`.cdr/index/regression.jsonl`): real Ollama-backed models sometimes wrap JSON
-completions in markdown code fences despite being told not to, and `segment.py`'s
-parser rejects that as malformed rather than stripping the fence. This module's parser
-proactively strips a single leading/trailing ``` ```(json)?...``` ``` fence (if present)
-before `json.loads`, so it does not reproduce that same failure mode. `segment.py`
-itself is not modified here (out of this subtask's file scope); its own F1 remains open
-and is flagged forward again in this run's `handoff.json`.
+Real Ollama-backed models sometimes wrap JSON completions in markdown code fences
+despite being told not to. This module's parser proactively strips a single
+leading/trailing ``` ```(json)?...``` ``` fence (if present) before `json.loads`, via
+the shared `ingestion._json_fences.strip_code_fences` helper.
+
+Historical note: `agents/ingestion/segment.py` (3.4.3) originally lacked this
+guard -- an open, non-blocking finding (F1, `.cdr/index/regression.jsonl`) explicitly
+forwarded from this module's own defensiveness to `segment.py`'s missing equivalent.
+Subtask 3.4.6 closed F1 by extracting this module's original private
+`_strip_code_fences`/`_CODE_FENCE_RE` into the shared `ingestion._json_fences` module
+and wiring `segment.py` to use it too, rather than leaving `segment.py`'s gap open or
+letting a second independent copy of the same regex drift out of sync. This module's
+own behavior is unchanged by the extraction.
 
 Exception design
 -----------------
@@ -81,21 +86,13 @@ message identifying which check failed.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
+from ingestion._json_fences import strip_code_fences
+
 if TYPE_CHECKING:
     from llm.client import LLMClient
-
-#: Regex matching a single leading/trailing markdown code fence wrapping the entire
-#: response, optionally tagged (```json ... ``` or plain ``` ... ```). Mirrors the
-#: shape real Ollama-backed models commonly emit despite prompt instructions against
-#: it (see module docstring's "Markdown-code-fence defensiveness" section).
-_CODE_FENCE_RE = re.compile(
-    r"^\s*```(?:[a-zA-Z0-9_+-]*)\s*\n?(?P<body>.*?)\n?```\s*$",
-    re.DOTALL,
-)
 
 #: Minimum number of sections a real split proposal must contain: a "split" that
 #: produces fewer than 2 output files is not a split at all.
@@ -183,18 +180,6 @@ class ProposeSplitResult:
     redirect_summary: str
 
 
-def _strip_code_fences(raw: str) -> str:
-    """Strip a single leading/trailing markdown code fence wrapping `raw`, if
-    present; otherwise return `raw` unchanged.
-
-    See module docstring's "Markdown-code-fence defensiveness" section.
-    """
-    match = _CODE_FENCE_RE.match(raw)
-    if match:
-        return match.group("body")
-    return raw
-
-
 def _build_prompt(document_text: str) -> str:
     return _SPLIT_PROMPT_TEMPLATE.format(document_text=document_text)
 
@@ -220,7 +205,7 @@ def _parse_propose_split_json(raw: str) -> tuple[list[dict], str]:
     Raises:
         ProposeSplitParseError: On any parse or structural-validation failure.
     """
-    stripped = _strip_code_fences(raw)
+    stripped = strip_code_fences(raw)
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError as exc:
