@@ -23,6 +23,12 @@ network call anywhere in this file). Assertions cover:
   once;
 - `GrpcPutSegmentClient` correctly translates request/response shapes using a mock
   stand-in for `grpc.Channel`/the generated stub -- still no real network call.
+- (subtask 3.4.4b) `GrpcEntityEdgeClient` correctly translates
+  `lookup_entity_files`/`index_entity`/`put_edge` into `LookupEntity`/`PutEntity`/
+  `PutEdge` request/response shapes, and `GrpcSegmentWiringClient` correctly delegates
+  all four `SegmentWiringClient` methods to one shared channel's two sub-clients --
+  again using mocked `hivemind_pb2`/`hivemind_pb2_grpc` modules, never a real network
+  call or a live engine instance.
 """
 
 from __future__ import annotations
@@ -35,7 +41,9 @@ from ingestion.segment import SegmentResult
 from ingestion.wiring import (
     ENTITY_COOCCUR,
     LLM_ASSERTED,
+    GrpcEntityEdgeClient,
     GrpcPutSegmentClient,
+    GrpcSegmentWiringClient,
     PutSegmentResult,
     TopicNotFoundError,
     execute_segment,
@@ -371,3 +379,184 @@ def test_grpc_put_segment_client_translates_request_response(monkeypatch):
     fake_pb2.PutSegmentRequest.assert_called_once_with(file_id=0, content=b"content bytes")
     fake_stub_instance.PutSegment.assert_called_once_with(request_marker)
     assert result == PutSegmentResult(file_id=42, new_version=3)
+
+
+# ---------------------------------------------------------------------------
+# GrpcEntityEdgeClient (real request/response translation, mocked channel/stub)
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_hivemind_modules(monkeypatch):
+    """Install fresh `MagicMock` stand-ins for `hivemind_pb2`/`hivemind_pb2_grpc` into
+    `sys.modules`, matching `test_grpc_put_segment_client_translates_request_response`'s
+    pattern. Returns `(fake_pb2, fake_pb2_grpc)` for the caller to configure further.
+    """
+    import sys
+
+    fake_pb2 = MagicMock()
+    fake_pb2_grpc = MagicMock()
+    monkeypatch.setitem(sys.modules, "hivemind_pb2", fake_pb2)
+    monkeypatch.setitem(sys.modules, "hivemind_pb2_grpc", fake_pb2_grpc)
+    return fake_pb2, fake_pb2_grpc
+
+
+def test_grpc_entity_edge_client_lookup_entity_files_translates_response(monkeypatch):
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    request_marker = object()
+    fake_pb2.LookupEntityRequest.return_value = request_marker
+
+    fake_response = MagicMock()
+    fake_response.file_ids = [1, 2, 3]
+
+    fake_stub_instance = MagicMock()
+    fake_stub_instance.LookupEntity.return_value = fake_response
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    fake_channel = MagicMock()
+    client = GrpcEntityEdgeClient(fake_channel)
+    result = client.lookup_entity_files("Acme Corp")
+
+    fake_pb2_grpc.HiveMindStub.assert_called_once_with(fake_channel)
+    fake_pb2.LookupEntityRequest.assert_called_once_with(entity_name="Acme Corp")
+    fake_stub_instance.LookupEntity.assert_called_once_with(request_marker)
+    assert result == [1, 2, 3]
+
+
+def test_grpc_entity_edge_client_index_entity_calls_put_entity(monkeypatch):
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    request_marker = object()
+    fake_pb2.PutEntityRequest.return_value = request_marker
+
+    fake_stub_instance = MagicMock()
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    fake_channel = MagicMock()
+    client = GrpcEntityEdgeClient(fake_channel)
+    result = client.index_entity("Acme Corp", 100)
+
+    fake_pb2.PutEntityRequest.assert_called_once_with(entity_name="Acme Corp", file_id=100)
+    fake_stub_instance.PutEntity.assert_called_once_with(request_marker)
+    assert result is None
+
+
+def test_grpc_entity_edge_client_put_edge_translates_edge_type_and_weight(monkeypatch):
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    request_marker = object()
+    fake_pb2.PutEdgeRequest.return_value = request_marker
+    fake_edge_type_value = object()
+    fake_pb2.EdgeType.Value.return_value = fake_edge_type_value
+
+    fake_stub_instance = MagicMock()
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    fake_channel = MagicMock()
+    client = GrpcEntityEdgeClient(fake_channel)
+    result = client.put_edge(100, 1, ENTITY_COOCCUR, weight_delta=1)
+
+    fake_pb2.EdgeType.Value.assert_called_once_with(ENTITY_COOCCUR)
+    fake_pb2.PutEdgeRequest.assert_called_once_with(
+        source_file_id=100, target_file_id=1, edge_type=fake_edge_type_value, weight=1
+    )
+    fake_stub_instance.PutEdge.assert_called_once_with(request_marker)
+    assert result is None
+
+
+def test_grpc_entity_edge_client_put_edge_default_weight_delta(monkeypatch):
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    fake_stub_instance = MagicMock()
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    fake_channel = MagicMock()
+    client = GrpcEntityEdgeClient(fake_channel)
+    client.put_edge(100, 1, LLM_ASSERTED)
+
+    _, kwargs = fake_pb2.PutEdgeRequest.call_args
+    assert kwargs["weight"] == 1
+
+
+def test_grpc_entity_edge_client_rpc_error_propagates_unwrapped(monkeypatch):
+    """`grpc.RpcError` (or any other stub-raised exception) propagates unwrapped out of
+    each `GrpcEntityEdgeClient` method, exactly like `GrpcPutSegmentClient.put_segment`
+    -- it is `execute_segment`'s job (already exercised above with the fake client) to
+    catch and collect these into `SegmentExecutionResult.errors`, not this client's."""
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    class _FakeRpcError(Exception):
+        pass
+
+    fake_stub_instance = MagicMock()
+    fake_stub_instance.PutEdge.side_effect = _FakeRpcError("unavailable")
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    client = GrpcEntityEdgeClient(MagicMock())
+
+    with pytest.raises(_FakeRpcError):
+        client.put_edge(100, 1, ENTITY_COOCCUR)
+
+
+# ---------------------------------------------------------------------------
+# GrpcSegmentWiringClient (delegates to GrpcPutSegmentClient + GrpcEntityEdgeClient)
+# ---------------------------------------------------------------------------
+
+
+def test_grpc_segment_wiring_client_delegates_all_four_methods(monkeypatch):
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    fake_put_segment_response = MagicMock()
+    fake_put_segment_response.file_id = 42
+    fake_put_segment_response.new_version = 3
+
+    fake_lookup_response = MagicMock()
+    fake_lookup_response.file_ids = [7, 8]
+
+    fake_stub_instance = MagicMock()
+    fake_stub_instance.PutSegment.return_value = fake_put_segment_response
+    fake_stub_instance.LookupEntity.return_value = fake_lookup_response
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    fake_channel = MagicMock()
+    client = GrpcSegmentWiringClient(fake_channel)
+
+    put_result = client.put_segment(0, b"content")
+    lookup_result = client.lookup_entity_files("Acme Corp")
+    client.index_entity("Acme Corp", 42)
+    client.put_edge(42, 7, ENTITY_COOCCUR, weight_delta=1)
+
+    assert put_result == PutSegmentResult(file_id=42, new_version=3)
+    assert lookup_result == [7, 8]
+    fake_stub_instance.PutEntity.assert_called_once()
+    fake_stub_instance.PutEdge.assert_called_once()
+
+
+def test_grpc_segment_wiring_client_satisfies_execute_segment_end_to_end(monkeypatch):
+    """`execute_segment` works against a `GrpcSegmentWiringClient` exactly as it does
+    against the plain `_FakeWiringClient` used elsewhere in this file -- the Protocol
+    shape did not change, so nothing about `execute_segment` itself needed updating."""
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    fake_put_segment_response = MagicMock()
+    fake_put_segment_response.file_id = 100
+    fake_put_segment_response.new_version = 1
+
+    fake_lookup_response = MagicMock()
+    fake_lookup_response.file_ids = [1, 2]
+
+    fake_stub_instance = MagicMock()
+    fake_stub_instance.PutSegment.return_value = fake_put_segment_response
+    fake_stub_instance.LookupEntity.return_value = fake_lookup_response
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    client = GrpcSegmentWiringClient(MagicMock())
+    segment_result = _segment(entities=["Acme Corp"], related_topics=[])
+
+    result = execute_segment(segment_result, client, resolve_topic_file_id=lambda p: None)
+
+    assert result.file_id == 100
+    assert result.entity_cooccur_edges_created == 2
+    assert result.errors == ()
+    assert fake_stub_instance.PutEdge.call_count == 2
+    fake_stub_instance.PutEntity.assert_called_once()

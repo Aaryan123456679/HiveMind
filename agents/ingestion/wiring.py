@@ -13,8 +13,8 @@ does with each segment" section:
 This module consumes a :class:`~ingestion.segment.SegmentResult` (3.4.3) and drives
 those three effects through an injected client.
 
-Real vs. Protocol-only RPC surface -- disclosed, load-bearing choice
----------------------------------------------------------------------
+Real vs. Protocol-only RPC surface -- historical disclosure, now closed (3.4.4b)
+---------------------------------------------------------------------------------
 `PutSegment` is a real RPC: `proto/hivemind.proto` defines
 `PutSegmentRequest{file_id, content}` / `PutSegmentResponse{file_id, new_version}`, and
 `engine/rpc/server.go` implements it (task-3.2.2, already verified+committed). This
@@ -23,29 +23,30 @@ module's `GrpcPutSegmentClient` wraps it for real, following `ingestion.shortlis
 fallback, so importing this module never requires `grpc` to be installed or an engine to
 exist).
 
-`entity.idx` and any graph edge-write operation, however, have **no real RPC anywhere**
-in the current system:
-
-- `proto/hivemind.proto` defines exactly six RPCs (`PutSegment`, `GetFile`,
-  `ReadPartial`, `GraphNeighbors`, `SearchCandidates`, `ProposeSplit`) --
-  `docs/LLD/rpc.md` states this list is frozen by issue #16's task-3.2.1 acceptance
-  criteria, and any new RPC needs its own separately-scoped subtask. `GraphNeighbors`
-  is read-only traversal; there is no `AddEdge`/`PutEdge`/similar write-path RPC.
-- The only Go-side edge-write primitives (`engine/graph/edgelog.go`'s
-  `EdgeLog.AppendEdge`, `engine/graph/edge_append.go`'s `EdgeAppender.AppendEdge`) are
-  engine-internal Go types with no gRPC handler wrapping them.
-- `entity.idx` itself does not exist as a real index/store anywhere: searching
-  `engine/` and `agents/` for `entity.idx` / `EntityIndex` finds nothing outside this
-  LLD's own prose (`docs/LLD/ingestion-agent.md`, `docs/LLD/graph.md`).
-
-Because of this, `SegmentWiringClient` below is a *Protocol*: `put_segment` is backed
-by a real client (`GrpcPutSegmentClient`); `lookup_entity_files`, `index_entity`, and
-`put_edge` have **no concrete gRPC-backed implementation shipped in this commit** --
-only the Protocol shape, satisfied by test doubles (per the issue's own test spec:
-"engine RPC client mocked"). Adding real RPCs for entity-index lookups and graph edge
-writes is necessarily a separate, proto-touching subtask (outside this subtask's
-`agents/ingestion/wiring.py`-only impacted-module scope) -- flagged forward, not
+`entity.idx` and graph edge-write operations originally had **no real RPC anywhere**
+in the system: `proto/hivemind.proto` was frozen at exactly six RPCs (`PutSegment`,
+`GetFile`, `ReadPartial`, `GraphNeighbors`, `SearchCandidates`, `ProposeSplit`) by issue
+#16's task-3.2.1 acceptance criteria, `GraphNeighbors` was read-only traversal only, and
+`entity.idx` did not exist as a real index/store anywhere outside LLD prose. That gap
+was disclosed and flagged forward from the original 3.4.4 implementation rather than
 silently worked around.
+
+It has since been closed in two steps, both **user-authorized new scope**, not
+originally-numbered issue #18 subtasks:
+
+- **task-3.4.4-engine-edge-rpc** (`.cdr/commits/task-3.4.4-engine-edge-rpc.md`) added
+  three additive RPCs -- `PutEdge`, `PutEntity`, `LookupEntity` -- to
+  `proto/hivemind.proto`, with real handlers in `engine/rpc/server.go` backed by
+  `engine/graph`'s edge log (`Compact` handles weight-summing/dedup) and a dedicated
+  `entity.idx` B+Tree, respectively.
+- **subtask 3.4.4b** (this module's current state) rewires `SegmentWiringClient`'s
+  `lookup_entity_files`/`index_entity`/`put_edge` to call those three RPCs for real,
+  via `GrpcEntityEdgeClient` (and the combined `GrpcSegmentWiringClient`). Together,
+  3.4.4a (the engine RPCs) and 3.4.4b (this rewiring) close out issue #18 subtask
+  3.4.4 for good -- `SegmentWiringClient` is no longer Protocol-only for any method;
+  test doubles remain available and are still what `execute_segment`'s own unit tests
+  use (per the issue's original test spec: "engine RPC client mocked"), but a fully
+  real implementation now exists to combine with it in production.
 
 `ENTITY_COOCCUR` semantics -- disclosed, deliberate deviation from a literal reading
 -----------------------------------------------------------------------------------------
@@ -183,11 +184,15 @@ class SegmentExecutionResult:
 class SegmentWiringClient(Protocol):
     """The client surface `execute_segment` needs.
 
-    `put_segment` is backed by a real RPC (see `GrpcPutSegmentClient`).
-    `lookup_entity_files`/`index_entity`/`put_edge` have no real gRPC-backed
-    implementation anywhere in this commit -- see module docstring's "Real vs.
-    Protocol-only RPC surface" section for why. Tests supply a plain fake satisfying
-    this Protocol structurally (no `grpc`/generated stubs required).
+    All four methods are now backed by real RPCs: `put_segment` by
+    `GrpcPutSegmentClient` (`PutSegment`), and `lookup_entity_files`/`index_entity`/
+    `put_edge` by `GrpcEntityEdgeClient` (`LookupEntity`/`PutEntity`/`PutEdge` --
+    added by task-3.4.4-engine-edge-rpc, wired in by subtask 3.4.4b; see module
+    docstring's "Real vs. Protocol-only RPC surface" section for the history).
+    `GrpcSegmentWiringClient` combines all four into one object. Tests still supply a
+    plain fake satisfying this Protocol structurally (no `grpc`/generated stubs
+    required) -- this remains a `Protocol` (rather than an ABC) for exactly that
+    reason, not because any method still lacks a real implementation.
     """
 
     def put_segment(self, file_id: int, content: bytes) -> PutSegmentResult:
@@ -348,11 +353,14 @@ def _import_hivemind_grpc_modules():
 
 class GrpcPutSegmentClient:
     """Real `PutSegment` client: wraps `hivemind_pb2_grpc.HiveMindStub.PutSegment` over
-    a caller-supplied `grpc.Channel`. Only implements `put_segment` -- see this
-    module's docstring for why `lookup_entity_files`/`index_entity`/`put_edge` have no
-    real implementation to offer (no such RPC exists yet). Not itself a full
-    `SegmentWiringClient` -- combine with a caller-supplied entity/edge implementation
-    (or a test double) to get one; there is currently no real one to combine with.
+    a caller-supplied `grpc.Channel`. Only implements `put_segment` -- see
+    :class:`GrpcEntityEdgeClient` (and :class:`GrpcSegmentWiringClient`, which
+    combines both) for the real `lookup_entity_files`/`index_entity`/`put_edge`
+    implementations, now backed by the `PutEdge`/`PutEntity`/`LookupEntity` RPCs
+    added by the task-3.4.4-engine-edge-rpc milestone and wired in here by subtask
+    3.4.4b. Not itself a full `SegmentWiringClient` -- combine with a
+    `GrpcEntityEdgeClient` (or a test double) to get one, or just use
+    `GrpcSegmentWiringClient` directly.
 
     Follows `ingestion.shortlist.GrpcSearchCandidatesClient`'s exact pattern: `grpc`/the
     generated stubs are imported lazily (not at module import time), so importing this
@@ -371,4 +379,117 @@ class GrpcPutSegmentClient:
         response = self._stub.PutSegment(request)
         return PutSegmentResult(
             file_id=response.file_id, new_version=response.new_version
+        )
+
+
+class GrpcEntityEdgeClient:
+    """Real entity/edge client: wraps `hivemind_pb2_grpc.HiveMindStub`'s `PutEdge`,
+    `PutEntity`, and `LookupEntity` RPCs over a caller-supplied `grpc.Channel`.
+
+    These three RPCs did not exist when this module was first written (see the
+    module docstring's now-historical "Real vs. Protocol-only RPC surface" section
+    for the original gap disclosure) -- they were added by the standalone
+    task-3.4.4-engine-edge-rpc milestone (`.cdr/commits/task-3.4.4-engine-edge-rpc.md`)
+    specifically to unblock this class. This class is that follow-up, subtask
+    3.4.4b: it rewires `SegmentWiringClient`'s three previously Protocol-only methods
+    to real RPC calls, closing out issue #18 subtask 3.4.4 for good (combined with
+    3.4.4a's engine-side work).
+
+    Method signatures deliberately match `SegmentWiringClient`'s existing Protocol
+    shape exactly -- no gratuitous change was needed, because the three new RPCs'
+    request shapes line up cleanly with what the Protocol already declared:
+
+    - `lookup_entity_files(entity) -> Sequence[int]` calls `LookupEntity`, returning
+      its `file_ids` repeated field directly (already a plain list of ints).
+    - `index_entity(entity, file_id) -> None` calls `PutEntity`; `PutEntityResponse`
+      is empty (`__slots__ = ()`), so there is nothing to translate back.
+    - `put_edge(source_file_id, target_file_id, edge_type, *, weight_delta=1) -> None`
+      calls `PutEdge`. `weight_delta` maps directly onto `PutEdgeRequest.weight`:
+      per `proto/hivemind.proto`'s `PutEdge` doc comment, that field is *this call's
+      own occurrence weight* (typically 1), not a running total -- summing repeated
+      `ENTITY_COOCCUR` occurrences into a total weight is `engine/graph.Compact`'s
+      job, not this client's or `execute_segment`'s. `edge_type` (a plain str,
+      `ENTITY_COOCCUR`/`LLM_ASSERTED`, matching this module's own module-level
+      constants) is translated to the generated `EdgeType` enum via
+      `hivemind_pb2.EdgeType.Value(edge_type)` -- those constants are defined to be
+      exactly the enum's canonical wire names, so this lookup always succeeds for
+      the two values `execute_segment` ever passes.
+
+    Follows the same lazy-import pattern as `GrpcPutSegmentClient`/
+    `GrpcSearchCandidatesClient`: `grpc`/the generated stubs are imported lazily, not
+    at module import time.
+    """
+
+    def __init__(self, channel: "grpc.Channel") -> None:
+        _, hivemind_pb2_grpc = _import_hivemind_grpc_modules()
+
+        self._stub = hivemind_pb2_grpc.HiveMindStub(channel)
+
+    def lookup_entity_files(self, entity: str) -> list[int]:
+        hivemind_pb2, _ = _import_hivemind_grpc_modules()
+
+        request = hivemind_pb2.LookupEntityRequest(entity_name=entity)
+        response = self._stub.LookupEntity(request)
+        return list(response.file_ids)
+
+    def index_entity(self, entity: str, file_id: int) -> None:
+        hivemind_pb2, _ = _import_hivemind_grpc_modules()
+
+        request = hivemind_pb2.PutEntityRequest(entity_name=entity, file_id=file_id)
+        self._stub.PutEntity(request)
+
+    def put_edge(
+        self,
+        source_file_id: int,
+        target_file_id: int,
+        edge_type: str,
+        *,
+        weight_delta: int = 1,
+    ) -> None:
+        hivemind_pb2, _ = _import_hivemind_grpc_modules()
+
+        request = hivemind_pb2.PutEdgeRequest(
+            source_file_id=source_file_id,
+            target_file_id=target_file_id,
+            edge_type=hivemind_pb2.EdgeType.Value(edge_type),
+            weight=weight_delta,
+        )
+        self._stub.PutEdge(request)
+
+
+class GrpcSegmentWiringClient:
+    """Full real `SegmentWiringClient`: combines `GrpcPutSegmentClient` (`put_segment`)
+    and `GrpcEntityEdgeClient` (`lookup_entity_files`/`index_entity`/`put_edge`) over
+    one shared `grpc.Channel`, so callers of `execute_segment` no longer need to hand-
+    assemble a Protocol-satisfying object from two separate pieces -- this class alone
+    satisfies `SegmentWiringClient` end-to-end against the real engine.
+
+    Composition (delegating to one instance of each client) rather than multiple
+    inheritance, to keep each client's own `__init__`/lazy-import behavior
+    independent and unambiguous.
+    """
+
+    def __init__(self, channel: "grpc.Channel") -> None:
+        self._put_segment_client = GrpcPutSegmentClient(channel)
+        self._entity_edge_client = GrpcEntityEdgeClient(channel)
+
+    def put_segment(self, file_id: int, content: bytes) -> PutSegmentResult:
+        return self._put_segment_client.put_segment(file_id, content)
+
+    def lookup_entity_files(self, entity: str) -> list[int]:
+        return self._entity_edge_client.lookup_entity_files(entity)
+
+    def index_entity(self, entity: str, file_id: int) -> None:
+        self._entity_edge_client.index_entity(entity, file_id)
+
+    def put_edge(
+        self,
+        source_file_id: int,
+        target_file_id: int,
+        edge_type: str,
+        *,
+        weight_delta: int = 1,
+    ) -> None:
+        self._entity_edge_client.put_edge(
+            source_file_id, target_file_id, edge_type, weight_delta=weight_delta
         )
