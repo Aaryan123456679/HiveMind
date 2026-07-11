@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "run_id": "007-implementation",
+  "subtask": "5.3.4",
+  "issue": 28,
+  "commit": "e078bd249b2cfb0ea82f0c2fa1ddc8e37f8d7101",
+  "status": "completed",
+  "not_verified_by_self": true,
+  "files_changed": [
+    "agents/eval/run_benchmark.py",
+    "agents/eval/chart.py",
+    "agents/eval/test_run_benchmark.py",
+    "agents/eval/test_chart.py"
+  ],
+  "test_result": "python3 -m pytest agents/eval/ -q -> 163 passed, 0 failed (0 regressions to any pre-existing eval/ test file).",
+  "disclosures": {
+    "a_never_run_live": "The harness (run_benchmark.py + chart.py) is built and fixture-tested ONLY. It has been executed zero times against the real corpus (data/synthetic_corpus/) or any real paid API (OpenRouter/Gemini). run_benchmark.main() is intentionally wired to RAISE RunBenchmarkError rather than silently attempt a real run in this pass -- verified directly (see self-consistency.json's manual_checks). No .env file was read, no live network call was made, anywhere in this implementation or its own test suite.",
+    "b_cost_estimate_inputs_for_orchestrator": {
+      "llm_calls_per_query_per_arm_per_checkpoint_in_a_real_run": {
+        "hivemind": "0 direct LLM calls from run_benchmark.py's own code per query (retrieval is delegated to an injected hivemind_retriever standing in for the real gRPC pipeline -- the real pipeline's own LLM-call cost, if any, is internal to query.pipeline.run_query_pipeline, out of this module's accounting) + 1 final-answer LLM call (query.synthesizer.synthesize_answer via eval.pipeline.generate_final_answer) if judge scoring is disabled, i.e. cost/latency for this call is accounted but the call itself, in the offline pass, always targets local Ollama ($0.0).",
+        "vector_rag": "1 embedding call per checkpoint to embed all chunks (batched, once per checkpoint, not per query) + 1 embedding call per query (query embedding) + 1 final-answer LLM call per query. Embedding calls target OllamaEmbeddingClient (local, free) in the intended real-run design too (per vector_rag.py's own Ollama-only scope).",
+        "graphrag_lite": "1 entity-extraction LLM call per document per checkpoint (batched once per checkpoint during EntityGraph.build, NOT per query) + 1 entity-extraction LLM call per query (to extract the query's own entities) + 1 final-answer LLM call per query.",
+        "judge_scoring_if_enabled": "EXACTLY 1 additional LLM call per (checkpoint, arm, query) triple if JudgeConfig is supplied -- this is the ONLY call path in the entire harness that can reach a paid provider (OpenRouter/Gemini), routed through agents.llm.interceptor.LLMInterceptor.call(). If disabled (JudgeConfig=None, the default), zero paid calls occur anywhere.",
+        "how_to_multiply_out_a_real_cost_estimate": "For N queries (this repo's ground_truth.py currently derives 1 query per seeded topic; check len(GroundTruthDataset.queries) once the real corpus manifest is available), 3 checkpoints (20/50/100pct), 3 arms: total final-answer LLM calls = 3 checkpoints x 3 arms x N queries (all local Ollama, $0 if kept local). Total judge calls, ONLY if enabled = 3 checkpoints x 3 arms x N queries x (1 paid call each, priced via llm.interceptor.DEFAULT_RATE_TABLE's per-1k-token rates for whatever provider/model is chosen for the judge). GraphRAG-lite additionally makes 1 entity-extraction call per document at each checkpoint's build time (document count grows with checkpoint pct, but this is also local-Ollama in the intended design, not paid, unless a paid model is explicitly substituted in). Recommendation to orchestrator: keep the judge path disabled (JudgeConfig=None) for the first real run to guarantee $0 spend, and only enable it in a second, separately-authorized pass once N (query count) is known from the real ground-truth dataset and a judge provider/model choice is made."
+      }
+    },
+    "c_3_vs_4_arms_resolution": "Resolved by reading eval/pipeline.py's own module docstring, which enumerates its complete wrapper set as exactly three: run_hivemind_arm, run_vector_rag_arm, run_graphrag_lite_arm (there is no run_vector_rag_rerank_arm). docs/LLD/eval.md's 'Retrieval arms' section independently names the same three (HiveMind, classic vector RAG, simplified GraphRAG-style). vector_rag_rerank.py (5.2.2) is a real, independently-tested baseline module but was never wired into pipeline.py's shared-final-answer arm set, and wiring it in as a 4th arm would require inventing a new pipeline.py wrapper -- outside this subtask's impacted-module list (run_benchmark.py + chart.py only). Therefore run_benchmark.py's ALL_ARMS = (hivemind, vector_rag, graphrag_lite), exactly matching pipeline.py's three wrappers.",
+    "d_traversal_precision_multi_checkpoint_testing": "Wired in as an OPTIONAL path (run_benchmark_with_traversal_precision, a thin wrapper around run_benchmark that additionally calls eval.traversal_precision.compare_precision_across_checkpoints -- not called by default run_benchmark()). Per the launching agent's brief flagging 5.4.1's own test-coverage gap, agents/eval/test_run_benchmark.py adds a genuine multi-checkpoint (3-item) direct call to compare_precision_across_checkpoints() (test_compare_precision_across_checkpoints_multi_checkpoint), asserting per-checkpoint independence: checkpoint labels align positionally with the input list, a checkpoint's own EntityGraph reflects only that checkpoint's own corpus (the 20pct checkpoint, containing only doc-alpha, correctly shows zero precision for a beta-topic query at that checkpoint but nonzero at 100pct), and recall is monotonically non-decreasing as the checkpoint grows for a query whose relevant doc is progressively ingested. 5.4.1's own test_traversal_precision_check.py was NOT modified (out of this subtask's impacted-module list) -- this subtask's own test suite independently closes the gap instead, per the launching agent's 'at minimum write your own direct test' instruction."
+  },
+  "resumable_next_steps": [
+    "Orchestrator: use disclosure (b) above to compute a concrete cost estimate for a real run (query count x checkpoints x arms, judge path optional) before authorizing live execution.",
+    "A future subtask should wire run_benchmark.main() to actually load a real corpus (data/synthetic_corpus/generated/ + eval.datasets.load_dataset) and a real HiveMind gRPC retriever, replacing the currently-injected hivemind_retriever stand-in -- main() currently raises RunBenchmarkError specifically to prevent that from happening silently in this pass."
+  ],
+  "index_updates": [
+    "agents/eval/run_benchmark.py -- new module, subtask 5.3.4",
+    "agents/eval/chart.py -- new module, subtask 5.3.4"
+  ]
+}

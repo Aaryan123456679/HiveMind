@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "run_id": "009-cdr-commit",
+  "subtask": "5.3.4",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "commit_doc": ".cdr/commits/task-5.3.4.md",
+    "task_index_entry": "task-5.3.4",
+    "feature_index_entry": "hivemind-eval-corpus-growth-checkpoint-benchmark",
+    "file_index_entries": [
+      "agents/eval/run_benchmark.py",
+      "agents/eval/chart.py",
+      "agents/eval/test_run_benchmark.py",
+      "agents/eval/test_chart.py"
+    ],
+    "verification_run": ".cdr/runs/2026-07-12/008-verification/verification.json",
+    "pending_md_section": "## Task 5.3.4 (issue #28, 2026-07-12): Corpus-growth-checkpoint degradation chart, verified committed -- closes issue #28"
+  },
+  "note": "Issue #28 (all 4 subtasks 5.3.1-5.3.4) now implemented and verified; NOT yet closed on GitHub, requires separate explicit user authorization. Bookkeeping commit only, never pushed."
+}

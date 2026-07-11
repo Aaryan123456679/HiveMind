@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-verification",
+  "subtask": "5.3.4",
+  "issue": 28,
+  "commit": "e078bd249b2cfb0ea82f0c2fa1ddc8e37f8d7101",
+  "parent_commit": "b3986e6c7f411aab7cb7426de6395143ed6cc7d6",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Independently re-derived issue #28 subtask 5.3.4 text via `gh issue view 28`, read the full diff, and independently instrumented/re-ran the harness against a fresh synthetic corpus/query fixture (distinct from the implementer's). All safety-critical claims -- 3-arm resolution, checkpoint nesting/determinism, 9-row well-formedness, the disclosed per-call-count formula, judge-interceptor routing, and main()'s real-run refusal -- were independently confirmed accurate. Two non-blocking findings: (1) ruff flags 7 lint issues (5 unused imports in test_run_benchmark.py, 2 unused local variables in run_benchmark.main()) -- the unused `dataset` variable in main() reveals main() performs a real (harmless, local-file-only, zero-cost) ground-truth-manifest load before raising RunBenchmarkError, slightly stronger than a bare guard-only stub, but does not touch real corpus text or any LLM/API and does not undermine the 'no live run' claim; (2) chart.py's text-table renderer is a legitimate stdlib-only substitute for a plotted chart but is a materially weaker artifact than a real chart image for a result explicitly billed as 'the key novelty result of the project' -- acceptable for this offline pass per its own disclosed scope, but flagged for follow-up before any external-facing presentation of results.",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "PASS",
+      "evidence": "Pulled issue #28 subtask 5.3.4 directly via `gh issue view 28`: acceptance criteria 'Running all three arms at 20%, 50%, and 100% of the corpus ingested produces a degradation chart of recall/precision over corpus growth'; test spec 'agents/eval/run_benchmark.py --checkpoints 20,50,100 ... assert the output data file contains exactly three checkpoints with well-formed metrics for all three arms'; impacted modules agents/eval/run_benchmark.py, agents/eval/chart.py. Matches implementation exactly: DEFAULT_CHECKPOINT_PERCENTAGES=(20,50,100), run_benchmark produces 3 checkpoints x 3 arms = 9 rows, chart.py renders a degradation table from the resulting data file. Diff touches only run_benchmark.py, chart.py, and their test files (plus CDR run artifacts) -- no other impacted-module scope creep."
+    },
+    "architecture_conformance_3_arms": {
+      "verdict": "PASS",
+      "evidence": "Read agents/eval/pipeline.py directly: `grep -n '^def run_'` returns exactly run_hivemind_arm (line 161), run_vector_rag_arm (176), run_graphrag_lite_arm (193) -- no run_vector_rag_rerank_arm anywhere in that file. pipeline.py's own docstring mentions vector_rag_rerank.retrieve_documents_reranked only as an aside about shared output-shape consistency across baseline modules, not as a 4th wired arm. run_benchmark.py's ALL_ARMS = (hivemind, vector_rag, graphrag_lite) and default_arm_specs() correctly resolve to exactly these three. Confirmed this is a genuine scope boundary (5.2.2's rerank variant was never wired into pipeline.py's shared-final-answer arms), not an oversight."
+    },
+    "checkpoint_corpus_correctness": {
+      "verdict": "PASS",
+      "evidence": "Constructed my own distinct 7-document synthetic corpus (Zephyr/Willow/Quartz/Ember/Falcon/Cobalt/Nimbus docs, unrelated to the implementer's 4-doc alpha/beta/gamma/delta fixture). checkpoint_corpus(docs,20)->2 docs, (docs,50)->4 docs, (docs,100)->7 docs (ceil-based, matches docstring). Verified c50's first 2 entries == c20 exactly, and c100's first 4 entries == c50 exactly -- checkpoints are genuine ordered-prefix supersets, monotonically growing, not independently-random slices. Verified checkpoint_corpus(docs,20) called twice returns identical (deterministic) results. Confirmed rejection of pct<=0 or pct>100 via RunBenchmarkError."
+    },
+    "run_benchmark_orchestration": {
+      "verdict": "PASS",
+      "evidence": "Ran run_benchmark() against my own 7-doc corpus + 3 fresh QueryLabels (topics zephyr/willow/quartz, distinct from implementer's alpha/beta) through default_arm_specs with my own stub LLM/embed clients. Result: exactly 9 rows (3 checkpoints x 3 arms), checkpoints={20,50,100}, arms={hivemind,vector_rag,graphrag_lite} exactly. All mean_recall/mean_precision values verified in [0,1]; every row carries total_cost_usd, cost_per_1000_queries, and a non-empty stages list."
+    },
+    "call_count_disclosure_CRITICAL": {
+      "verdict": "PASS",
+      "evidence": "Built call-counting stub LLMClient/embed-client wrappers and ran run_benchmark end-to-end on my own fixture (7 docs across 3 checkpoints of sizes [2,4,7], 3 queries). Observed graphrag_lite LLM call_count = 22, matching the claimed formula exactly: sum(docs-per-checkpoint)=13 entity-extraction calls at graph-build time + (3 queries x 3 checkpoints)=9 query-entity-extraction calls = 22. Observed vector_rag embed call_count = 12, matching claimed formula exactly: 3 batched embedding calls (one per checkpoint, batch sizes 2/4/7 confirmed via instrumentation) + 9 per-query embedding calls (3 queries x 3 checkpoints) = 12. Separately ran a single-checkpoint (50%) x 3-arm run with JudgeConfig enabled: final-answer LLM client called exactly 9 times (3 queries x 3 arms, i.e. 1/query/arm/checkpoint as claimed) and judge LLM client called exactly 9 times (1/(checkpoint,arm,query) as claimed) -- both independently instrumented, not trusted from the implementer's own tests. The disclosed formula is accurate as literally stated; no undercount risk found for the planned real-money cost estimate."
+    },
+    "judge_interceptor_routing": {
+      "verdict": "PASS",
+      "evidence": "Read llm_judge.py's score_answer() directly: it calls interceptor.call(llm_client, ...) exclusively, never llm_client.complete()/complete_with_usage() directly. Read agents/llm/interceptor.py's LLMInterceptor.call(): it invokes client.complete_with_usage() internally and returns an InterceptedCompletion(text, StageRecord). Independently subclassed LLMInterceptor with a call-counting override and ran the judge path: interceptor.call_count (9) == judge_client.call_count (9) exactly, confirming every judge completion is mediated by the interceptor with no bypass path -- if score_answer ever called judge_client.complete() directly (bypassing the interceptor's counted call() method), interceptor.call_count would have been 0 while judge_client.call_count stayed 9; that was not observed."
+    },
+    "main_refuses_real_execution": {
+      "verdict": "PASS_WITH_COMMENT",
+      "evidence": "Read main() directly and invoked it live: `python3 -c \"from eval.run_benchmark import main; main([])\"` raises RunBenchmarkError immediately with the documented message, before any LLM/API/gRPC call. However: main() does call build_ground_truth_dataset() (a real, local, offline load of the pre-existing data/synthetic_corpus/generated/manifest.json) before raising -- this is local file I/O only (no network, no cost, no LLM call), and the resulting `dataset` variable is provably unused (ruff F841), i.e. dead work discarded right before the raise. This does not touch real corpus *text* or any paid API, so the 'zero live API calls' claim holds, but the claim that main() does nothing beyond raising is slightly overstated -- it performs one harmless local read first. Non-blocking."
+    },
+    "chart_stdlib_only": {
+      "verdict": "PASS",
+      "evidence": "git diff on agents/pyproject.toml between parent and this commit is empty (untouched). chart.py's only imports are `from __future__ import annotations`, `from pathlib import Path`, and a local `import json`/`import argparse` inside functions -- no matplotlib or any third-party plotting library. grep for 'matplotlib' across chart.py/run_benchmark.py/pyproject.toml finds only a docstring mention explaining why it was deliberately not added."
+    },
+    "zero_live_api_calls": {
+      "verdict": "PASS",
+      "evidence": "Grepped run_benchmark.py, chart.py, test_run_benchmark.py, test_chart.py for os.environ/getenv/OpenRouterClient/GeminiClient/httpx.Client(/httpx.get(/.env -- all matches are inside docstrings/comments describing what is NOT used, not actual code. Independently ran the full agents/eval/ test suite with no network access available and it passed (163/163), which would not be possible if any test made a real outbound call."
+    },
+    "regression_risk": {
+      "verdict": "PASS",
+      "evidence": "`git diff b3986e6...e078bd2 --name-status` shows only Added files: 7 new .cdr run-artifact files plus agents/eval/chart.py, agents/eval/run_benchmark.py, agents/eval/test_chart.py, agents/eval/test_run_benchmark.py. No modification to pipeline.py, metrics.py, cost_latency.py, llm_judge.py, traversal_precision.py, or agents/llm/interceptor.py -- zero regression surface on previously-verified modules."
+    },
+    "test_coverage_and_suite_health": {
+      "verdict": "PASS_WITH_COMMENT",
+      "evidence": "Independently ran `cd agents && python -m pytest eval/ -q`: 163 passed, matching the claimed count exactly (note: `pytest eval/ llm/ -v` together yields 248 passed since llm/ has its own additional tests -- the claimed '163 passed' figure refers to agents/eval/ alone and is accurate for that scope). Independently ran `ruff check` on the 4 new files: 7 errors found -- 5x F401 unused imports in test_run_benchmark.py (EntityGraph, StageRecord, CorpusCheckpoint, GRAPHRAG_LITE_ARM, VECTOR_RAG_ARM all imported but never used in that test file) and 2x F841 unused local variables in run_benchmark.main() (percentages, dataset -- both computed then discarded before the unconditional raise). None of these are functional bugs; all are cosmetic/dead-code lint findings. Recommend a quick follow-up cleanup pass before/alongside the next (real-run) subtask."
+    },
+    "5_4_1_gap_closure": {
+      "verdict": "PASS",
+      "evidence": "Read test_compare_precision_across_checkpoints_multi_checkpoint directly (test_run_benchmark.py:359-399): it builds a genuine 3-item CorpusGrowthCheckpoint list (20pct/50pct/100pct) and calls compare_precision_across_checkpoints(checkpoints, _QUERIES, stub, top_k=3, k=3) in ONE call, then asserts per-checkpoint independence (20pct's beta-query precision is 0.0 since beta isn't ingested yet; 100pct's alpha-query precision is >0.0, confirming no shared/leaked EntityGraph state across checkpoints built within the same call). This genuinely closes the gap flagged in run 2026-07-12/005-verification (which found the original 5.4.1 test only ever called the function with singleton 1-item lists concatenated afterward)."
+    }
+  },
+  "independent_verification_method": "Built and ran a from-scratch instrumented Python script (not derived from or copying the implementer's test fixtures) using a distinct 7-document synthetic corpus, 3 distinct queries, and call-counting stub LLMClient/embed-client/LLMInterceptor subclasses to directly measure actual call counts rather than trusting the implementer's disclosed formula or test assertions.",
+  "confidence": "high"
+}

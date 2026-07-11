@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "run_id": "008-verification",
+  "subtask": "5.3.4",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification_json": ".cdr/runs/2026-07-12/008-verification/verification.json",
+    "impacted_files": [
+      "agents/eval/run_benchmark.py",
+      "agents/eval/chart.py",
+      "agents/eval/test_run_benchmark.py",
+      "agents/eval/test_chart.py"
+    ],
+    "key_line_ranges": {
+      "agents/eval/run_benchmark.py::checkpoint_corpus": "150-175",
+      "agents/eval/run_benchmark.py::main": "629-665",
+      "agents/eval/pipeline.py::run_arm_wrappers": "161-209",
+      "agents/eval/llm_judge.py::score_answer": "235-298",
+      "agents/llm/interceptor.py::LLMInterceptor.call": "154-224"
+    },
+    "regression_index_entries": 4
+  }
+}
