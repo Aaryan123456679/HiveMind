@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "125-implementation",
+  "macro": "cdr-fix-cycle",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "issue-47-subtask-4.5.9.2-fix-cycle-attempt-2",
+  "git_head": "73aa6f8c65fbbc20e9abd1962b95ed8f556c4727",
+  "run_key": "sha256:issue47-4.5.9.2-fixcycle2-73aa6f8c-dedup-maxqueryterms",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-11T09:00:00Z",
+  "ended_at": "2026-07-11T09:10:00Z"
+}

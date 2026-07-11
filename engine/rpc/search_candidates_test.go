@@ -3,12 +3,16 @@ package rpc
 import (
 	"context"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 	hivemindv1 "github.com/Aaryan123456679/HiveMind/engine/rpc/gen"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // rankingFixture is a minimal, self-contained analogue of server_test.go's newFixture,
@@ -326,5 +330,72 @@ func TestSearchCandidatesMultiWordQuery(t *testing.T) {
 	}
 	if !foundNonGraphPrefixed {
 		t.Fatalf("SearchCandidates: candidates %v missing %q (a path found only via a non-\"graph\" scan term)", paths, "database-design/notes")
+	}
+}
+
+func TestDedupTermsCollapsesRepeatedTerms(t *testing.T) {
+	got := dedupTerms([]string{"graph", "graph", "database", "graph", "Graph", "database"})
+	want := []string{"graph", "database", "Graph"}
+	if len(got) != len(want) {
+		t.Fatalf("dedupTerms(...) = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dedupTerms(...) = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestSearchCandidatesRepeatedTermScansOnce is a regression test for the CHANGES_REQUESTED
+// re-fix recorded in .cdr/runs/2026-07-11/110-verification: a query repeating the same term
+// far more times than maxQueryTerms allows distinct terms must still succeed (proving
+// candidatePool dedupes terms BEFORE counting/scanning them, rather than treating each
+// repetition as a distinct term subject to maxQueryTerms).
+func TestSearchCandidatesRepeatedTermScansOnce(t *testing.T) {
+	f := newRankingFixture(t, []string{"graph-database/handbook", "unrelated/other"})
+
+	repeated := strings.Repeat("graph ", maxQueryTerms*3)
+	resp, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{Query: repeated})
+	if err != nil {
+		t.Fatalf("SearchCandidates(%d-times-repeated single term) unexpected error: %v", maxQueryTerms*3, err)
+	}
+	paths := candidatePaths(resp.GetCandidates())
+	found := false
+	for _, p := range paths {
+		if p == "graph-database/handbook" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("SearchCandidates(repeated term): candidates %v missing expected path %q", paths, "graph-database/handbook")
+	}
+}
+
+// TestSearchCandidatesRejectsTooManyDistinctQueryTerms is a regression test for the
+// CHANGES_REQUESTED re-fix recorded in .cdr/runs/2026-07-11/110-verification:
+// maxQueryTerms/validateQueryTermCount must reject a query with more than maxQueryTerms
+// distinct terms with codes.InvalidArgument, and must accept one with exactly maxQueryTerms
+// distinct terms.
+func TestSearchCandidatesRejectsTooManyDistinctQueryTerms(t *testing.T) {
+	f := newRankingFixture(t, []string{"graph-database/handbook"})
+
+	tooMany := make([]string, maxQueryTerms+1)
+	for i := range tooMany {
+		tooMany[i] = "term" + strconv.Itoa(i)
+	}
+	_, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{Query: strings.Join(tooMany, " ")})
+	if err == nil {
+		t.Fatalf("SearchCandidates(%d distinct terms): want error, got nil", maxQueryTerms+1)
+	}
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("SearchCandidates(%d distinct terms): status code = %v, want %v", maxQueryTerms+1, status.Code(err), codes.InvalidArgument)
+	}
+
+	exactly := make([]string, maxQueryTerms)
+	for i := range exactly {
+		exactly[i] = "term" + strconv.Itoa(i)
+	}
+	if _, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{Query: strings.Join(exactly, " ")}); err != nil {
+		t.Fatalf("SearchCandidates(%d distinct terms): unexpected error: %v", maxQueryTerms, err)
 	}
 }

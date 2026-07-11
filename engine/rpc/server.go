@@ -321,13 +321,20 @@ func (s *Server) GraphNeighbors(ctx context.Context, req *hivemindv1.GraphNeighb
 // pool selection -- see docs/LLD/query-agent.md / docs/LLD/btree.md "Known risks" for the
 // full decision history, subtasks 4.5.9.1-4.5.9.2):
 //   - the btree pool is assembled by candidatePool (search_candidates.go): one PrefixScan
-//     per term of req.Query (split via splitTerms, the same non-alphanumeric-run
-//     convention rankCandidates' tokenizeTerms uses for scoring), merged and deduplicated
-//     by FileID/Path, bounded by perTermPoolCap/mergedPoolCap to avoid an unbounded-cost
-//     fan-out for queries with many terms. A zero-term query (e.g. "") is a special case
-//     scanning the literal empty prefix once, unbounded -- fully backward compatible with
-//     task-3.2.2's original single-token-query usage and agents/ingestion/shortlist.py's
-//     query="" pool-retrieval usage (task-3.4.2), neither of which this change affects;
+//     per DISTINCT term of req.Query (split via splitTerms, the same non-alphanumeric-run
+//     convention rankCandidates' tokenizeTerms uses for scoring, then de-duplicated via
+//     dedupTerms), merged and deduplicated by FileID/Path. perTermPoolCap/mergedPoolCap
+//     bound the merged pool's retained memory only, NOT scan cost (CHANGES_REQUESTED
+//     re-fix, .cdr/runs/2026-07-11/110-verification -- see search_candidates.go's doc
+//     comments on those two caps, dedupTerms, and maxQueryTerms for the full correction);
+//     the actual bound on worst-case scan cost is dedupTerms (a repeated term scans once,
+//     not once per repetition) plus maxQueryTerms/validateQueryTermCount, below, which
+//     rejects a request with a pathological number of distinct terms with
+//     codes.InvalidArgument before candidatePool issues a single PrefixScan call. A
+//     zero-term query (e.g. "") is a special case scanning the literal empty prefix once,
+//     unbounded -- fully backward compatible with task-3.2.2's original single-token-query
+//     usage and agents/ingestion/shortlist.py's query="" pool-retrieval usage (task-3.4.2),
+//     neither of which this change affects;
 //   - the FULL req.Query string (all its terms, not just the first) is tokenized and used
 //     to rank the resulting merged pool, via rankCandidates (search_candidates.go,
 //     unmodified by 4.5.9.2). This lets a genuinely multi-term natural-language query
@@ -358,6 +365,16 @@ func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCan
 	maxResults := int(req.GetMaxResults())
 	if maxResults < 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "rpc: SearchCandidates: max_results %d must be >= 0", maxResults)
+	}
+
+	// Fix-cycle addition (issue #47, subtask 4.5.9.2, CHANGES_REQUESTED re-fix,
+	// .cdr/runs/2026-07-11/110-verification): reject a query with a pathological number of
+	// distinct terms BEFORE candidatePool (search_candidates.go) ever issues a single
+	// btree.PrefixScan call -- this is the actual bound on candidatePool's worst-case scan
+	// cost; see maxQueryTerms' doc comment for why perTermPoolCap/mergedPoolCap alone do
+	// not provide this.
+	if err := validateQueryTermCount(req.GetQuery()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "rpc: SearchCandidates: %v", err)
 	}
 
 	entries, err := candidatePool(s.btreeStore, s.btreeRootNodeID, req.GetQuery())
