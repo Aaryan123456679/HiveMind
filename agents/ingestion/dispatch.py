@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ingestion.normalize_email import EmailFields, normalize_email
-from ingestion.normalize_pdf import iter_pages, normalize_pdf
+from ingestion.normalize_pdf import normalize_pdf
 from ingestion.normalize_ticket import (
     TicketFields,
     normalize_ticket_csv_row,
@@ -90,7 +90,7 @@ def dispatch_pdf(
         marker-delimited page text, and `structured_fields={"page_count": n}`.
     """
     text = normalize_pdf(path)
-    page_count = sum(1 for _ in iter_pages(text))
+    page_count = text.page_count
     return RawDocument(
         id=doc_id,
         source_type="pdf",

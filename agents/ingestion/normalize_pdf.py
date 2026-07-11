@@ -72,17 +72,44 @@ def _page_marker(page_number: int, text: str) -> str:
     )
 
 
-def normalize_pdf(path: str | Path) -> str:
+class NormalizedPdfText(str):
+    """A :func:`normalize_pdf` result: the marker-delimited text, plus its page count.
+
+    Behaves exactly like a plain ``str`` in every respect (equality, concatenation,
+    ``len()``, slicing, regex matching via :data:`PAGE_MARKER_RE`, and parsing via
+    :func:`iter_pages`) since it *is* a ``str`` subclass instance -- existing code that
+    treats a :func:`normalize_pdf` result as plain text needs no changes.
+
+    Additionally exposes :attr:`page_count`, the number of pages this text contains,
+    as a free attribute populated at construction time from the count already known
+    while building the marker text (see :func:`normalize_pdf`). This lets callers such
+    as `dispatch.py`'s `dispatch_pdf` read the page count directly instead of running a
+    second, redundant O(n) pass over the text via :func:`iter_pages` just to count
+    marker pairs that were already counted once while the text was built.
+    """
+
+    page_count: int
+
+    def __new__(cls, text: str, page_count: int) -> "NormalizedPdfText":
+        obj = super().__new__(cls, text)
+        obj.page_count = page_count
+        return obj
+
+
+def normalize_pdf(path: str | Path) -> NormalizedPdfText:
     """Normalize a PDF file to plain text with per-page boundary markers.
 
     Args:
         path: Path to the PDF file to normalize.
 
     Returns:
-        Plain text containing one ``[[PAGE n LEN=k]] ... [[/PAGE n]]`` block
-        per page (1-indexed), in page order. See the module docstring for
-        the exact marker format, and :func:`iter_pages` for parsing it back
-        without risk of content-boundary ambiguity.
+        A :class:`NormalizedPdfText` (a ``str`` subclass, fully interchangeable with
+        plain text everywhere) containing one ``[[PAGE n LEN=k]] ... [[/PAGE n]]``
+        block per page (1-indexed), in page order, plus a `.page_count` attribute
+        equal to the number of pages -- computed for free while building the marker
+        text, with no extra pass required. See the module docstring for the exact
+        marker format, and :func:`iter_pages` for parsing the text back without risk
+        of content-boundary ambiguity.
 
     Raises:
         Exception: Propagated from `pymupdf` if the file cannot be opened or
@@ -96,7 +123,7 @@ def normalize_pdf(path: str | Path) -> str:
         ]
     finally:
         doc.close()
-    return "".join(blocks)
+    return NormalizedPdfText("".join(blocks), page_count=len(blocks))
 
 
 def iter_pages(normalized_text: str) -> Iterator[tuple[int, str]]:

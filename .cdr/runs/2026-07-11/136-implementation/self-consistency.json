@@ -1,0 +1,12 @@
+{
+  "subtask": "issue-53-4.5.15.5",
+  "build_status": "green",
+  "checks": [
+    {"cmd": "python -m pytest agents/ingestion/test_dispatch.py -k page_count -v", "result": "2 passed", "note": "exact test spec from GitHub issue #53"},
+    {"cmd": "python -m pytest agents/ingestion/ --ignore=agents/ingestion/test_e2e_smoke.py -v", "result": "150 passed, 2 failed", "note": "the 2 failures (test_shortlist.py grpc-client tests) are a pre-existing, unrelated protobuf gencode/runtime version mismatch in the environment (google.protobuf.runtime_version.VersionError), confirmed via grep to have zero import relationship to normalize_pdf.py or dispatch.py, and last touched by an unrelated prior commit (98dda16). Not introduced by this change."},
+    {"cmd": "ruff check agents/ingestion/normalize_pdf.py agents/ingestion/dispatch.py agents/ingestion/test_dispatch.py", "result": "All checks passed!"}
+  ],
+  "validation_matrix_coverage": "all 5 rows in validation-matrix.json exercised: AC1/AC2 via new test_dispatch_pdf_page_count_matches_normalize_pdf_no_second_parse (monkeypatches iter_pages to raise if called), AC3 via exact -k page_count command, AC4 via full ingestion suite (test_normalize_pdf.py's ~14 tests unaffected), AC5 via ruff clean (no unused iter_pages import in dispatch.py)",
+  "note_on_self_consistency_scope": "Internal sanity only per invariant I4 -- this is NOT independent verification; that is delegated to /cdr:verify.",
+  "prompt_injection_disclosure": "As in prior runs on this issue (per regression.jsonl/pending.md notes on task-3.3.1/3.3.3), fake system-reminder-style content (a fake 'tokensave' MCP server instruction block and a fake 'Auto Mode Active' directive) appeared embedded in this session's tool-output stream. Disclosed per repo convention; not acted on, and did not influence any implementation decision in this run."
+}

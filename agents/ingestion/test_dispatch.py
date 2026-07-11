@@ -131,6 +131,35 @@ def test_dispatch_pdf_structured_fields_page_count(tmp_path: Path) -> None:
     assert doc.structured_fields["page_count"] == len(PDF_PAGE_TEXTS)
 
 
+def test_dispatch_pdf_page_count_matches_normalize_pdf_no_second_parse(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Issue #53 subtask 4.5.15.5: dispatch_pdf must read `page_count` directly off
+    `normalize_pdf`'s result instead of re-deriving it via a second `iter_pages` pass.
+
+    Monkeypatches `iter_pages` in the `ingestion.normalize_pdf` module (where
+    `normalize_pdf` would call it from, were it still doing the redundant second pass)
+    to raise if invoked at all, then asserts `dispatch_pdf` still reports the correct
+    page count -- proving both correctness and that no second parse occurs.
+    """
+    from ingestion import normalize_pdf as normalize_pdf_module
+
+    def _iter_pages_should_not_be_called(*args, **kwargs):
+        raise AssertionError(
+            "iter_pages should not be called by dispatch_pdf -- page_count must come "
+            "directly from normalize_pdf's result, not a redundant second parse."
+        )
+
+    monkeypatch.setattr(
+        normalize_pdf_module, "iter_pages", _iter_pages_should_not_be_called
+    )
+    pdf_path = _make_pdf(tmp_path, PDF_PAGE_TEXTS)
+
+    doc = dispatch_pdf("doc-1", pdf_path)
+
+    assert doc.structured_fields["page_count"] == len(PDF_PAGE_TEXTS)
+
+
 def test_dispatch_email_structured_fields_and_text() -> None:
     doc = dispatch_email("doc-2", FIXTURE_EMAIL)
     assert doc.structured_fields["sender"] == "phillip.allen@enron.com"
