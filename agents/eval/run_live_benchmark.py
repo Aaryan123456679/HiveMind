@@ -195,16 +195,26 @@ class ResilientLLMClient(LLMClient):
         timeout: float | None = None,
     ) -> str:
         last_text = ""
+        last_error: Exception | None = None
         for attempt in range(_RESILIENT_MAX_ATTEMPTS):
-            last_text = self._inner.complete(
-                prompt,
-                model=model,
-                temperature=self._attempt_temperature(attempt, temperature),
-                max_tokens=max_tokens,
-                timeout=timeout,
-            )
+            try:
+                last_text = self._inner.complete(
+                    prompt,
+                    model=model,
+                    temperature=self._attempt_temperature(attempt, temperature),
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                )
+            except Exception as exc:  # noqa: BLE001 - transient local Ollama errors (e.g. a
+                # 404 from /api/generate observed under concurrent model-swap load) are retried
+                # here rather than aborting the whole live run over one flaky local call.
+                last_error = exc
+                continue
+            last_error = None
             if _looks_like_bare_json(last_text):
                 return last_text
+        if last_error is not None:
+            raise last_error
         return last_text
 
     def complete_with_usage(
@@ -225,16 +235,24 @@ class ResilientLLMClient(LLMClient):
         future caller wrap a free client used through the interceptor.
         """
         last_result: CompletionResult | None = None
+        last_error: Exception | None = None
         for attempt in range(_RESILIENT_MAX_ATTEMPTS):
-            last_result = self._inner.complete_with_usage(
-                prompt,
-                model=model,
-                temperature=self._attempt_temperature(attempt, temperature),
-                max_tokens=max_tokens,
-                timeout=timeout,
-            )
+            try:
+                last_result = self._inner.complete_with_usage(
+                    prompt,
+                    model=model,
+                    temperature=self._attempt_temperature(attempt, temperature),
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                )
+            except Exception as exc:  # noqa: BLE001 - see complete()'s matching comment
+                last_error = exc
+                continue
+            last_error = None
             if _looks_like_bare_json(last_result.text):
                 return last_result
+        if last_error is not None:
+            raise last_error
         assert last_result is not None  # loop runs >= 1 time (_RESILIENT_MAX_ATTEMPTS >= 1)
         return last_result
 
