@@ -2,8 +2,8 @@
 
 Discovers raw, single-message-per-file Enron-format email files under a local
 directory and yields them as fully-built `ingestion.rawdoc.RawDocument` records via
-`agents.ingestion.dispatch.dispatch_email` (which in turn uses
-`agents.ingestion.normalize_email.normalize_email` -- see that module for the exact
+`ingestion.dispatch.dispatch_email` (which in turn uses
+`ingestion.normalize_email.normalize_email` -- see that module for the exact
 expected on-disk message format: RFC-2822-ish `Key: value` headers, a blank line,
 then a plain-text body).
 
@@ -69,7 +69,7 @@ def load_enron_documents(
 ):
     """Load raw Enron-format message files and yield built `RawDocument` records.
 
-    Imports `agents.ingestion.dispatch` lazily (only when this function is called),
+    Imports `ingestion.dispatch` lazily (only when this function is called),
     so importing `data.load_enron` itself never requires the `agents/` package or its
     virtualenv to be on `sys.path` -- only actually building `RawDocument`s does.
 

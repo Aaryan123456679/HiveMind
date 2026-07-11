@@ -79,10 +79,18 @@ def test_bitext_row_to_ticket_json_shape() -> None:
 
 def test_bitext_row_to_ticket_json_ids_are_stable_and_unique() -> None:
     rows = list(iter_bitext_records())
+
+    # Uniqueness: one call per row produces 30 distinct, sorted ticket_ids.
     tickets = [bitext_row_to_ticket_json(r, i) for i, r in enumerate(rows)]
     ids = [t["ticket_id"] for t in tickets]
     assert len(ids) == len(set(ids)) == 30
     assert ids == sorted(ids)
+
+    # Stability: calling the function again with the same (row, index) inputs
+    # must reproduce byte-for-byte identical output -- this is what the test's
+    # name actually claims ("stable"), distinct from mere intra-call uniqueness.
+    tickets_second_call = [bitext_row_to_ticket_json(r, i) for i, r in enumerate(rows)]
+    assert tickets_second_call == tickets
 
 
 def test_load_bitext_tickets_count_and_limit() -> None:

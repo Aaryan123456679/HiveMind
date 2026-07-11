@@ -5,8 +5,8 @@ Loads rows from a local sample of the public
 `CDLA-Sharing-1.0`; each row is one synthetic customer message + a matching agent
 response, with `category`/`intent` metadata -- no ticket-id/status/timestamp fields of
 its own) and converts each row into the ticket-record shape that
-`agents.ingestion.normalize_ticket` expects, then (optionally) into a full
-`ingestion.rawdoc.RawDocument` via `agents.ingestion.dispatch`.
+`ingestion.normalize_ticket` expects, then (optionally) into a full
+`ingestion.rawdoc.RawDocument` via `ingestion.dispatch`.
 
 Real dataset, no network required for tests -- disclosed judgment call
 -------------------------------------------------------------------------
@@ -117,7 +117,7 @@ def bitext_row_to_ticket_json(row: dict[str, Any], index: int) -> dict[str, Any]
             stable `ticket_id`, synthetic `created_at`, and placeholder `requester`.
 
     Returns:
-        A dict with exactly the keys `agents.ingestion.normalize_ticket.normalize_ticket_json`
+        A dict with exactly the keys `ingestion.normalize_ticket.normalize_ticket_json`
         accepts (`ticket_id`, `subject`, `description`, `status`, `priority`,
         `category`, `requester`, `assignee`, `created_at`, `comments`).
     """
@@ -144,8 +144,8 @@ def load_bitext_tickets(
 
     This is the "RawDocument-ready input for the normalizers" the issue's acceptance
     criteria describe: each yielded dict is valid input to
-    `agents.ingestion.normalize_ticket.normalize_ticket_json` (and, via
-    `agents.ingestion.dispatch.dispatch_ticket_json`, to building a full
+    `ingestion.normalize_ticket.normalize_ticket_json` (and, via
+    `ingestion.dispatch.dispatch_ticket_json`, to building a full
     `RawDocument`) -- see `load_bitext_as_raw_documents` for the latter.
 
     Args:
@@ -166,7 +166,7 @@ def load_bitext_as_raw_documents(
 ):
     """Load Bitext rows and yield fully-built `ingestion.rawdoc.RawDocument` records.
 
-    Imports `agents.ingestion.dispatch` lazily (only when this function is called),
+    Imports `ingestion.dispatch` lazily (only when this function is called),
     so importing `data.load_bitext` itself never requires the `agents/` package or its
     virtualenv to be on `sys.path` -- only actually building `RawDocument`s does.
 
