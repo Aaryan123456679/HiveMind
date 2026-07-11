@@ -255,13 +255,30 @@ def is_insufficient_alone(
     Returns:
         `True` if `topic.score < ratio * top_score`; `False` otherwise (strict `<`, so
         a topic exactly at the threshold -- including the top topic itself, whose score
-        equals `top_score` -- is never flagged for any `ratio <= 1`).
+        equals `top_score` -- is never flagged for any `ratio <= 1`, regardless of
+        `top_score`'s sign). When `top_score <= 0` this is enforced by always returning
+        `False` (see the guard below), since "a fraction of `top_score`" is not a
+        well-defined sufficiency floor once `top_score` is non-positive.
 
     Raises:
         ValueError: If `ratio` is negative.
     """
     if ratio < 0:
         raise ValueError(f"is_insufficient_alone: ratio must be >= 0, got {ratio}")
+
+    if top_score <= 0:
+        # `ratio * top_score` only shrinks the threshold toward a stricter
+        # (smaller-magnitude) floor when `top_score` is positive: for `ratio` in
+        # `[0, 1]`, `ratio * top_score <= top_score` iff `top_score >= 0`. When
+        # `top_score` is negative, multiplying by a fraction in `[0, 1]` moves the
+        # threshold *up* (less negative), so `ratio * top_score > top_score` -- which
+        # would flag the top topic itself (`topic.score == top_score`) as
+        # insufficient, violating this function's core invariant (see `Returns`
+        # above). `top_score == 0` is equally degenerate (the threshold is always
+        # exactly `0` no matter the ratio). There is no well-defined positive score to
+        # take a fraction of in either case, so conservatively treat every topic as
+        # sufficient (never flagged) whenever `top_score <= 0`.
+        return False
 
     return topic.score < ratio * top_score
 

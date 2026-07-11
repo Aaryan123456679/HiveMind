@@ -176,3 +176,39 @@ def test_is_insufficient_alone_rejects_negative_ratio() -> None:
 
     with pytest.raises(ValueError):
         is_insufficient_alone(topic, top_score=1.0, ratio=-0.1)
+
+
+# ---------------------------------------------------------------------------
+# `is_insufficient_alone` negative/zero `top_score` hardening
+#
+# Subtask 4.5.17.3: `topic.score < ratio * top_score` would previously flag the top
+# topic itself (`topic.score == top_score`) whenever `top_score` was negative, since
+# multiplying a negative number by a fraction in `[0, 1]` moves the threshold *up*
+# rather than down -- violating the "top topic is never flagged" invariant this
+# section's tests already assert for positive `top_score`. The fix conservatively
+# never flags anything when `top_score <= 0`.
+# ---------------------------------------------------------------------------
+
+
+def test_is_insufficient_alone_negative_score_top_topic_never_flagged() -> None:
+    top_score = -5.0
+    topic = TopicCandidate(file_id=1, path="a/A", score=top_score)
+
+    assert is_insufficient_alone(topic, top_score=top_score) is False
+
+
+def test_is_insufficient_alone_negative_score_never_flags_lower_score_topic() -> (
+    None
+):
+    # Even a topic scoring well below the (negative) top_score is not flagged: once
+    # top_score <= 0, "a fraction of top_score" is not a well-defined sufficiency
+    # floor, so is_insufficient_alone conservatively never flags anything.
+    topic = TopicCandidate(file_id=1, path="a/A", score=-50.0)
+
+    assert is_insufficient_alone(topic, top_score=-5.0, ratio=0.5) is False
+
+
+def test_is_insufficient_alone_zero_top_score_never_flagged() -> None:
+    topic = TopicCandidate(file_id=1, path="a/A", score=0.0)
+
+    assert is_insufficient_alone(topic, top_score=0.0) is False
