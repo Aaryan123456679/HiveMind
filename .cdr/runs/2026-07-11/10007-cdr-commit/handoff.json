@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "run_id": "10007-cdr-commit",
+  "status": "completed",
+  "subtask": "5.1.3",
+  "issue": 26,
+  "milestone": 7,
+  "commit": "ba272fd96ca53c15e8724ed553fe70abb742877d",
+  "verification_run": ".cdr/runs/2026-07-11/10006-verification/verification.json",
+  "commit_doc": ".cdr/commits/task-5.1.3.md",
+  "index_updates": [
+    ".cdr/index/task.jsonl (task-5.1.3 entry + issue-26 issue-summary entry appended)",
+    ".cdr/index/feature.jsonl (hivemind-eval-ground-truth-finalization entry appended)"
+  ],
+  "github": {
+    "issue": 26,
+    "action": "closed",
+    "closed_via": "gh issue close 26",
+    "resolution_comment_summarizes": ["5.1.1 (4f6bc5f)", "5.1.2 (47385d6)", "5.1.3 (ba272fd)"]
+  },
+  "bookkeeping_commit": "PENDING - to be created by this run, chore(cdr) commit for index/.cdr/commits/ files only",
+  "not_done": ["push to remote (never done by cdr-commit agent, per role)"]
+}
