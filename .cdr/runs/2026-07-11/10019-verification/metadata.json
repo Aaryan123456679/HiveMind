@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "10019-verification",
+  "macro": "cdr-verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "5.2.4",
+  "git_head": "9ee42c400d9950dcb4779c0b6779c8fdba5fb3ef",
+  "run_key": "5.2.4-9ee42c4-shared-final-llm-verification",
+  "status": "completed",
+  "last_completed_step": "verdict-written",
+  "started_at": "2026-07-11T00:00:00Z",
+  "ended_at": "2026-07-11T00:30:00Z"
+}
