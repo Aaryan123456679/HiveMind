@@ -36,6 +36,7 @@ import (
 	"github.com/Aaryan123456679/HiveMind/engine/graph"
 	"github.com/Aaryan123456679/HiveMind/engine/rpc"
 	hivemindv1 "github.com/Aaryan123456679/HiveMind/engine/rpc/gen"
+	"github.com/Aaryan123456679/HiveMind/engine/split"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
 )
 
@@ -83,6 +84,23 @@ func run(root, addr string) error {
 	if err != nil {
 		return fmt.Errorf("catalog.OpenContentStore: %w", err)
 	}
+
+	// Subtask 4.5.3.1 (issue #40): wire a real engine/split.Trigger into the
+	// ContentStore's Append path, via SetSplitTrigger, so that a size-threshold
+	// crossing on a real PutSegment append actually surfaces a split signal in this
+	// production server binary -- not just in engine/split/trigger_test.go's unit
+	// coverage of Trigger.Detect in isolation. engine/catalog cannot import
+	// engine/split directly (engine/split already imports engine/catalog, so the
+	// reverse import would be circular -- see content.go's SplitTriggerFunc doc
+	// comment); this main.go composition root is where the two are wired together.
+	splitTrigger := split.DefaultTrigger()
+	cs.SetSplitTrigger(func(fileID, oldSizeBytes, newSizeBytes uint64) bool {
+		sig, crossed := splitTrigger.Detect(fileID, oldSizeBytes, newSizeBytes)
+		if crossed {
+			log.Printf("smokeserver: split-eligibility signal: fileID=%d oldSizeBytes=%d newSizeBytes=%d thresholdBytes=%d", sig.FileID, sig.OldSizeBytes, sig.NewSizeBytes, sig.ThresholdBytes)
+		}
+		return crossed
+	})
 
 	idxFile, err := btree.OpenIndexFile(filepath.Join(root, "topics.idx"))
 	if err != nil {

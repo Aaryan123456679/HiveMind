@@ -34,6 +34,31 @@ const contentVersionSuffix = ".v1.md"
 // set ContentStore.splitThresholdBytes directly after OpenContentStore.
 const defaultSplitThresholdBytes = 8 * 1024
 
+// SplitTriggerFunc is the shape of the size-threshold detection hook ContentStore.Append
+// invokes on every append (subtask 4.5.3.1, issue #40), given fileID and the pre/post-append
+// content sizes, returning whether this specific append crossed a split-eligibility size
+// threshold.
+//
+// ContentStore deliberately does NOT import engine/split directly to obtain this hook's
+// production implementation: engine/split already imports engine/catalog (in
+// engine/split/execute.go and engine/split/orchestrate.go, for CatalogRecord/status types),
+// so a reverse import from engine/catalog would be a circular import — verified empirically:
+// an internal `package catalog` test file importing engine/split fails to build with "import
+// cycle not allowed in test". Because Go function types are structurally, not nominally,
+// typed, engine/split.Trigger.Detect's logic can be wired in from outside without either
+// package importing the other's types here: a composition root that imports BOTH packages
+// (see engine/cmd/smokeserver/main.go's wiring) constructs a real *split.Trigger and installs
+// an adapter closure — e.g. `func(fileID, old, new uint64) bool { sig, ok :=
+// trig.Detect(fileID, old, new); ...; return ok }` — via SetSplitTrigger. This is what makes
+// a threshold crossing actually surface a split signal in production code paths (the
+// compiled server binary), not just in engine/split/trigger_test.go, while keeping
+// engine/catalog and engine/split's existing import direction (split -> catalog) unchanged.
+//
+// A nil SplitTriggerFunc (the default, e.g. for callers/tests that never call
+// SetSplitTrigger) preserves Append's original behavior: an inline comparison against
+// ContentStore's own splitThresholdBytes field. See Append's doc comment.
+type SplitTriggerFunc func(fileID, oldSizeBytes, newSizeBytes uint64) bool
+
 // ContentStore is the on-disk content (topic file body) I/O layer that sits alongside
 // Catalog: Catalog owns a fileID's metadata record, ContentStore owns the actual .md
 // bytes for that fileID. See docs/LLD/catalog.md's "wal/" cross-reference: every catalog
@@ -73,6 +98,14 @@ type ContentStore struct {
 	// OpenContentStore; overridable directly by callers (e.g. tests) that
 	// need a different threshold. See Append's doc comment.
 	splitThresholdBytes uint64
+
+	// splitTrigger is the optional (subtask 4.5.3.1, issue #40) hook Append invokes,
+	// when non-nil, in place of the local splitThresholdBytes comparison, to decide
+	// whether a given append crossed a split-eligibility size threshold. Installed via
+	// SetSplitTrigger. A nil splitTrigger (the default returned by OpenContentStore)
+	// preserves the original inline-comparison behavior. See SplitTriggerFunc's doc
+	// comment for why this is a plain callback rather than a direct engine/split import.
+	splitTrigger SplitTriggerFunc
 
 	// stripes serializes Append's read-modify-write critical section per fileID,
 	// keyed by stripeFor(fileID) (the same hashing scheme Catalog.stripes uses,
@@ -204,6 +237,22 @@ func OpenContentStore(root string, cat *Catalog, w *wal.Writer) (*ContentStore, 
 	}, nil
 }
 
+// SetSplitTrigger installs fn as the hook Append uses, on every subsequent call, to decide
+// whether an append crossed a split-eligibility size threshold (subtask 4.5.3.1, issue #40),
+// in place of ContentStore's own local splitThresholdBytes comparison. Passing nil reverts
+// to that local-comparison default. See SplitTriggerFunc's doc comment for the intended
+// production wiring (a *engine/split.Trigger-backed adapter installed by a composition root
+// such as engine/cmd/smokeserver/main.go) and why this indirection exists (avoiding a
+// circular import between engine/catalog and engine/split).
+//
+// SetSplitTrigger is not safe to call concurrently with Append against the same
+// ContentStore; callers should install the hook once, before the ContentStore is shared
+// across goroutines (matching how OpenContentStore's other fields are established before
+// use).
+func (cs *ContentStore) SetSplitTrigger(fn SplitTriggerFunc) {
+	cs.splitTrigger = fn
+}
+
 // ContentPath returns the on-disk path of fileID's (single, pre-MVCC) content file:
 // <root>/content/<fileID>.v1.md.
 func (cs *ContentStore) ContentPath(fileID uint64) string {
@@ -330,15 +379,25 @@ func (cs *ContentStore) Read(fileID uint64) ([]byte, error) {
 // no catalog record is reported as a wrapped ErrNotFound.
 //
 // Append returns thresholdCrossed=true exactly on the one call whose
-// resulting size pushes the file from at-or-under ContentStore's configured
-// split threshold (splitThresholdBytes, defaulted to
-// defaultSplitThresholdBytes) to strictly over it. It is false both before
-// that crossing append (size still at or under the threshold) and on every
-// append after it (size already over the threshold from a prior call), so
-// callers see the signal fire exactly once per crossing. This is
-// deliberately just a signal/stub for a future Epic 2B caller to act on
-// (see docs/LLD/split.md's "Trigger" section); Append itself never invokes
-// engine/split or performs any actual splitting.
+// resulting size pushes the file from at-or-under the configured split
+// threshold to strictly over it. It is false both before that crossing
+// append (size still at or under the threshold) and on every append after
+// it (size already over the threshold from a prior call), so callers see
+// the signal fire exactly once per crossing.
+//
+// Subtask 4.5.3.1 (issue #40): this threshold-crossing decision is now made
+// by cs.splitTrigger, if one has been installed via SetSplitTrigger — see
+// SplitTriggerFunc's doc comment for why that is a plain callback rather
+// than a direct engine/split import, and for how a composition root wires it
+// to a real engine/split.Trigger (whose Detect/CrossesThreshold logic this
+// hook exists to reuse rather than duplicate). If no hook has been
+// installed (cs.splitTrigger == nil), Append falls back to its original
+// local comparison against ContentStore's own splitThresholdBytes field
+// (defaulted to defaultSplitThresholdBytes by OpenContentStore), preserving
+// prior behavior for callers that never call SetSplitTrigger. Either way,
+// Append itself still performs no actual splitting (see docs/LLD/split.md's
+// "Trigger" section) — it only surfaces the signal for a future Epic 2B
+// caller to act on.
 //
 // Task 1.4.3 is pre-MVCC, single-version only, matching Create/Read: Append
 // always mutates the single "v1" content file regardless of
@@ -405,7 +464,16 @@ func (cs *ContentStore) Append(fileID uint64, data []byte) (bool, error) {
 		return false, fmt.Errorf("catalog: content append: %w", err)
 	}
 
-	thresholdCrossed := oldSize <= cs.splitThresholdBytes && newSize > cs.splitThresholdBytes
+	var thresholdCrossed bool
+	if cs.splitTrigger != nil {
+		// Subtask 4.5.3.1 (issue #40): delegate to the installed hook (production
+		// callers back this with a real engine/split.Trigger.Detect/CrossesThreshold
+		// call — see SplitTriggerFunc's doc comment) on every append, invoked exactly
+		// once per call, same as the fallback comparison below.
+		thresholdCrossed = cs.splitTrigger(fileID, oldSize, newSize)
+	} else {
+		thresholdCrossed = oldSize <= cs.splitThresholdBytes && newSize > cs.splitThresholdBytes
+	}
 	return thresholdCrossed, nil
 }
 
