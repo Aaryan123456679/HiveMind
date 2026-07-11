@@ -244,6 +244,28 @@ func encodeTestLeaf(t *testing.T, key string, fileID uint64) []byte {
 	return buf
 }
 
+// TestEncodeKeysNodeSizeInvariant covers subtask 4.5.12.2's acceptance criterion:
+// encodeKeys' uint16 key-length prefix is only overflow-safe as long as NodeSize stays
+// under 65536, so this asserts that coupling holds at runtime (in addition to the
+// nodeSizeFitsUint16LengthPrefix compile-time assertion in node.go, which would instead
+// fail `go build`/`go vet` outright if NodeSize were ever raised to >= 65536). This is a
+// guard-existence check, not a behavioral test: no encode/decode outcome changes here.
+func TestEncodeKeysNodeSizeInvariant(t *testing.T) {
+	if NodeSize >= 65536 {
+		t.Fatalf("NodeSize invariant violated: NodeSize=%d must stay under 65536, or "+
+			"encodeKeys' uint16 key-length prefix can silently wrap/truncate a long "+
+			"enough key instead of being rejected at encode time", NodeSize)
+	}
+
+	// nodeSizeFitsUint16LengthPrefix (node.go) is itself a compile-time assertion of this
+	// same invariant; referencing it here just confirms it is still in scope and wired
+	// to NodeSize, not a disconnected/dead constant.
+	if nodeSizeFitsUint16LengthPrefix != uint16(65535-NodeSize) {
+		t.Fatalf("nodeSizeFitsUint16LengthPrefix = %d, want %d (65535 - NodeSize)",
+			nodeSizeFitsUint16LengthPrefix, uint16(65535-NodeSize))
+	}
+}
+
 // TestNodeLatchFields covers subtask 2a.4.1's acceptance criterion: every node
 // carries a latch (NodeStore.Lock/Unlock, keyed by node ID -- see latch.go) and a
 // version counter (NodeStore.Version) that increments on any structural mutation to

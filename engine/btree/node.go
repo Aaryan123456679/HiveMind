@@ -226,9 +226,27 @@ func (n InternalNode) Encode() ([]byte, error) {
 	return buf, nil
 }
 
+// nodeSizeFitsUint16LengthPrefix is a compile-time invariant guard for encodeKeys below:
+// encodeKeys narrows each key's byte length to a uint16 length prefix, which stays
+// lossless only because no single key's encoded length can ever exceed NodeSize
+// (LeafNode.Encode/InternalNode.Encode already reject, at encode time, any node whose
+// total encoded size exceeds NodeSize, and a lone key cannot be larger than the whole
+// node it lives in). That byte-fit check alone stops being sufficient the moment
+// NodeSize reaches 65536 or more: a key long enough to approach NodeSize could then
+// silently wrap around when narrowed to uint16 in encodeKeys, with no error raised at
+// encode time and a truncated key silently read back on decode. This line pins that
+// coupling as a build-time assertion -- "65535 - NodeSize" is a negative untyped
+// constant once NodeSize >= 65536, which the Go compiler rejects as overflowing uint16,
+// so a future NodeSize bump past this threshold fails `go build`/`go vet` instead of
+// silently reintroducing truncation. Widen encodeKeys' length prefix (e.g. to uint32)
+// before ever raising NodeSize this far.
+const nodeSizeFitsUint16LengthPrefix uint16 = 65535 - NodeSize
+
 // encodeKeys writes each key in keys as a uint16 length prefix followed by its raw
 // bytes, starting at off, and returns the offset immediately after the last key written.
-// Callers must have already verified the destination buffer is large enough.
+// Callers must have already verified the destination buffer is large enough. This
+// uint16 length prefix is only overflow-safe as long as NodeSize < 65536 (see the
+// nodeSizeFitsUint16LengthPrefix compile-time assertion immediately above).
 func encodeKeys(buf []byte, off int, keys []string) int {
 	for _, k := range keys {
 		binary.LittleEndian.PutUint16(buf[off:], uint16(len(k)))
