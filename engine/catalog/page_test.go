@@ -192,3 +192,95 @@ func TestSlottedPageReuseAfterDelete(t *testing.T) {
 		t.Fatal("InsertSlot() beyond reclaimed capacity: expected overflow error, got nil")
 	}
 }
+
+// TestInsertSlotShrinkReuseCapacity pins down InsertSlot's documented shrink-reuse
+// capacity behavior (see the InsertSlot doc comment and regression.jsonl subtask
+// 1.1.2): a tombstoned slot's reuse-eligibility capacity is tracked via the length of
+// the most recently written data, not the slot's original tuple-region footprint. Once
+// a slot has been reused with a smaller payload, its capacity is permanently shrunk to
+// that smaller size for all future reuse decisions -- it never grows back to the
+// original, larger footprint, even though the original tuple-region bytes are never
+// physically reclaimed.
+//
+// Sequence: insert N bytes, delete, reinsert M<N bytes (reusing the same slot, now
+// tracking capacity M), delete again, then attempt to reinsert a size strictly between
+// M and N. That reinsert must NOT reuse the shrunk slot (because size > M) and, since
+// the page is otherwise completely full, must fail with an overflow error rather than
+// silently succeeding via the slot's stale, larger original capacity of N.
+func TestInsertSlotShrinkReuseCapacity(t *testing.T) {
+	p := NewPage()
+
+	const n = 100      // N: original payload size.
+	const m = 40       // M: shrunk reinsert size, M < N.
+	const between = 70 // a size strictly between M and N.
+
+	nBytes := bytes.Repeat([]byte{0x11}, n)
+	mBytes := bytes.Repeat([]byte{0x22}, m)
+	betweenBytes := bytes.Repeat([]byte{0x33}, between)
+
+	// Fill the page completely with N-byte payloads so there is no free space left
+	// beyond what individual slot deletions reclaim; this removes any ambiguity that
+	// a later reinsert could succeed via space *other* than the reused slot.
+	var lastSlotID int
+	for {
+		id, err := p.InsertSlot(nBytes)
+		if err != nil {
+			break
+		}
+		lastSlotID = id
+	}
+	if _, err := p.InsertSlot(nBytes); err == nil {
+		t.Fatal("expected page to be full before deleting a slot")
+	}
+
+	// Top off any remaining fresh free space (too small to fit another N-byte
+	// payload, but potentially large enough to fit a "between"-sized payload via a
+	// brand-new slot) with 1-byte filler slots, so that after the reused slot is
+	// deleted the *only* free capacity in the page is what that single slot offers.
+	// Without this, a later "between"-sized insert could spuriously succeed via this
+	// leftover fresh space rather than actually exercising slot-capacity reuse.
+	for {
+		if _, err := p.InsertSlot([]byte{0x00}); err != nil {
+			break
+		}
+	}
+
+	// Delete the most recently inserted N-byte slot, freeing its capacity (currently
+	// tracked as N).
+	if err := p.DeleteSlot(lastSlotID); err != nil {
+		t.Fatalf("DeleteSlot() (first delete) returned unexpected error: %v", err)
+	}
+
+	// Reinsert M<N bytes. This must reuse the same slot (proving the slot's original
+	// N-byte capacity was available), and the slot's tracked capacity shrinks to M.
+	mSlotID, err := p.InsertSlot(mBytes)
+	if err != nil {
+		t.Fatalf("InsertSlot(M bytes) after first delete: expected reuse to succeed, got error: %v", err)
+	}
+	if mSlotID != lastSlotID {
+		t.Fatalf("InsertSlot(M bytes) after first delete: slotID = %d, want reused slotID %d", mSlotID, lastSlotID)
+	}
+
+	// Delete that slot again, now tombstoned with a tracked capacity of only M.
+	if err := p.DeleteSlot(mSlotID); err != nil {
+		t.Fatalf("DeleteSlot() (second delete) returned unexpected error: %v", err)
+	}
+
+	// Attempt to reinsert a size strictly between M and N. Per the documented
+	// shrink-reuse behavior, the slot's tracked capacity is now M (not N), so this
+	// insert must NOT reuse the slot via its stale original N-byte footprint. Since
+	// the page has no other free space, this insert must fail outright.
+	if _, err := p.InsertSlot(betweenBytes); err == nil {
+		t.Fatal("InsertSlot(size between M and N) after shrink-reuse: expected overflow error (capacity should be pinned at shrunk M, not stale N), got nil")
+	}
+
+	// Confirm the shrunk slot's actual capacity (M bytes) is still reusable: a
+	// reinsert of exactly M bytes must succeed and reuse the same slot.
+	finalID, err := p.InsertSlot(mBytes)
+	if err != nil {
+		t.Fatalf("InsertSlot(M bytes) after shrink-reuse: expected reuse at shrunk capacity M to succeed, got error: %v", err)
+	}
+	if finalID != mSlotID {
+		t.Fatalf("InsertSlot(M bytes) after shrink-reuse: slotID = %d, want reused slotID %d", finalID, mSlotID)
+	}
+}

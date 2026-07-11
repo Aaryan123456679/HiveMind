@@ -178,6 +178,29 @@ func (p *Page) validSlotID(slotID int) bool {
 // entry and tuple region are appended, provided the page has enough free space for
 // both; if not, InsertSlot returns a non-nil error rather than truncating data or
 // panicking.
+//
+// Shrink-reuse capacity behavior (documented, intentional, pinned by
+// TestInsertSlotShrinkReuseCapacity): a tombstoned slot's "reserved capacity" for
+// reuse-eligibility purposes is tracked solely via slotDataLength, i.e. the length of
+// the *most recently written* data, not the original tuple-region footprint allocated
+// for that slot when it was first inserted. Every successful reuse overwrites
+// slotDataLength with the new, possibly smaller, len(data) (see setSlotDataLength
+// below). This means the capacity a slot offers for future reuse is non-increasing
+// across a chain of insert/delete/reinsert cycles: once a slot has been reused with a
+// smaller payload, its larger original tuple-region footprint is permanently
+// unreachable for reuse purposes, even though those underlying bytes in the page's
+// tuple-data region are never actually reclaimed or moved (no compaction). Concretely,
+// given an insert of N bytes into slot S followed by delete, then a reinsert of M<N
+// bytes reusing slot S (now tracking capacity M, not N), followed by another delete: a
+// subsequent insert attempt of any size in (M, N] will NOT reuse slot S (M < size <=
+// N exceeds slot S's now-shrunk tracked capacity of M) and will instead fall through to
+// allocating a brand new slot directory entry + tuple bytes, permanently stranding the
+// unused N-M bytes of slot S's original tuple-region allocation for the lifetime of
+// the page. This is a known, accepted limitation (see regression.jsonl subtask 1.1.2)
+// pending a future reserved-original-capacity field (the slot header's unused
+// `reserved` uint16, see slotOffReserved) or full in-page compaction; it is not a
+// memory-safety bug, merely progressive internal fragmentation under repeated
+// shrink-then-grow update-in-place usage patterns.
 func (p *Page) InsertSlot(data []byte) (int, error) {
 	if len(data) > PageSize {
 		return 0, fmt.Errorf("catalog: page: slot data of %d bytes exceeds page size %d", len(data), PageSize)
