@@ -1,0 +1,42 @@
+{
+  "issue": 45,
+  "summary": "Test-only + rename cleanup across two languages; zero production behavior change for F2/F3/F5 (test-only), F6 is a mechanical parameter rename with call-site updates.",
+  "files": [
+    {
+      "path": "agents/ingestion/test_propose_split.py",
+      "change": "Add 2 new tests: non-ASCII byte-offset fixture (F2) and substring-marker near-miss regression (F3).",
+      "risk": "none — additive only, no existing test modified",
+      "blast_radius": "test file only"
+    },
+    {
+      "path": "engine/rpc/server_test.go",
+      "change": "Change 3 PutEdge weights in PutEdge_WeightIncrement_ViaCompact from 1,1,1 to 3,4,5 and update the expected total from 3 to 12.",
+      "risk": "low — test-only, but must verify graph.Compact / mergeEdges actually sums (not caps/counts) or the strengthened assertion could newly fail",
+      "blast_radius": "single subtest in server_test.go"
+    },
+    {
+      "path": "agents/ingestion/wiring.py",
+      "change": "Rename weight_delta -> occurrence_weight: SegmentWiringClient Protocol method, GrpcEntityEdgeClient.put_edge, GrpcSegmentWiringClient.put_edge, and the two execute_segment call sites plus one docstring reference.",
+      "risk": "medium blast radius (5 definition/call sites in this file) but purely mechanical - keyword-only param, no positional callers exist",
+      "blast_radius": "all put_edge signatures/call sites in wiring.py"
+    },
+    {
+      "path": "agents/ingestion/test_segment_fixtures.py",
+      "change": "Rename weight_delta -> occurrence_weight in the fake client's put_edge signature (must match Protocol).",
+      "risk": "none if done in lockstep with wiring.py",
+      "blast_radius": "1 signature"
+    },
+    {
+      "path": "agents/ingestion/test_segment_wiring.py",
+      "change": "Rename weight_delta -> occurrence_weight in fake client signature/body and all call sites (5 occurrences).",
+      "risk": "none if done in lockstep",
+      "blast_radius": "5 occurrences, test file only"
+    }
+  ],
+  "cross_cutting_concerns": [
+    "F6 rename must be applied atomically across production + all test doubles in the same commit, or pytest will fail on keyword-arg mismatch (Protocol is structural/duck-typed in Python, but the fakes call the keyword explicitly).",
+    "F5's new weights (3,4,5) must be distinct pairwise and the expected sum (12) must be produced only by true summation, not e.g. max() (5) or count*avg tricks - 12 is unreachable by any single input weight or by count alone (count=3), so it uniquely discriminates sum from count/max/last-write-wins."
+  ],
+  "no_production_behavior_change": "F2, F3 are additive tests only. F5 is test-only. F6 is a pure rename (no logic change) - grep-verified no other file outside agents/ingestion references weight_delta.",
+  "deferred": []
+}

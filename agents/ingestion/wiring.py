@@ -211,7 +211,12 @@ class SegmentWiringClient(Protocol):
         ...
 
     def put_edge(
-        self, source_file_id: int, target_file_id: int, edge_type: str, *, weight_delta: int = 1
+        self,
+        source_file_id: int,
+        target_file_id: int,
+        edge_type: str,
+        *,
+        occurrence_weight: int = 1,
     ) -> None:
         """Create (or increment the weight of) a `source_file_id -> target_file_id`
         edge of type `edge_type` (`ENTITY_COOCCUR` or `LLM_ASSERTED`)."""
@@ -283,7 +288,7 @@ def execute_segment(
             if other_file_id == file_id:
                 continue
             try:
-                rpc_client.put_edge(file_id, other_file_id, ENTITY_COOCCUR, weight_delta=1)
+                rpc_client.put_edge(file_id, other_file_id, ENTITY_COOCCUR, occurrence_weight=1)
                 entity_edges_created += 1
             except Exception as exc:  # noqa: BLE001
                 errors.append(
@@ -307,7 +312,7 @@ def execute_segment(
         if target_file_id == file_id:
             continue
         try:
-            rpc_client.put_edge(file_id, target_file_id, LLM_ASSERTED, weight_delta=1)
+            rpc_client.put_edge(file_id, target_file_id, LLM_ASSERTED, occurrence_weight=1)
             llm_asserted_edges_created += 1
         except Exception as exc:  # noqa: BLE001
             errors.append(
@@ -403,8 +408,8 @@ class GrpcEntityEdgeClient:
       its `file_ids` repeated field directly (already a plain list of ints).
     - `index_entity(entity, file_id) -> None` calls `PutEntity`; `PutEntityResponse`
       is empty (`__slots__ = ()`), so there is nothing to translate back.
-    - `put_edge(source_file_id, target_file_id, edge_type, *, weight_delta=1) -> None`
-      calls `PutEdge`. `weight_delta` maps directly onto `PutEdgeRequest.weight`:
+    - `put_edge(source_file_id, target_file_id, edge_type, *, occurrence_weight=1) -> None`
+      calls `PutEdge`. `occurrence_weight` maps directly onto `PutEdgeRequest.weight`:
       per `proto/hivemind.proto`'s `PutEdge` doc comment, that field is *this call's
       own occurrence weight* (typically 1), not a running total -- summing repeated
       `ENTITY_COOCCUR` occurrences into a total weight is `engine/graph.Compact`'s
@@ -444,7 +449,7 @@ class GrpcEntityEdgeClient:
         target_file_id: int,
         edge_type: str,
         *,
-        weight_delta: int = 1,
+        occurrence_weight: int = 1,
     ) -> None:
         hivemind_pb2, _ = _import_hivemind_grpc_modules()
 
@@ -452,7 +457,7 @@ class GrpcEntityEdgeClient:
             source_file_id=source_file_id,
             target_file_id=target_file_id,
             edge_type=hivemind_pb2.EdgeType.Value(edge_type),
-            weight=weight_delta,
+            weight=occurrence_weight,
         )
         self._stub.PutEdge(request)
 
@@ -488,8 +493,8 @@ class GrpcSegmentWiringClient:
         target_file_id: int,
         edge_type: str,
         *,
-        weight_delta: int = 1,
+        occurrence_weight: int = 1,
     ) -> None:
         self._entity_edge_client.put_edge(
-            source_file_id, target_file_id, edge_type, weight_delta=weight_delta
+            source_file_id, target_file_id, edge_type, occurrence_weight=occurrence_weight
         )

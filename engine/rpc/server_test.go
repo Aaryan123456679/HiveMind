@@ -691,12 +691,20 @@ func TestPutEdgeAndEntityHandlers(t *testing.T) {
 
 	t.Run("PutEdge_WeightIncrement_ViaCompact", func(t *testing.T) {
 		f := newFixture(t)
-		for i := 0; i < 3; i++ {
+		// Distinct weights (3, 4, 5), not identical (1, 1, 1): with identical
+		// weights, a "sum" result (3) and a "count" result (also 3, since
+		// count*1 == sum(1,1,1)) are indistinguishable, so the assertion below
+		// couldn't actually discriminate graph.Compact/mergeEdges' true summing
+		// behavior from an accidental count-only implementation. 3+4+5=12 is
+		// reachable only by true summation -- not by count (3), max (5), or
+		// last-write-wins (5) -- so it uniquely discriminates sum semantics.
+		weights := []uint32{3, 4, 5}
+		for i, weight := range weights {
 			_, err := f.srv.PutEdge(context.Background(), &hivemindv1.PutEdgeRequest{
 				SourceFileId: f.alphaID,
 				TargetFileId: f.betaID,
 				EdgeType:     hivemindv1.EdgeType_ENTITY_COOCCUR,
-				Weight:       1,
+				Weight:       weight,
 			})
 			if err != nil {
 				t.Fatalf("PutEdge call %d: %v", i, err)
@@ -713,12 +721,12 @@ func TestPutEdgeAndEntityHandlers(t *testing.T) {
 		for _, e := range neighbors {
 			if e.Target == f.betaID && e.Type == graph.EdgeEntityCooccur {
 				found = true
-				// 3 PutEdge calls, weight 1 each, into f.graphPath -- a fresh path distinct
+				// 3 PutEdge calls, weights 3+4+5, into f.graphPath -- a fresh path distinct
 				// from the fixture's in-memory adjacency (f.srv's graph.CSRGraph), so there
 				// is no pre-existing on-disk snapshot for Compact to fold into: the summed
-				// result is exactly the 3 fresh log occurrences.
-				if e.Weight != 3 {
-					t.Fatalf("Compact: ENTITY_COOCCUR weight = %d, want 3 (summed across 3 PutEdge calls)", e.Weight)
+				// result is exactly the 3 fresh log occurrences' weights added together.
+				if e.Weight != 12 {
+					t.Fatalf("Compact: ENTITY_COOCCUR weight = %d, want 12 (summed across 3 PutEdge calls of weight 3, 4, 5)", e.Weight)
 				}
 			}
 		}

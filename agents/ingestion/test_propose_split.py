@@ -282,3 +282,133 @@ def test_out_of_order_start_marker_raises() -> None:
 
     with pytest.raises(ProposeSplitParseError, match="not strictly after"):
         propose_split(_FIXTURE_DOCUMENT, client)
+
+
+# ---------------------------------------------------------------------------
+# Non-blocking-finding regression tests (issue #45, batched Phase 4.5 cleanup:
+# F2 -- non-ASCII byte-offset coverage; F3 -- substring-marker near-miss)
+# ---------------------------------------------------------------------------
+
+#: F2 fixture: a document containing 2-byte (café, überall) and 4-byte (emoji)
+#: UTF-8 sequences on both sides of the resolved section boundary, so that a
+#: broken/no-op `_char_offset_to_byte_offset` (one that returned the character
+#: offset unchanged) would produce a boundary that either corrupts the
+#: reassembled bytes or lands mid-codepoint -- either way, detectable below.
+_FIXTURE_DOCUMENT_NON_ASCII = (
+    "# Café overview\n\n"
+    "This café section discusses überall availability across many regions. "
+    "Visit our café location today \U0001f600 for details.\n\n"
+    "# Überall details\n\n"
+    "This section covers überall rollout timelines with emoji markers "
+    "\U0001f389 sprinkled throughout.\n"
+).encode("utf-8")
+
+_VALID_PAYLOAD_NON_ASCII = {
+    "sections": [
+        {"new_topic_path": "cafe/Overview", "start_marker": "# Café overview"},
+        {"new_topic_path": "uberall/Details", "start_marker": "# Überall details"},
+    ],
+    "redirect_summary": "Split café and überall overview topics.",
+}
+
+
+def test_propose_split_resolves_byte_offsets_for_non_ascii_content() -> None:
+    """F2: `_char_offset_to_byte_offset`'s UTF-8 conversion is exercised end to
+    end via `propose_split` with a fixture containing multi-byte café/überall/
+    emoji sequences before, around, and after the resolved boundary -- the
+    existing suite's `_FIXTURE_DOCUMENT` is pure ASCII, so char-offset and
+    byte-offset happen to coincide there and would never catch a broken
+    conversion.
+    """
+    client = _FakeLLMClient(response=json.dumps(_VALID_PAYLOAD_NON_ASCII))
+    result = propose_split(_FIXTURE_DOCUMENT_NON_ASCII, client)
+
+    assert len(result.files) == 2
+    ranges = [f.section_ranges[0] for f in result.files]
+
+    # Partition invariant holds even with multi-byte UTF-8 content.
+    assert ranges[0].start == 0
+    assert ranges[-1].end == len(_FIXTURE_DOCUMENT_NON_ASCII)
+    assert ranges[0].end == ranges[1].start
+
+    # Reassembling the byte ranges reproduces the exact original bytes,
+    # including every multi-byte café/überall/emoji sequence.
+    reassembled = b"".join(_FIXTURE_DOCUMENT_NON_ASCII[r.start : r.end] for r in ranges)
+    assert reassembled == _FIXTURE_DOCUMENT_NON_ASCII
+
+    # The text before the second boundary contains several multi-byte
+    # characters, so the correct byte offset must be strictly greater than
+    # the character offset of the same boundary -- the actual regression
+    # check for `_char_offset_to_byte_offset`: a no-op conversion would leave
+    # these equal instead.
+    document_text = _FIXTURE_DOCUMENT_NON_ASCII.decode("utf-8")
+    marker = _VALID_PAYLOAD_NON_ASCII["sections"][1]["start_marker"]
+    char_offset_of_boundary = document_text.find(marker)
+    assert char_offset_of_boundary != -1
+    assert ranges[0].end > char_offset_of_boundary
+
+    # Both resulting byte slices must themselves be valid, independently
+    # decodable UTF-8 -- i.e. the byte offset never lands mid-codepoint.
+    for r in ranges:
+        _FIXTURE_DOCUMENT_NON_ASCII[r.start : r.end].decode("utf-8")
+
+
+def test_propose_split_substring_marker_near_miss_produces_odd_but_valid_split() -> None:
+    """F3: a later section's `start_marker` that happens to be a substring of
+    an *earlier* section's own marker text can resolve, via the module's
+    forward `str.find`, to an offset *inside* that earlier marker's own span
+    -- not at the semantically-intended later boundary.
+
+    This is not a bug relative to the module's own disclosed guarantee
+    (`propose_split.py` module docstring's "Deterministic partition
+    guarantee" section): the partition invariant (no gaps/overlaps, first
+    range starts at 0, last ends at `len(content)`) still holds by
+    construction, so no exception is raised. But the resulting split is
+    semantically odd -- a very short first section, ending mid-word rather
+    than where a human (or the LLM) likely intended. This test locks in and
+    documents that exact, previously-untested behavior rather than leaving it
+    as a silent surprise.
+    """
+    document = (
+        b"Introduction covers the platform basics for new users in detail here. "
+        b"Advanced usage covers configuration and scaling for experts."
+    )
+    document_text = document.decode("utf-8")
+    first_marker = "Introduction covers"
+    near_miss_marker = "duction covers"
+
+    # Sanity-check the near-miss setup itself: the second section's marker is
+    # a substring of the first, earlier section's own marker text.
+    assert near_miss_marker in first_marker
+
+    payload = {
+        "sections": [
+            {"new_topic_path": "intro/Overview", "start_marker": first_marker},
+            {"new_topic_path": "advanced/Usage", "start_marker": near_miss_marker},
+        ],
+        "redirect_summary": "Split intro and advanced usage sections.",
+    }
+    client = _FakeLLMClient(response=json.dumps(payload))
+
+    # Structurally valid: no exception, despite the semantically odd marker.
+    result = propose_split(document, client)
+
+    assert len(result.files) == 2
+    ranges = [f.section_ranges[0] for f in result.files]
+
+    # Partition invariant still holds by construction.
+    assert ranges[0].start == 0
+    assert ranges[-1].end == len(document)
+    assert ranges[0].end == ranges[1].start
+    reassembled = b"".join(document[r.start : r.end] for r in ranges)
+    assert reassembled == document
+
+    # The "odd" part: the near-miss marker resolves *inside* the first
+    # section's own marker text (the module's forward `str.find` only checks
+    # that the resolved offset is strictly after the previous boundary, not
+    # that it's after the previous marker's own text), producing a first
+    # section far shorter than even the first marker's own length.
+    expected_boundary = document_text.find(near_miss_marker)
+    assert expected_boundary != -1
+    assert ranges[0].end == expected_boundary
+    assert ranges[0].end < len(first_marker)

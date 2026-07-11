@@ -116,7 +116,7 @@ class _FakeWiringClient:
         self.indexed_entities.append((entity, file_id))
 
     def put_edge(
-        self, source_file_id: int, target_file_id: int, edge_type: str, *, weight_delta: int = 1
+        self, source_file_id: int, target_file_id: int, edge_type: str, *, occurrence_weight: int = 1
     ) -> None:
         self.put_edge_calls.append((source_file_id, target_file_id, edge_type))
 

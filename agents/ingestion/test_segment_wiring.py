@@ -99,9 +99,9 @@ class _FakeWiringClient:
         self.index_entity_calls.append((entity, file_id))
 
     def put_edge(
-        self, source_file_id: int, target_file_id: int, edge_type: str, *, weight_delta: int = 1
+        self, source_file_id: int, target_file_id: int, edge_type: str, *, occurrence_weight: int = 1
     ) -> None:
-        self.put_edge_calls.append((source_file_id, target_file_id, edge_type, weight_delta))
+        self.put_edge_calls.append((source_file_id, target_file_id, edge_type, occurrence_weight))
         error = self._put_edge_errors.get((source_file_id, target_file_id, edge_type))
         if error is not None:
             raise error
@@ -454,7 +454,7 @@ def test_grpc_entity_edge_client_put_edge_translates_edge_type_and_weight(monkey
 
     fake_channel = MagicMock()
     client = GrpcEntityEdgeClient(fake_channel)
-    result = client.put_edge(100, 1, ENTITY_COOCCUR, weight_delta=1)
+    result = client.put_edge(100, 1, ENTITY_COOCCUR, occurrence_weight=1)
 
     fake_pb2.EdgeType.Value.assert_called_once_with(ENTITY_COOCCUR)
     fake_pb2.PutEdgeRequest.assert_called_once_with(
@@ -464,7 +464,7 @@ def test_grpc_entity_edge_client_put_edge_translates_edge_type_and_weight(monkey
     assert result is None
 
 
-def test_grpc_entity_edge_client_put_edge_default_weight_delta(monkeypatch):
+def test_grpc_entity_edge_client_put_edge_default_occurrence_weight(monkeypatch):
     fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
 
     fake_stub_instance = MagicMock()
@@ -524,7 +524,7 @@ def test_grpc_segment_wiring_client_delegates_all_four_methods(monkeypatch):
     put_result = client.put_segment(0, b"content")
     lookup_result = client.lookup_entity_files("Acme Corp")
     client.index_entity("Acme Corp", 42)
-    client.put_edge(42, 7, ENTITY_COOCCUR, weight_delta=1)
+    client.put_edge(42, 7, ENTITY_COOCCUR, occurrence_weight=1)
 
     assert put_result == PutSegmentResult(file_id=42, new_version=3)
     assert lookup_result == [7, 8]
