@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.5.4.1",
+  "build_green": true,
+  "build_scope_note": "go build ./engine/... currently fails repo-wide due to an unrelated, untracked, in-flight file (engine/engine_stress_test.go, package btree, colliding with engine/integration_test.go's package engine) apparently from a concurrently-running agent; not part of this subtask's diff. Verified build/vet/test green scoped to engine/btree, engine/wal, engine/catalog, engine/split, engine/mvcc instead.",
+  "new_test_passes": true,
+  "full_related_suite_green": true,
+  "gofmt_clean": true,
+  "go_vet_clean": true,
+  "validation_matrix_fully_covered": true,
+  "self_consistency_is_not_verification": "This is internal sanity only per invariant I4; independent verification is deferred to /cdr:verify."
+}

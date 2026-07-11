@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.5.4.1",
+  "criteria": [
+    {
+      "criterion": "RecoverFromWAL no longer silently no-ops on btree WAL records in a way that loses data",
+      "covered_by": "TestCrashBetweenInsertAndSaveRootRecovers (proves the recovery path that matters in practice -- root-pointer recovery via LoadRoot -- no longer silently drops inserts across a crash; catalog.RecoverFromWAL's default no-op on RecordBTreeInsert/RecordBTreeDelete remains intentional and unchanged since no production code writes those record types)",
+      "status": "covered"
+    },
+    {
+      "criterion": "SaveRoot invoked automatically (not only manually) so a crash between an Insert and the next SaveRoot no longer drops that insert",
+      "covered_by": "engine/btree/insert.go: Tree.Insert (bootstrap) + propagate (root split) both now call SaveRoot automatically",
+      "status": "covered"
+    },
+    {
+      "criterion": "Test spec: go test ./engine/btree/... -race -run TestCrashBetweenInsertAndSaveRootRecovers -- insert, crash before next SaveRoot, recover, assert insert present",
+      "covered_by": "engine/btree/btree_test.go:TestCrashBetweenInsertAndSaveRootRecovers",
+      "status": "covered",
+      "evidence": "go test ./engine/btree/... -race -run TestCrashBetweenInsertAndSaveRootRecovers -v => PASS (0.10s)"
+    },
+    {
+      "criterion": "No regression in ordinary (non-root-changing) insert/delete/lookup behavior or performance-sensitive concurrent tests",
+      "covered_by": "full -race suite for engine/btree (includes TestConcurrentMixedWorkload, TestConcurrentMixedWorkloadForcedLookupDuringDelete, TestConcurrentInsertDeleteDisjointRangesMinimalRepro), engine/wal, engine/catalog, engine/split, engine/mvcc",
+      "status": "covered",
+      "evidence": "all 5 packages: ok (PASS), no -race flags"
+    },
+    {
+      "criterion": "gofmt / go vet clean",
+      "covered_by": "gofmt -l engine/btree/insert.go engine/btree/btree_test.go (no output); go vet ./engine/btree/... (clean)",
+      "status": "covered"
+    }
+  ],
+  "out_of_scope_for_this_subtask": [
+    "Tree.Delete's symmetric root-changing paths (issue's acceptance criteria and test spec scope this subtask to Insert only)",
+    "NodeStore.WriteNode's lack of per-write Sync (pre-existing, separate, unaffected)",
+    "Wiring RecordBTreeInsert/RecordBTreeDelete into a real production WAL write+replay path (no such production writer exists today; would be a materially larger, separate change)"
+  ]
+}

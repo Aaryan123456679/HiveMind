@@ -599,6 +599,28 @@ func (t *Tree) Root() uint64 {
 //
 // If path is already present, its fileID is updated in place (upsert
 // semantics, matching the free Insert function's convention).
+//
+// Automatic root checkpointing (subtask 4.5.4.1, issue #41): every time this
+// call (directly, on empty-tree bootstrap) or propagate (indirectly, on a
+// root split) installs a NEW root node ID into t.root, it now also calls
+// SaveRoot to durably persist that new root ID to t.Store's ".root" sidecar
+// file before returning, instead of leaving that entirely to a separate,
+// manual, out-of-band SaveRoot call as before. This closes the crash-window
+// gap tracked in .cdr/memory/pending.md's "btree SaveRoot / WAL-replay gap"
+// item: previously, a crash between an Insert that installed a brand-new
+// root (bootstrap or root-split) and the caller's next manual SaveRoot call
+// would leave the on-disk sidecar file pointing at a stale (or, for
+// bootstrap, nonexistent/reservedNodeID) root, silently dropping every
+// insert reachable only through the new root from the recovered tree -- even
+// though the new root's own node content was already durably written via
+// WriteNode. Ordinary inserts into an already-installed root (the common
+// case, handled by crabInsert/propagate without ever changing t.root) do
+// NOT trigger a SaveRoot call here, since the sidecar file's on-disk content
+// is already correct in that case; this keeps the added fsync cost scoped to
+// the rare root-changing events (once per tree bootstrap, plus occasional
+// root splits) rather than every single Insert's hot path, preserving this
+// package's original design rationale (persist.go's SaveRoot doc comment)
+// for not fsyncing on every mutation.
 func (t *Tree) Insert(path string, fileID uint64) error {
 	t.rootMu.Lock()
 	if t.root == reservedNodeID {
@@ -621,6 +643,10 @@ func (t *Tree) Insert(path string, fileID uint64) error {
 			return err
 		}
 		t.root = leafID
+		if err := SaveRoot(t.Store, t.root); err != nil {
+			t.rootMu.Unlock()
+			return fmt.Errorf("btree: Insert: checkpointing new bootstrap root %d: %w", t.root, err)
+		}
 		t.rootMu.Unlock()
 		return nil
 	}
@@ -1134,6 +1160,10 @@ func (t *Tree) propagate(childIDBeingReplaced uint64, promotedKey string, newChi
 			}
 
 			t.root = newRootID
+			if err := SaveRoot(store, t.root); err != nil {
+				t.rootMu.Unlock()
+				return fmt.Errorf("btree: propagate: checkpointing new split-created root %d: %w", t.root, err)
+			}
 			t.rootMu.Unlock()
 			return nil
 		}

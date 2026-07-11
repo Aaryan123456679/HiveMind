@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.5.4.1",
+  "issue": 41,
+  "files_touched": [
+    {
+      "path": "engine/btree/insert.go",
+      "change": "Tree.Insert (bootstrap root install) and propagate (root-split root install) now call SaveRoot automatically whenever they change t.root; errors from SaveRoot are wrapped and returned.",
+      "risk": "low — only two rare, already-serialized-under-rootMu call sites gain an extra fsync; ordinary (non-root-changing) inserts unaffected."
+    },
+    {
+      "path": "engine/btree/btree_test.go",
+      "change": "Added TestCrashBetweenInsertAndSaveRootRecovers (exact name from issue's test spec).",
+      "risk": "none — test-only addition."
+    }
+  ],
+  "files_not_touched_considered": [
+    {
+      "path": "engine/wal/recovery.go",
+      "reason": "isValidRecordType's allow-list and Replay's dispatch already correctly handle RecordBTreeInsert/RecordBTreeDelete as valid-but-unwired types; no production writer of those record types exists, so no change needed here for this subtask's chosen fix path (SaveRoot automation, not WAL-replay wiring)."
+    },
+    {
+      "path": "engine/catalog/recovery.go",
+      "reason": "RecoverFromWAL's default-case no-op on non-catalog record types is intentional per its own doc comment and remains correct; not touched."
+    },
+    {
+      "path": "engine/btree/delete.go / Tree.Delete",
+      "reason": "Issue's acceptance criteria and test spec name both scope this subtask to Insert only (\"a crash between an Insert and the next SaveRoot\"); Tree.Delete's own root-changing paths (if any) are a symmetric but explicitly out-of-scope follow-up, noted in handoff for the next subtasks / future issue."
+    }
+  ],
+  "downstream_consumers_checked": [
+    "engine/split/execute.go (ExecuteSplitAtomic, ExecuteSplitBtreeInsert — both call tree.Insert; behavior unchanged except for the new automatic SaveRoot on root-changing inserts, which is strictly additive durability, not a behavior/signature change)",
+    "engine/mvcc (no direct btree.Tree.Insert call sites found)"
+  ],
+  "test_suites_run": [
+    "go test ./engine/btree/... -race",
+    "go test ./engine/wal/... -race",
+    "go test ./engine/catalog/... -race",
+    "go test ./engine/split/... -race",
+    "go test ./engine/mvcc/... -race"
+  ],
+  "test_suites_result": "all PASS",
+  "unrelated_concurrent_changes_observed": {
+    "note": "git diff --stat at run start showed unrelated in-flight changes from other concurrently-running agents (engine/rpc/*, proto/hivemind.proto, agents/hivemind_pb2*.py, engine/catalog/record.go, engine/cmd/smokeserver/main.go, and an untracked engine/engine_stress_test.go with a package-name conflict against engine/integration_test.go). None overlap engine/btree or engine/wal. This subtask's git add/commit is scoped strictly to engine/btree/insert.go and engine/btree/btree_test.go."
+  }
+}

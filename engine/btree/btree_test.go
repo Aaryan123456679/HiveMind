@@ -747,3 +747,81 @@ func TestConcurrentInsertDeleteDisjointRangesMinimalRepro(t *testing.T) {
 		}
 	}
 }
+
+// TestCrashBetweenInsertAndSaveRootRecovers is subtask 4.5.4.1's (issue #41)
+// required test spec: it inserts via Tree.Insert (production's
+// concurrency-safe entry point, used by engine/split/execute.go) -- enough
+// keys to force both the empty-tree bootstrap root-install AND at least one
+// later root split -- WITHOUT ever calling SaveRoot manually, then simulates
+// a crash (closing the underlying index file with no explicit checkpoint),
+// reopens a brand-new NodeStore against the SAME on-disk file, recovers the
+// root purely via LoadRoot, and asserts every inserted key is still present.
+//
+// Before this subtask's fix, Tree.Insert never called SaveRoot itself: the
+// on-disk ".root" sidecar file would either not exist at all (bootstrap
+// case: LoadRoot would return reservedNodeID, an empty tree, silently
+// dropping EVERY insert) or would point at a stale pre-split root (split
+// case: LoadRoot would return an old root ID whose subtree does not include
+// the keys that migrated to the new root's other child after the split),
+// exactly the crash-window gap tracked in .cdr/memory/pending.md's "btree
+// SaveRoot / WAL-replay gap" item. With the fix, Tree.Insert (via its
+// bootstrap path) and propagate (via its root-split path) both call
+// SaveRoot automatically whenever they install a new root, so this recovers
+// correctly with no manual checkpoint call anywhere in this test.
+func TestCrashBetweenInsertAndSaveRootRecovers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "name.idx")
+
+	f, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile: %v", err)
+	}
+	store := NewNodeStore(f)
+	alloc, err := NewNodeAllocator(store)
+	if err != nil {
+		t.Fatalf("NewNodeAllocator: %v", err)
+	}
+	tree := NewTree(store, alloc, reservedNodeID)
+
+	// Enough sequential keys to force the empty-tree bootstrap (i=0) plus
+	// multiple later leaf/internal splits, including at least one root
+	// split (same key count/pattern TestPersistReload uses to force
+	// multi-level structure). Deliberately NOT calling SaveRoot at any
+	// point here -- that is the entire point of this test.
+	const n = 400
+	inserted := make(map[string]uint64, n)
+	for i := 0; i < n; i++ {
+		key := genKey(i)
+		fileID := uint64(i + 1)
+		if err := tree.Insert(key, fileID); err != nil {
+			t.Fatalf("tree.Insert(%q): unexpected error: %v", key, err)
+		}
+		inserted[key] = fileID
+	}
+
+	// --- simulate a crash: close the file with no manual SaveRoot call. ---
+	if err := alloc.Close(); err != nil {
+		t.Fatalf("alloc.Close: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("f.Close: %v", err)
+	}
+
+	// --- "process restart": fresh NodeStore over the same on-disk file. ---
+	f2, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile (reopen): %v", err)
+	}
+	defer f2.Close()
+	store2 := NewNodeStore(f2)
+
+	recoveredRootID, err := LoadRoot(store2)
+	if err != nil {
+		t.Fatalf("LoadRoot: %v", err)
+	}
+	if recoveredRootID == reservedNodeID {
+		t.Fatalf("LoadRoot after crash = reservedNodeID (0); every automatically-checkpointed insert was lost")
+	}
+
+	assertAllLookupable(t, store2, recoveredRootID, inserted)
+}
