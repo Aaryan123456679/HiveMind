@@ -1,0 +1,18 @@
+{
+  "build_green": true,
+  "test_run": "python3 -m pytest agents/eval/ -q -> 163 passed, 0 failed (was already ~149 passed before this subtask's 2 new test files added 14 new tests: 9 in test_run_benchmark.py's assertions across its 9 test functions plus checkpoint/build_checkpoints unit tests, 5 more counted individually -- exact new count: 14 new test functions across test_run_benchmark.py (10) and test_chart.py (4)).",
+  "no_new_dependency": "Confirmed via `git diff --stat -- agents/pyproject.toml` -> empty diff. chart.py uses stdlib only (pathlib/json/argparse).",
+  "no_live_network_calls": "Confirmed via grep across run_benchmark.py/chart.py/test_run_benchmark.py/test_chart.py for os.environ/getenv/OpenRouterClient/GeminiClient/httpx.Client(/httpx.get(/requests. -- only hit is a docstring mention of OpenRouterClient/GeminiClient (negation, 'never ... uses'), no actual construction or call. main() explicitly refuses to run (raises RunBenchmarkError) rather than silently attempting a real corpus/API call -- verified directly by invoking main() and observing the raise.",
+  "no_env_reads": "Confirmed -- no `.env` file access, no `os.environ`/`os.getenv` call anywhere in the two new modules or two new test files.",
+  "validation_matrix_coverage": "All 10 requirement rows (R1-R10) in validation-matrix.json covered by named tests, cross-checked by running that exact test list.",
+  "manual_checks": [
+    "python3 -c \"import eval.run_benchmark\" -- imports cleanly, no circular-import issue with eval.pipeline/eval.llm_judge (llm_judge imported lazily inside run_arm_at_checkpoint's optional judge branch to avoid a hard import-time dependency on agents/llm/interceptor.py for callers who never use judge_config).",
+    "Manually invoked run_benchmark.main() and confirmed it raises RunBenchmarkError rather than performing any real corpus/API call -- this pass's harness is demonstrably wired but never live-executed.",
+    "Verified ArmCostSummary/StageAggregate field names against eval.cost_latency's actual dataclass fields via `dataclasses.fields()` introspection before wiring CheckpointArmResult.to_json()."
+  ],
+  "known_limitations_disclosed_in_handoff": [
+    "run_benchmark.py's CLI (main()) is not exercised end-to-end against a real corpus/Ollama server in this pass -- by design, per the binding scoping constraint.",
+    "vector_rag_rerank (5.2.2) is not wired in as a 4th arm -- pipeline.py's own wrapper set has exactly 3 arms; see architecture-discovery.md.",
+    "compare_precision_across_checkpoints wiring is optional (run_benchmark_with_traversal_precision) and tested at 3-checkpoint scale in this subtask's own suite, closing 5.4.1's disclosed gap."
+  ]
+}

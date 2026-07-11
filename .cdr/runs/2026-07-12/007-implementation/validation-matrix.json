@@ -1,0 +1,57 @@
+{
+  "requirements": [
+    {
+      "id": "R1",
+      "text": "Produce a degradation chart/data file for recall/precision over corpus growth for 20/50/100pct checkpoints, all three arms.",
+      "covered_by": ["test_run_benchmark.py::test_run_benchmark_produces_three_checkpoints_all_arms"]
+    },
+    {
+      "id": "R2",
+      "text": "Output data file contains exactly three checkpoints with well-formed metrics for all three arms.",
+      "covered_by": [
+        "test_run_benchmark.py::test_run_benchmark_produces_three_checkpoints_all_arms",
+        "test_run_benchmark.py::test_write_and_load_benchmark_results_round_trip"
+      ]
+    },
+    {
+      "id": "R3",
+      "text": "Reuse pipeline.py's run_hivemind_arm/run_vector_rag_arm/run_graphrag_lite_arm wrappers (5.2.4) rather than reimplementing arm execution.",
+      "covered_by": ["test_run_benchmark.py::test_arm_specs_reuse_baseline_retrieve_documents", "test_run_benchmark.py::test_judge_path_reuses_generate_final_answer"]
+    },
+    {
+      "id": "R4",
+      "text": "Score via eval.metrics.score_arm against ground truth.",
+      "covered_by": ["test_run_benchmark.py::test_run_benchmark_produces_three_checkpoints_all_arms"]
+    },
+    {
+      "id": "R5",
+      "text": "Optional judge-based answer-quality scoring routed through llm_judge.score_arm_answers -> LLMInterceptor.call(), mocked in tests.",
+      "covered_by": ["test_run_benchmark.py::test_judge_path_reuses_generate_final_answer"]
+    },
+    {
+      "id": "R6",
+      "text": "Aggregate cost/latency via cost_latency.py.",
+      "covered_by": ["test_run_benchmark.py::test_run_benchmark_produces_three_checkpoints_all_arms"]
+    },
+    {
+      "id": "R7",
+      "text": "compare_precision_across_checkpoints tested at genuine multi-checkpoint (>1) scale in this subtask's own suite.",
+      "covered_by": ["test_run_benchmark.py::test_compare_precision_across_checkpoints_multi_checkpoint"]
+    },
+    {
+      "id": "R8",
+      "text": "Write results to a JSON data file, one row per checkpoint per arm, well-formed metrics.",
+      "covered_by": ["test_run_benchmark.py::test_write_and_load_benchmark_results_round_trip"]
+    },
+    {
+      "id": "R9",
+      "text": "chart.py renders the data file into a degradation chart/table, one line per arm, zero new dependency.",
+      "covered_by": ["test_chart.py::test_render_degradation_table_contains_all_checkpoints_and_arms"]
+    },
+    {
+      "id": "R10",
+      "text": "Zero live network calls / .env reads anywhere in this subtask's own test suite.",
+      "covered_by": ["manual grep in self-consistency.json"]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "new_files": [
+    "agents/eval/run_benchmark.py",
+    "agents/eval/chart.py",
+    "agents/eval/test_run_benchmark.py",
+    "agents/eval/test_chart.py"
+  ],
+  "modified_files": [],
+  "modules_read_not_modified": [
+    "agents/eval/pipeline.py",
+    "agents/eval/metrics.py",
+    "agents/eval/ground_truth.py",
+    "agents/eval/cost_latency.py",
+    "agents/eval/llm_judge.py",
+    "agents/eval/traversal_precision.py",
+    "agents/eval/baselines/vector_rag.py",
+    "agents/eval/baselines/graphrag_lite.py",
+    "agents/llm/interceptor.py",
+    "agents/llm/client.py",
+    "agents/eval/datasets.py"
+  ],
+  "downstream_risk": "None -- run_benchmark.py and chart.py are new leaf modules with no existing importers. No changes to any already-merged, already-tested module (pipeline.py, metrics.py, cost_latency.py, llm_judge.py, traversal_precision.py, baselines/*) -- zero regression risk to their existing passing test suites.",
+  "test_impact": "New test files only (test_run_benchmark.py, test_chart.py). No existing test file touched.",
+  "dependency_impact": "None -- no new third-party dependency added to agents/pyproject.toml. chart.py uses stdlib only (text/data-table renderer).",
+  "runtime_impact": "None in this pass -- run_benchmark.py's CLI is buildable/wireable but is not executed against a real corpus or real paid API in this implementation pass. Zero live network calls made during implementation or its own test suite."
+}
