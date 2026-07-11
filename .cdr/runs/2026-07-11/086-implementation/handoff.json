@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-086-implementation",
+  "subtask": "4.5.5.5",
+  "issue": 42,
+  "status": "completed",
+  "commit_pending": true,
+  "touched_paths": [
+    "docs/LLD/catalog.md"
+  ],
+  "pointers": {
+    "doc": "docs/LLD/catalog.md",
+    "sources_reviewed": [
+      "engine/catalog/content.go",
+      "engine/catalog/file.go",
+      "engine/catalog/idalloc.go",
+      "engine/catalog/catalog.go"
+    ],
+    "style_model": "docs/LLD/wal.md",
+    "new_sections_added": [
+      "CRUD API (catalog.go)",
+      "activeMu and the residual insert-path serialization caveat",
+      "FileManager and the striped-mutex scoping fix",
+      "ID allocation (idalloc.go)",
+      "ContentStore (content I/O)",
+      "WAL-before-apply",
+      "expanded Concurrency summary"
+    ],
+    "front_matter_updated": "last_synced_commit -> 78a18180bf6e611b212a9ba4cba29af0904c1f5f"
+  },
+  "notes_for_verifier": "Doc-only change, no automated test per issue's test spec. Verifier should re-check the new sections against engine/catalog/*.go for any drift, and confirm this closes out issue #42's subtask list (4.5.5.1-4.5.5.4 already done; 4.5.5.1/.5.5.4 independently verified per prior handoffs, 4.5.5.2/.5.5.3 status should be confirmed by verifier -- see this run's final report for details).",
+  "known_run_dir_contention": "Ordinal 085-implementation under today's date was found already in-progress for an unrelated subtask (4.5.3.1) by a concurrent agent at the start of this run; this run used 086-implementation instead and did not touch 085's files."
+}
