@@ -139,6 +139,56 @@
 // truncation - closing the collision this fix cycle exists to fix - while
 // leaving the original compact-state sidecar mechanism above, and its own
 // documented residual crash window, completely unchanged.
+//
+// # Lock-ordering fix (concurrent AppendEdge vs. read-then-truncate)
+//
+// Everything above concerns crash-safety and retry idempotency for a single,
+// uncontended Compact run. A separate, genuinely concurrent bug exists even
+// with no crash or failure injected at all: Compact decides what an edge
+// log's "incoming" content is via EdgeLog.ReadNodeAfter at one point in
+// time, then - only after the entire new graph.dat has been written and its
+// compact-state sidecar saved, which for a large graph can take
+// arbitrarily long relative to a single node's own log - removes that same
+// content via EdgeLog.TruncateNode, which independently re-lists whatever
+// segment files happen to exist on disk AT THAT LATER TIME rather than
+// exactly what ReadNodeAfter saw. A concurrent AppendEdge landing on that
+// node anywhere in between - most commonly by appending into the very same,
+// still-current segment file ReadNodeAfter already fully read, since
+// engine/wal only rotates to a brand-new segment file once the current one
+// would exceed its size threshold (4 MiB by default; a single edge record is
+// a few dozen bytes) - would never be observed by that Compact run's
+// ReadNodeAfter (it didn't exist yet) and would then be permanently deleted
+// by TruncateNode's later, independent re-listing before ever being folded
+// into graph.dat: a real edge, appended on the ordinary concurrent-writer
+// happy path, silently and permanently lost.
+//
+// Note this rules out a purely segment-number-based fix ("only truncate
+// segments numbered <= the maxSeg ReadNodeAfter observed"): the
+// concurrently-appended record can land INSIDE, not just after, the already-
+// read segment (no new segment number is created), so a scalar segment
+// cutoff alone cannot distinguish "bytes already merged" from "bytes
+// appended afterwards" within that one file. Splitting a segment file's own
+// bytes at truncation time (physically separating an already-merged head
+// from a not-yet-merged tail written after the read, and handing that tail
+// to the still-open engine/wal.Writer) is not a primitive engine/wal
+// exposes today and would be a substantially larger change than this fix
+// requires.
+//
+// The fix instead closes the window directly: EdgeLog.LockNode exposes a
+// per-node lock (independent of EdgeLog's own writer-cache mutex) that
+// AppendEdge now holds for its entire body, and that Compact now acquires,
+// per node, immediately before that node's ReadNodeAfter call - keeping it
+// held (see heldNodeLocks below) all the way through that same node's later
+// TruncateNode call, spanning the intervening WriteCSR/saveCompactState
+// calls. This makes "AppendEdge for node X" and "Compact's read-then-
+// truncate of node X" strictly mutually exclusive: a concurrent AppendEdge
+// attempted mid-Compact simply blocks until Compact finishes truncating and
+// releases the lock, then proceeds normally (landing in a fresh append
+// after truncation, safely visible to the NEXT Compact run) - it can no
+// longer land inside the now-closed gap at all. The lock is scoped per node,
+// not global, so AppendEdge calls to any OTHER node are completely
+// unaffected; only nodes actually being compacted in a given Compact run are
+// blocked, and only for that run's duration.
 package graph
 
 import (
@@ -401,6 +451,22 @@ func mergeEdges(existing, incoming []CSREdge) []CSREdge {
 //     retry may re-sum already-counted EdgeEntityCooccur weight for any node
 //     whose log was not successfully truncated - a narrow, accepted risk
 //     documented in this file's package doc comment).
+//
+// compactNodeLockedHook, if non-nil, is invoked synchronously by Compact once
+// per node, immediately after that node's per-node lock (EdgeLog.LockNode)
+// has been acquired and ReadNodeAfter has returned for it - while the lock is
+// still held. This is a test-only seam (nil, a no-op, in production)
+// mirroring this repo's established synchronous-hook idiom for deterministic
+// concurrency testing (see e.g. engine/btree/insert.go's crabRetryHook,
+// engine/btree/lookup.go's optimisticReadHook/optimisticRetryHook,
+// engine/split/execute.go's atomicCommitHook, engine/catalog/content.go's
+// createWithHook). TestCompactConcurrentAppendNotLost (subtask 4.5.11.2,
+// issue #49) uses it to deterministically start a concurrent AppendEdge for
+// the same node at the exact instant Compact's read has completed but its
+// later TruncateNode call has not yet run - see package doc comment
+// ("Lock-ordering fix") for the race this closes.
+var compactNodeLockedHook func(id uint64)
+
 func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 	adjacency := make(map[uint64][]CSREdge)
 
@@ -433,6 +499,29 @@ func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 		newState[id] = seg
 	}
 
+	// heldNodeLocks tracks, per node id whose edge log has actually been read
+	// and is destined for truncation below, the unlock function returned by
+	// EdgeLog.LockNode. The lock for a given id is acquired immediately
+	// before that id's ReadNodeAfter call and is deliberately NOT released
+	// until after that same id's TruncateNode call has run (see the final
+	// truncate loop below), so a concurrent AppendEdge for that node can
+	// never land in the gap between "Compact decided what is incoming" and
+	// "Compact removed what it just merged" - see package doc comment
+	// ("Lock-ordering fix") and EdgeLog.LockNode's doc comment for the full
+	// rationale (subtask 4.5.11.2, issue #49).
+	//
+	// releaseHeldLocks unlocks every entry still present in heldNodeLocks -
+	// used both by the final truncate loop (removing entries as it goes) and
+	// by every early-error return below (releasing whatever locks had been
+	// acquired so far before propagating the error).
+	heldNodeLocks := make(map[uint64]func())
+	releaseHeldLocks := func() {
+		for id, unlock := range heldNodeLocks {
+			unlock()
+			delete(heldNodeLocks, id)
+		}
+	}
+
 	var compactedNodeIDs []uint64
 	for _, id := range nodeIDs {
 		afterSeg := -1
@@ -440,8 +529,15 @@ func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 			afterSeg = int(seg)
 		}
 
+		unlock := log.LockNode(id)
+
 		logEdges, maxSeg, err := log.ReadNodeAfter(id, afterSeg)
+		if compactNodeLockedHook != nil {
+			compactNodeLockedHook(id)
+		}
 		if err != nil {
+			unlock()
+			releaseHeldLocks()
 			return nil, fmt.Errorf("graph: compaction failed to read edge log for node %d: %w", id, err)
 		}
 		if len(logEdges) > 0 {
@@ -450,16 +546,23 @@ func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 		if maxSeg < 0 {
 			// No segments at all currently on disk for this id (e.g. an
 			// edgeLogNodeIDs entry left over from an empty/stray directory) -
-			// nothing to record and nothing to truncate.
+			// nothing to record and nothing to truncate, so nothing to
+			// protect: release immediately rather than holding the lock
+			// through the rest of this function for no reason.
+			unlock()
 			continue
 		}
 		// Every segment currently on disk for this node - whether freshly
 		// read above or already covered by prevState - is about to be
 		// durably reflected in the new graph.dat written below, so it is
 		// both safe and desirable to truncate all of them now (self-healing
-		// cleanup of any leftover segment from a prior failed truncate).
+		// cleanup of any leftover segment from a prior failed truncate). The
+		// lock acquired above stays held (via heldNodeLocks) until this same
+		// node's TruncateNode call below, spanning the WriteCSR/
+		// saveCompactState calls in between.
 		newState[id] = uint64(maxSeg)
 		compactedNodeIDs = append(compactedNodeIDs, id)
+		heldNodeLocks[id] = unlock
 	}
 
 	newGraph := BuildCSR(adjacency)
@@ -467,11 +570,13 @@ func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 	dir := filepath.Dir(graphPath)
 	if dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
+			releaseHeldLocks()
 			return nil, fmt.Errorf("graph: compaction failed to create graph dir %s: %w", dir, err)
 		}
 	}
 
 	if err := WriteCSR(graphPath, newGraph); err != nil {
+		releaseHeldLocks()
 		return nil, fmt.Errorf("graph: compaction failed to write %s: %w", graphPath, err)
 	}
 
@@ -487,10 +592,18 @@ func Compact(graphPath string, log *EdgeLog) (*CSRGraph, error) {
 
 	// Only past this point do we truncate any per-node edge log - see this
 	// file's package doc comment for why this ordering is the crux of
-	// compaction's crash-safety.
+	// compaction's crash-safety. Each node's lock (acquired in the read loop
+	// above, immediately before its ReadNodeAfter call) is released only
+	// after that same node's TruncateNode call returns here, whether it
+	// succeeds or fails - closing the read-then-truncate window a concurrent
+	// AppendEdge could otherwise land in (subtask 4.5.11.2, issue #49).
 	for _, id := range compactedNodeIDs {
 		if err := log.TruncateNode(id); err != nil {
 			postWriteErrs = append(postWriteErrs, fmt.Errorf("graph: compaction failed to truncate edge log for node %d after successful write: %w", id, err))
+		}
+		if unlock, ok := heldNodeLocks[id]; ok {
+			unlock()
+			delete(heldNodeLocks, id)
 		}
 	}
 

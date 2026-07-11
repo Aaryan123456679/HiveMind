@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "037-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "4.5.11.2 (issue #49)",
+  "git_head": "c1558cfcc21604d7d89ff66c035cf6be4ad26718",
+  "run_key": "issue49-4.5.11.2-c1558cf",
+  "status": "in_progress",
+  "last_completed_step": "run_dir_created",
+  "started_at": "2026-07-11T00:00:00Z",
+  "ended_at": null
+}

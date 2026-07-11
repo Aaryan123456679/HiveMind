@@ -56,6 +56,13 @@ type EdgeLog struct {
 
 	mu      sync.RWMutex
 	writers map[uint64]*wal.Writer
+
+	// nodeLocksMu guards nodeLocks itself (map access only); the per-node
+	// *sync.Mutex values it hands out are held for much longer than the brief
+	// nodeLocksMu critical section - see nodeLock's and LockNode's doc
+	// comments below.
+	nodeLocksMu sync.Mutex
+	nodeLocks   map[uint64]*sync.Mutex
 }
 
 // OpenEdgeLog opens (creating if necessary) an EdgeLog rooted at root. Per-node
@@ -68,14 +75,62 @@ func OpenEdgeLog(root string) (*EdgeLog, error) {
 		return nil, fmt.Errorf("graph: creating edge log root %s: %w", root, err)
 	}
 	return &EdgeLog{
-		root:    root,
-		writers: make(map[uint64]*wal.Writer),
+		root:      root,
+		writers:   make(map[uint64]*wal.Writer),
+		nodeLocks: make(map[uint64]*sync.Mutex),
 	}, nil
 }
 
 // nodeDir returns the per-node subdirectory path for sourceFileID's edge log.
 func (l *EdgeLog) nodeDir(sourceFileID uint64) string {
 	return filepath.Join(l.root, strconv.FormatUint(sourceFileID, 10))
+}
+
+// nodeLock returns sourceFileID's per-node *sync.Mutex, lazily creating and
+// caching it on first use. It never removes entries once created (matching
+// this package's existing acceptance of unbounded per-fileID state growth -
+// see compact.go's edgeLogNodeIDs doc comment for the analogous tradeoff on
+// per-node directories).
+func (l *EdgeLog) nodeLock(sourceFileID uint64) *sync.Mutex {
+	l.nodeLocksMu.Lock()
+	defer l.nodeLocksMu.Unlock()
+	m, ok := l.nodeLocks[sourceFileID]
+	if !ok {
+		m = &sync.Mutex{}
+		l.nodeLocks[sourceFileID] = m
+	}
+	return m
+}
+
+// LockNode acquires sourceFileID's per-node lock and returns a function the
+// caller must invoke exactly once, when done, to release it.
+//
+// This exists (subtask 4.5.11.2, issue #49) to close a lock-ordering gap
+// between compact.go's Compact (which decides what an edge log's "incoming"
+// content is via ReadNodeAfter, then later removes it via TruncateNode once
+// that content is durably reflected in graph.dat) and a concurrent
+// AppendEdge call landing on the SAME node in between: AppendEdge holds this
+// same lock for its entire body (see AppendEdge below), and Compact holds it
+// from immediately before its ReadNodeAfter call for a node through that
+// same node's later TruncateNode call, so the two can never interleave for
+// a given node. A concurrent AppendEdge attempted mid-Compact simply blocks
+// until Compact releases the lock (after truncation), rather than racing a
+// window where its freshly-appended record could be read by neither
+// ReadNodeAfter (too early) nor a subsequent Compact run (swept up and
+// deleted by TruncateNode's re-listing before ever being merged) - see
+// compact.go's package doc comment ("Lock-ordering fix", added alongside
+// this method) for the full crash/race analysis and why a purely
+// segment-number-based fix is insufficient on its own.
+//
+// This lock is independent of l.mu (which only guards the writers cache) -
+// callers may safely call methods that take l.mu (e.g. TruncateNode) while
+// already holding a node's lock returned here; the reverse order (l.mu held
+// while trying to acquire a node lock) never happens anywhere in this
+// package, so there is no lock-ordering deadlock risk between the two.
+func (l *EdgeLog) LockNode(sourceFileID uint64) func() {
+	nl := l.nodeLock(sourceFileID)
+	nl.Lock()
+	return nl.Unlock
 }
 
 // getOrOpenWriter returns the wal.Writer for sourceFileID's per-node log, opening it (and
@@ -121,6 +176,15 @@ func (l *EdgeLog) AppendEdge(sourceFileID uint64, edge CSREdge) error {
 	if !ValidEdgeType(edge.Type) {
 		return fmt.Errorf("graph: cannot append edge with invalid type %v", edge.Type)
 	}
+	// Held for this call's entire duration (not just the getOrOpenWriter
+	// lookup below) so a concurrent Compact run - which holds this same
+	// node's lock from its ReadNodeAfter call through its later
+	// TruncateNode call - can never interleave with this append. See
+	// LockNode's doc comment (subtask 4.5.11.2, issue #49) for the full
+	// rationale.
+	unlock := l.LockNode(sourceFileID)
+	defer unlock()
+
 	w, err := l.getOrOpenWriter(sourceFileID)
 	if err != nil {
 		return err

@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"testing"
+	"time"
 )
 
 // sortedNeighbors returns a copy of edges sorted by (Target, Type), so tests
@@ -770,4 +772,130 @@ func TestCompaction_FailedTruncateRetryThenOrdinarySubsequentAppendsSurvive(t *t
 	assertNeighbors(t, reloaded4.Neighbors(source), []CSREdge{
 		{Target: target, Type: EdgeEntityCooccur, Weight: 10, LastUpdated: 3},
 	})
+}
+
+// TestCompactConcurrentAppendNotLost is subtask 4.5.11.2's (issue #49)
+// dedicated regression test: it uses compactNodeLockedHook (a test-only
+// synchronization seam, nil/no-op in production - see compact.go's doc
+// comment on the var) to deterministically force a concurrent AppendEdge
+// call to attempt landing on the SAME node Compact is currently processing,
+// exactly in the window between Compact's ReadNodeAfter call for that node
+// and its later TruncateNode call (which, on the buggy pre-fix code, would
+// have re-listed and deleted whatever segment files existed at truncate
+// time - including one holding this concurrently-appended record that
+// ReadNodeAfter never saw and that was therefore never merged into
+// graph.dat).
+//
+// This test does not merely assert "no panic" or "no data race" (the -race
+// detector already covers memory-safety); it asserts the actual durability
+// property the issue requires: the concurrently-appended edge must survive
+// TruncateNode's removal (not be silently swept up and deleted) and must be
+// picked up and correctly merged by a subsequent Compact run.
+func TestCompactConcurrentAppendNotLost(t *testing.T) {
+	dir := t.TempDir()
+	graphPath := filepath.Join(dir, "graph.dat")
+	logRoot := filepath.Join(dir, "edgelogs")
+
+	l, err := OpenEdgeLog(logRoot)
+	if err != nil {
+		t.Fatalf("OpenEdgeLog: %v", err)
+	}
+	defer l.Close()
+
+	const source, target = 77, 88
+
+	pre := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 3, LastUpdated: 1}
+	if err := l.AppendEdge(source, pre); err != nil {
+		t.Fatalf("AppendEdge (pre-existing edge): %v", err)
+	}
+
+	concurrent := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 5, LastUpdated: 2}
+
+	var (
+		appendStarted  = make(chan struct{})
+		appendFinished = make(chan error, 1)
+		once           sync.Once
+	)
+
+	// Install the hook: fires exactly once, for the node under test, while
+	// Compact still holds that node's lock (immediately after Compact's
+	// ReadNodeAfter call for it has returned, before its later TruncateNode
+	// call runs). It kicks off a goroutine racing AppendEdge for the SAME
+	// node concurrently with the rest of Compact - that goroutine's
+	// AppendEdge call must block on EdgeLog's per-node lock (held by Compact)
+	// until Compact's TruncateNode call for this node has completed and
+	// released it, on the fixed code. On the buggy pre-fix code (no such
+	// lock held across the window), the goroutine's append could instead
+	// land in the still-current segment file ReadNodeAfter already read,
+	// only for TruncateNode's later re-listing to delete it before it was
+	// ever merged.
+	compactNodeLockedHook = func(id uint64) {
+		if id != source {
+			return
+		}
+		once.Do(func() {
+			close(appendStarted)
+			go func() {
+				appendFinished <- l.AppendEdge(source, concurrent)
+			}()
+			// Give the concurrent AppendEdge goroutine every reasonable
+			// chance to actually reach (and, on the buggy code, complete)
+			// its append before this hook returns and Compact proceeds to
+			// WriteCSR/TruncateNode. On the fixed code this goroutine is
+			// blocked on the node lock the entire time regardless, so this
+			// is purely about maximizing the buggy code's chance to
+			// reproduce the race, not something the fixed code depends on
+			// for correctness.
+			select {
+			case err := <-appendFinished:
+				// The buggy code allows this to complete synchronously
+				// before TruncateNode ever runs; feed the error back into
+				// the channel so the main goroutine's later <-appendFinished
+				// still sees it.
+				appendFinished <- err
+			case <-time.After(50 * time.Millisecond):
+			}
+		})
+	}
+	t.Cleanup(func() { compactNodeLockedHook = nil })
+
+	if _, err := Compact(graphPath, l); err != nil {
+		t.Fatalf("Compact (with concurrent append racing it): %v", err)
+	}
+
+	select {
+	case <-appendStarted:
+	default:
+		t.Fatalf("compactNodeLockedHook never fired for node %d - test did not exercise the intended window", source)
+	}
+
+	if err := <-appendFinished; err != nil {
+		t.Fatalf("concurrent AppendEdge: %v", err)
+	}
+
+	// The concurrently-appended edge must not have been lost: a second
+	// Compact call must find it still present in the edge log (not swept up
+	// and deleted by the first Compact's TruncateNode call) and merge it
+	// correctly.
+	if _, err := Compact(graphPath, l); err != nil {
+		t.Fatalf("second Compact: %v", err)
+	}
+	final, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after second Compact: %v", err)
+	}
+	want := []CSREdge{{Target: target, Type: EdgeEntityCooccur, Weight: 8, LastUpdated: 2}}
+	assertNeighbors(t, final.Neighbors(source), want)
+
+	// The edge log must be fully truncated again after the second Compact -
+	// confirming the concurrently-appended edge was durably merged into
+	// graph.dat, not left permanently stuck in the log nor (the original bug)
+	// silently discarded with no trace anywhere.
+	logged, err := l.ReadNode(source)
+	if err != nil {
+		t.Fatalf("ReadNode after second Compact: %v", err)
+	}
+	if len(logged) != 0 {
+		t.Fatalf("expected node %d's edge log truncated to empty after second Compact, got %+v", source, logged)
+	}
 }
