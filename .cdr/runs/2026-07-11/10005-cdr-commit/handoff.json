@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "run_id": "10005-cdr-commit",
+  "subtask": "5.1.2",
+  "issue": 26,
+  "verdict_documented": "PASS_WITH_COMMENTS",
+  "commit_documented": "47385d665adccab8b9ab4784d5eb999e305e2664",
+  "commit_doc": ".cdr/commits/task-5.1.2.md",
+  "index_updates": [
+    ".cdr/index/task.jsonl (task-5.1.2 appended)",
+    ".cdr/index/feature.jsonl (hivemind-eval-synthetic-pdf-corpus-generator appended)"
+  ],
+  "bookkeeping_commit": "pending (see next commit in git log)",
+  "pushed": false,
+  "push_note": "Push explicitly withheld: this agent's role (CDR Commit) never pushes. Requesting agent/user must push origin/main themselves.",
+  "next_action": "Subtask 5.1.3 (ground truth) is separate and not yet dispatched; issue #26 remains open."
+}

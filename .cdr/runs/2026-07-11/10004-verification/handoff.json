@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "run_id": "10004-verification",
+  "subtask": "5.1.2",
+  "issue": 26,
+  "verdict": "PASS_WITH_COMMENTS",
+  "commit_verified": "47385d665adccab8b9ab4784d5eb999e305e2664",
+  "verification_json": ".cdr/runs/2026-07-11/10004-verification/verification.json",
+  "regression_entries": [".cdr/index/regression.jsonl (id: hivemind-issue26-5.1.2-render-pdf-overflow-dead-code)"],
+  "pointers": {
+    "source_files_reviewed": [
+      "data/gen_synthetic_pdfs.py",
+      "data/test_gen_synthetic_pdfs.py",
+      "data/synthetic_corpus/topics.yaml",
+      "agents/llm/factory.py",
+      "agents/llm/ollama_client.py"
+    ],
+    "render_pdf_defect_location": "data/gen_synthetic_pdfs.py: render_pdf() function, lines ~277-325"
+  },
+  "next_action": "Issue #26 subtask 5.1.2 may proceed to push/close per user's own gating decision. One non-blocking follow-up (render_pdf overflow dead-code) recorded for eventual fix, does not block this subtask."
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-10003-implementation",
+  "macro": "cdr-implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "task-5.1.2",
+  "git_head": "6afe8a080dbb3a6569eec8c3b5122bd5dcdd903d",
+  "run_key": "hivemind-task-5.1.2-6afe8a0-ollama-pdf-corpus-v1",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-11T00:00:00Z",
+  "ended_at": "2026-07-11T15:05:00Z"
+}

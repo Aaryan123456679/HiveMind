@@ -1,0 +1,59 @@
+{
+  "subtask": "task-5.1.2",
+  "rows": [
+    {
+      "criterion": "Corpus seeded with predefined topics",
+      "test": "test_load_topics_shape / test_load_topics_count",
+      "covered_by": "data/test_gen_synthetic_pdfs.py",
+      "method": "mocked (no LLM needed to parse YAML)"
+    },
+    {
+      "criterion": "Each doc has a primary topic and >=1 deliberate cross-topic reference assignment",
+      "test": "test_build_doc_specs_assigns_cross_references / test_build_doc_specs_no_self_reference",
+      "covered_by": "data/test_gen_synthetic_pdfs.py",
+      "method": "mocked (pure function, no LLM)"
+    },
+    {
+      "criterion": "Content authored via agents/llm client configured for local Ollama ONLY",
+      "test": "test_generate_corpus_uses_ollama_provider_explicitly",
+      "covered_by": "data/test_gen_synthetic_pdfs.py",
+      "method": "mocked -- patches llm.factory.create_llm_client and asserts provider=\"ollama\" kwarg, or asserts injected llm_client.complete called (both call paths)"
+    },
+    {
+      "criterion": "N PDFs generated",
+      "test": "test_generate_corpus_produces_expected_pdf_count",
+      "covered_by": "data/test_gen_synthetic_pdfs.py",
+      "method": "mocked (fake deterministic LLMClient), limit=3 -> 3 files"
+    },
+    {
+      "criterion": "Each PDF references its seeded topic and >=1 cross-topic reference",
+      "test": "test_generate_corpus_pdf_text_contains_primary_and_cross_topic (mocked) + test_live_ollama_smoke_generates_referencing_pdfs (real, skippable)",
+      "covered_by": "data/test_gen_synthetic_pdfs.py",
+      "method": "mocked: fake LLM canned text constructed to include both titles, asserted via fitz text extraction. Live: real Ollama output asserted via same keyword-presence check, run manually this session for self-consistency."
+    },
+    {
+      "criterion": "PDFs are valid/parseable",
+      "test": "test_generate_corpus_pdfs_are_valid_pdfs",
+      "covered_by": "data/test_gen_synthetic_pdfs.py",
+      "method": "mocked, asserts fitz.open(path).page_count >= 1 and non-empty extracted text for every generated file"
+    },
+    {
+      "criterion": "Generation manifest structured for 5.1.3 ground-truth auto-derivation (OQ-2)",
+      "test": "test_generate_corpus_writes_manifest_json",
+      "covered_by": "data/test_gen_synthetic_pdfs.py",
+      "method": "mocked, asserts manifest.json entry count/shape (doc_id, filename, primary_topic, cross_references)"
+    },
+    {
+      "criterion": "No OpenRouter/Gemini code paths or keys introduced",
+      "test": "manual grep sweep (self-consistency step, not a pytest case) + code review of new files",
+      "covered_by": "self-consistency.json",
+      "method": "grep -i 'openrouter\\|gemini' across the 3 new files"
+    },
+    {
+      "criterion": "Real end-to-end generation actually works against local Ollama",
+      "test": "manual run of generate_corpus(limit=2-3) via CLI, self-consistency step",
+      "covered_by": "self-consistency.json",
+      "method": "live, not part of automated pytest suite (mirrors test_segment_live.py's skippable-by-default convention)"
+    }
+  ]
+}
