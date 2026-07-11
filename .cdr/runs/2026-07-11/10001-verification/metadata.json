@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "10001-verification",
+  "macro": "cdr-verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "5.1.1",
+  "git_head": "4f6bc5f88f762b89172487f919a51f9c6d5a58f8",
+  "run_key": "sha256:issue26-subtask5.1.1-4f6bc5f8-verification",
+  "status": "completed",
+  "last_completed_step": "write_handoff",
+  "started_at": "2026-07-11T19:56:00+05:30",
+  "ended_at": "2026-07-11T20:15:00+05:30"
+}
