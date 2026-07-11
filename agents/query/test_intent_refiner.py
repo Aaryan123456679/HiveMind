@@ -21,7 +21,8 @@ import json
 
 import pytest
 
-from llm.client import LLMClient, LLMError
+from llm.client import LLMError
+from query.conftest import FakeLLMClient as _FakeLLMClient
 from query.intent_refiner import (
     IntentRefinerParseError,
     IntentRefinerResult,
@@ -31,43 +32,10 @@ from query.intent_refiner import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-class _FakeLLMClient(LLMClient):
-    """Minimal `LLMClient` stand-in returning a pre-configured canned string.
-
-    Mirrors `ingestion.test_segment._FakeLLMClient`: captures the prompt/kwargs it was
-    called with, for assertions, and is a real ABC subclass (not `MagicMock(spec=LLMClient)`)
-    for straightforward ABC compliance.
-    """
-
-    def __init__(self, response: str | None = None, error: Exception | None = None) -> None:
-        self.response = response
-        self.error = error
-        self.calls: list[dict] = []
-
-    def complete(
-        self,
-        prompt: str,
-        *,
-        model: str | None = None,
-        temperature: float = 0.0,
-        max_tokens: int | None = None,
-        timeout: float | None = None,
-    ) -> str:
-        self.calls.append(
-            {
-                "prompt": prompt,
-                "model": model,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "timeout": timeout,
-            }
-        )
-        if self.error is not None:
-            raise self.error
-        assert self.response is not None
-        return self.response
+#
+# `_FakeLLMClient` was previously defined locally here (duplicated near-verbatim in
+# `test_intent_refiner_types.py`); now shared via `conftest.py`'s `FakeLLMClient` per
+# issue #55 subtask 4.5.17.5.
 
 
 def _well_formed_json(

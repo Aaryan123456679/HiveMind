@@ -13,21 +13,13 @@ from __future__ import annotations
 
 import pytest
 
+from query.conftest import neighbor as _neighbor
+from query.conftest import topic as _topic
 from query.topic_selector import (
     DEFAULT_K,
     ExpansionResult,
-    GraphNeighbor,
-    TopicCandidate,
     combine_and_cap,
 )
-
-
-def _topic(file_id: int, score: float = 1.0) -> TopicCandidate:
-    return TopicCandidate(file_id=file_id, path=f"p/{file_id}", score=score)
-
-
-def _neighbor(file_id: int, hop: int = 1) -> GraphNeighbor:
-    return GraphNeighbor(file_id=file_id, edge_type="references", weight=1, hop=hop)
 
 
 # ---------------------------------------------------------------------------

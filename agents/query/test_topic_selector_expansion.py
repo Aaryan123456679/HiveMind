@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from query.conftest import RecordingGraphNeighbors as _RecordingGraphNeighbors
 from query.topic_selector import (
     DEFAULT_EXPANSION_HOPS,
     DEFAULT_INSUFFICIENCY_RATIO,
@@ -34,19 +35,6 @@ _SELECTED = [_TOP, _INSUFFICIENT_A, _INSUFFICIENT_B]
 
 _NEIGHBOR_FOR_A = GraphNeighbor(file_id=101, edge_type="LLM_ASSERTED", weight=2, hop=1)
 _NEIGHBOR_FOR_B = GraphNeighbor(file_id=102, edge_type="ENTITY_COOCCUR", weight=5, hop=2)
-
-
-class _RecordingGraphNeighbors:
-    """Plain mock `GraphNeighborsFn`: records every call's args and returns a
-    per-file_id canned neighbor list."""
-
-    def __init__(self, neighbors_by_file_id: dict[int, list[GraphNeighbor]]) -> None:
-        self._neighbors_by_file_id = neighbors_by_file_id
-        self.calls: list[tuple[int, int]] = []
-
-    def __call__(self, file_id: int, hops: int) -> list[GraphNeighbor]:
-        self.calls.append((file_id, hops))
-        return self._neighbors_by_file_id.get(file_id, [])
 
 
 # ---------------------------------------------------------------------------

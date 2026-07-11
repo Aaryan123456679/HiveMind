@@ -30,40 +30,17 @@ import json
 
 import pytest
 
-from llm.client import LLMClient
+from query.conftest import FakeLLMClient as _FakeLLMClient
 from query.intent_refiner import IntentRefinerResult, QueryType, refine_intent
 
 # ---------------------------------------------------------------------------
 # Fixtures / fakes
 # ---------------------------------------------------------------------------
-
-
-class _FakeLLMClient(LLMClient):
-    """Minimal `LLMClient` stand-in returning a pre-configured canned string.
-
-    Mirrors `test_intent_refiner.py`'s own `_FakeLLMClient` (and, further back,
-    `ingestion/test_segment.py`'s precedent): a real ABC subclass, not
-    `MagicMock(spec=LLMClient)`, so ABC compliance is exercised for real. Kept as
-    a local copy rather than a shared import, since `agents/query/` has no shared
-    test-helpers module and 4.3.1's own file follows the same self-contained,
-    one-fake-per-test-file convention.
-    """
-
-    def __init__(self, response: str) -> None:
-        self.response = response
-        self.calls: list[dict] = []
-
-    def complete(
-        self,
-        prompt: str,
-        *,
-        model: str | None = None,
-        temperature: float = 0.0,
-        max_tokens: int | None = None,
-        timeout: float | None = None,
-    ) -> str:
-        self.calls.append({"prompt": prompt, "model": model})
-        return self.response
+#
+# `_FakeLLMClient` was previously defined locally here (duplicated near-verbatim in
+# `test_intent_refiner.py`); now shared via `conftest.py`'s `FakeLLMClient` per issue #55
+# subtask 4.5.17.5. This file only ever constructs it with a `response=` string (never
+# `error=`), so behavior is unchanged.
 
 
 def _canned_response(query_type: str, refined_intent: str, entities: list[str]) -> str:

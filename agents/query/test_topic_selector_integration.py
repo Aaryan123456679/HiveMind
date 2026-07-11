@@ -35,40 +35,21 @@ tie-break determinism, etc.) are already covered by
 
 from __future__ import annotations
 
+from query.conftest import RecordingGraphNeighbors, neighbor, topic
 from query.topic_selector import (
     DEFAULT_EXPANSION_HOPS,
-    GraphNeighbor,
-    TopicCandidate,
     combine_and_cap,
     expand_insufficient_topics,
     select_top_k,
 )
 
-
-def _topic(file_id: int, score: float) -> TopicCandidate:
-    return TopicCandidate(file_id=file_id, path=f"p/{file_id}", score=score)
-
-
-def _neighbor(file_id: int, hop: int = 1) -> GraphNeighbor:
-    return GraphNeighbor(file_id=file_id, edge_type="references", weight=1, hop=hop)
-
-
-class _RecordingGraphNeighbors:
-    """Plain mock `GraphNeighborsFn`: records `(file_id, hops)` calls and returns a
-    canned per-file_id neighbor list. Same shape as
-    `test_topic_selector_expansion.py`'s `_RecordingGraphNeighbors`, reused here so the
-    integration test's mock boundary matches the convention already established (and
-    verified) for 4.4.2, rather than introducing a divergent second mock shape for the
-    same `GraphNeighborsFn` contract in this same package.
-    """
-
-    def __init__(self, neighbors_by_file_id: dict[int, list[GraphNeighbor]]) -> None:
-        self._neighbors_by_file_id = neighbors_by_file_id
-        self.calls: list[tuple[int, int]] = []
-
-    def __call__(self, file_id: int, hops: int) -> list[GraphNeighbor]:
-        self.calls.append((file_id, hops))
-        return self._neighbors_by_file_id.get(file_id, [])
+# `_topic`/`_neighbor`/`_RecordingGraphNeighbors` were previously defined locally here
+# (duplicating `test_topic_selector_cap.py` and `test_topic_selector_expansion.py`); now
+# shared via `conftest.py` per issue #55 subtask 4.5.17.5. Local aliases keep this file's
+# body (which calls the original underscore-prefixed names) unchanged.
+_topic = topic
+_neighbor = neighbor
+_RecordingGraphNeighbors = RecordingGraphNeighbors
 
 
 # ---------------------------------------------------------------------------
