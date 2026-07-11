@@ -3,6 +3,7 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -350,5 +351,48 @@ func TestFreePageDoubleFreeRejected(t *testing.T) {
 
 	if err := fm.FreePage(id); err == nil {
 		t.Fatalf("second FreePage(%d) (double-free) = nil error; want an explicit error", id)
+	}
+}
+
+// TestFreeListCapacityExhaustionSurfacesError exercises the test spec for subtask
+// 4.5.13.2 (issue #51): once the free-list bitmap's hard capacity ceiling
+// (bitmapCapacityBits pages, ~32704 pages / ~128MB per the doc comment on
+// bitmapCapacityBits) is reached with no freed page available for reuse,
+// AllocatePage must surface an explicit, documented error rather than an ambiguous
+// failure (e.g. a bounds panic, a corrupted bitmap write, or silently returning a
+// bogus page ID).
+//
+// This test drives FileManager's in-memory bookkeeping directly to
+// highestAllocated == bitmapCapacityBits with every bit marked used, instead of
+// actually performing bitmapCapacityBits real AllocatePage calls (each of which
+// would extend the file by one page and fsync twice); the latter is behaviorally
+// equivalent for exercising this specific exhaustion check but would make this test
+// prohibitively slow (~32.7k pages worth of file-extension + fsync I/O) without
+// adding any additional coverage of the exhaustion branch itself.
+func TestFreeListCapacityExhaustionSurfacesError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.dat")
+
+	fm, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(%q) = _, %v; want nil error", path, err)
+	}
+	defer fm.Close()
+
+	// Simulate the free-list already being at full capacity: every representable
+	// page ID has been allocated and none has been freed, so AllocatePage's
+	// free-page scan will find nothing to reuse and must fall through to the
+	// extend-the-file path, which is where the capacity ceiling is enforced.
+	fm.highestAllocated = bitmapCapacityBits
+	for id := uint64(1); id <= bitmapCapacityBits; id++ {
+		fm.setUsed(id, true)
+	}
+
+	id, err := fm.AllocatePage()
+	if err == nil {
+		t.Fatalf("AllocatePage() at capacity = %d, nil error; want an explicit free-list-exhausted error", id)
+	}
+	if !strings.Contains(err.Error(), "exhausted") {
+		t.Fatalf("AllocatePage() at capacity error = %q; want it to explicitly mention free-list exhaustion", err.Error())
 	}
 }

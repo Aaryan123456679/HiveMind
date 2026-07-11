@@ -188,6 +188,37 @@ for a third, conflicting reallocation) a page that is now actively in use.
 `FreePage` also always rejects freeing the reserved free-list page (page 0)
 and any `pageID` beyond `highestAllocated`.
 
+### Free-list capacity ceiling and crash-window reopen risk
+
+The free-list is a single fixed-size bitmap page (page 0) with no chaining to
+additional bitmap pages, so it has a hard capacity ceiling:
+`bitmapCapacityBits = (PageSize - bitmapHeaderSize) * 8` = `(4096-8)*8` =
+**32704 pages**, i.e. a maximum `catalog.dat` size of `(32704+1)*4096` bytes
+≈ **128MB** (the `+1` is page 0, the bitmap page itself, which is never an
+allocatable data page). Once `highestAllocated` reaches this ceiling and no
+freed page is available for reuse, `AllocatePage` returns an explicit
+"free-list exhausted" error rather than corrupting the bitmap, panicking, or
+silently misallocating — see `TestFreeListCapacityExhaustionSurfacesError` in
+`file_test.go`. This ceiling is a known, accepted limitation for this phase
+(originally flagged in `regression.jsonl` subtask 1.1.3, tracked as issue #51
+subtask 4.5.13.2) pending a future multi-page/extensible free-list
+representation, needed only once a single catalog file must track more than
+~32.7k pages.
+
+Separately, `AllocatePage`'s file-extension `WriteAt` (growing the file by one
+page) and `persistBitmapLocked`'s `WriteAt`+`Sync` (durably recording the new
+`highestAllocated` and bitmap bit) are two distinct, non-atomic durable
+writes. A crash in the window between them leaves the file physically larger
+than what the last-persisted `highestAllocated` records. This is safe — no
+silent corruption occurs — because `Open`'s consistency check
+(`gotPages != wantPages`) detects the size/`highestAllocated` mismatch on the
+next open and hard-errors ("catalog is corrupt") instead of proceeding with
+stale bookkeeping. However, this means the catalog is entirely unopenable
+until a future WAL-based re-derivation or repair pass lands; there is no
+automatic recovery today. This crash-window reopen-failure risk is an
+explicit input to `engine/wal/`'s crash-recovery design (see
+[Interactions with other modules](#interactions-with-other-modules) below).
+
 ## ID allocation (`idalloc.go`)
 
 `IDAllocator` hands out monotonically increasing `fileID`s for use as

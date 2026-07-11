@@ -27,6 +27,21 @@ const (
 	// bitmapCapacityBits is the number of page IDs representable by a single bitmap
 	// page. Bit i (0-indexed) tracks page ID (i+1), since page 0 is reserved for the
 	// bitmap itself and is always considered unavailable for allocation.
+	//
+	// This is a hard capacity ceiling on the catalog file, not merely a soft
+	// default: with PageSize=4096 and bitmapHeaderSize=8, bitmapCapacityBits
+	// evaluates to (4096-8)*8 = 32704 pages, i.e. a maximum catalog.dat size of
+	// (32704+1)*4096 bytes ≈ 128MB (the +1 accounts for page 0, the bitmap page
+	// itself, which is not an allocatable data page). There is no chaining to
+	// additional bitmap pages; once highestAllocated reaches bitmapCapacityBits
+	// and no freed page is available for reuse, AllocatePage returns an explicit
+	// "free-list exhausted" error (see AllocatePage below and
+	// TestFreeListCapacityExhaustionSurfacesError in file_test.go) rather than
+	// corrupting the bitmap or silently misallocating. This is a known, accepted
+	// limitation for this phase (see regression.jsonl subtask 1.1.3 and
+	// docs/LLD/catalog.md's "Free-list capacity ceiling" section) pending a
+	// future multi-page/extensible free-list representation, needed only once a
+	// single catalog file must track more than ~32.7k pages.
 	bitmapCapacityBits = (PageSize - bitmapHeaderSize) * 8
 )
 
@@ -143,6 +158,25 @@ func (fm *FileManager) Close() error {
 // AllocatePage returns a free page ID, marking it used in the free-list. It prefers
 // reusing a previously-freed page ID over extending the file; only when no free page
 // exists does it extend the file by one page.
+//
+// Capacity is hard-capped at bitmapCapacityBits pages (see its doc comment for the
+// exact numbers): once highestAllocated reaches that ceiling and no freed page is
+// available for reuse, AllocatePage returns an explicit, documented error instead of
+// an ambiguous failure (e.g. a corrupted bitmap write or a silently wrong page ID).
+// Callers must treat this error as "catalog is at capacity", not as a transient I/O
+// failure worth retrying.
+//
+// Known crash-window limitation (see regression.jsonl subtask 1.1.3 and
+// docs/LLD/catalog.md's "Free-list capacity ceiling and crash-window reopen risk"
+// section): extending the file (the WriteAt below) and persisting the updated
+// bitmap+highestAllocated (persistBitmapLocked's own WriteAt+Sync) are two separate,
+// non-atomic durable writes. If the process crashes after the file-extension WriteAt
+// succeeds but before persistBitmapLocked's WriteAt+Sync completes, the file on disk
+// is physically larger than what the persisted (stale) highestAllocated records. This
+// is safe — Open's consistency check (gotPages != wantPages) detects the mismatch and
+// hard-errors ("catalog is corrupt") rather than silently misreporting free/used
+// state — but it means the catalog cannot be reopened at all until a future
+// WAL-based re-derivation or repair pass lands; there is no automatic recovery today.
 func (fm *FileManager) AllocatePage() (uint64, error) {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
