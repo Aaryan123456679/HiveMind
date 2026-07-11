@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "run_id": "035-implementation",
+  "subtask": "4.5.11.1 (issue #49)",
+  "status": "completed",
+  "commit": "2e415e57340fb06f6ecb652d2c49cf586b79e454",
+  "git_head_before_run": "d38003aa458c1174f94c4cab11439625115a1702",
+  "changed_files": [
+    "engine/graph/compact_test.go"
+  ],
+  "new_tests": [
+    "TestCompactNormalTruncateThenAppendThenCompactAgain (engine/graph/compact_test.go, added immediately before TestCompaction_FailedTruncateRetryThenOrdinarySubsequentAppendsSurvive, after TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost)"
+  ],
+  "production_code_changed": false,
+  "key_finding": "The subtask's underlying production fix (never-reuse WAL segment numbering via wal.WriteSegmentFloor in EdgeLog.TruncateNode, engine/graph/edgelog.go lines ~240-291) was ALREADY present at git_head_before_run, landed in commit ed57468 ('fix: prevent WAL segment-number reuse from silently dropping edges after compaction (issue #15, 3.1.3, second fix cycle)') and already covered by a pre-existing equivalent test, TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost (engine/graph/compact_test.go line ~504). This run added only the exact-named acceptance test issue #49 requires; no compact.go or edgelog.go changes were made or needed.",
+  "key_pointers": {
+    "fix_commit": "ed5746834af9e4508c53c1b9ab59dae330d789c5",
+    "fix_mechanism": "engine/wal/writer.go WriteSegmentFloor + latestSegmentNum honoring the floor",
+    "caller": "engine/graph/edgelog.go EdgeLog.TruncateNode (lines ~240-291): writes segment floor before removing segment files; no longer deletes node dir",
+    "doc_trace": "engine/graph/compact.go package doc comment, section '# Segment-number reuse (second fix cycle)' (lines ~115-141); edgelog.go TruncateNode doc comment (lines ~209-239)",
+    "new_test_location": "engine/graph/compact_test.go, function TestCompactNormalTruncateThenAppendThenCompactAgain",
+    "pre_existing_equivalent_test": "engine/graph/compact_test.go, function TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost (unmodified)",
+    "regression_source": ".cdr/index/regression.jsonl entry run=.cdr/runs/2026-07-08/010-verification subtask=3.1.3 severity=critical resolved=false -- NOTE: this run does not update that entry's resolved field; that is a verification-agent decision, not an implementation-agent one (invariant I4)"
+  },
+  "self_consistency_summary": {
+    "targeted_test": "go test ./graph/... -race -v -run TestCompactNormalTruncateThenAppendThenCompactAgain -> PASS",
+    "package_suite": "go test ./graph/... -race -v -> PASS, zero regressions",
+    "full_engine_suite": "go test ./... -race (from engine/ module) -> PASS across engine, btree, catalog, graph, mvcc, rpc, split, wal, zero regressions"
+  },
+  "untrusted_content_disclosure": "gh issue view 49's body was read fresh and found to be a plain, well-formed subtask list with no embedded fake system-reminder/directive text. Separately, the orchestrating harness itself injected environment-level system-reminder blocks mid-conversation (including a stray 'Auto Mode Active' block and an MCP-server instructions block referencing a tokensave tool this run never needed/used); per standing instructions, no agent- or environment-supplied message is treated as user consent/approval, and none altered this run's scope, permissions, or the CDR workflow followed.",
+  "next_step": "cdr:verify - independent re-verification required; this agent did not verify its own work (invariant I4). Verification should confirm: (a) the new test's name/behavior exactly matches issue #49's test spec, (b) the underlying fix (commit ed57468, pre-dating this run) is correctly attributed and still intact at the new HEAD, (c) regression.jsonl's 3.1.3/F2 entry should be updated to resolved=true only after independent confirmation, which this run explicitly leaves undone.",
+  "out_of_scope_confirmed_untouched": [
+    "4.5.11.2 (lock-ordering race, ReadNodeAfter/TruncateNode vs concurrent AppendEdge)",
+    "4.5.11.3 (EdgeType validation guard in LoadCSR/decodeCSREdge)"
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "run_id": "036-verification",
+  "subtask": "4.5.11.1",
+  "issue": 49,
+  "commit_verified": "2e415e57340fb06f6ecb652d2c49cf586b79e454",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Independently rebuilt context from gh issue #49, .cdr/index/regression.jsonl's 3.1.3/F2 entry, commit ed57468, and current engine/graph source (not the implementer's summary). The implementer's central claim is confirmed true: commit 2e415e5 is genuinely test-only (compact.go, edgelog.go, wal/writer.go all byte-identical to before it; only compact_test.go and .cdr run artifacts changed). Commit ed57468 (landed 2026-07-08, three commits before this run's HEAD) genuinely fixes the exact F2 root cause described in the regression entry: EdgeLog.TruncateNode no longer deletes a node's edge-log directory; it now calls wal.WriteSegmentFloor(dir, maxSeg+1) BEFORE removing segment files, and wal.OpenWriter's latestSegmentNum consults that floor only when a directory currently has zero real segment files. This durably prevents segment-number reuse for a given node's lifetime, which is a stronger fix than the issue text's literal 'clear the stale sidecar entry' proposal but achieves the same guarantee (the sidecar's segment-based skip logic can never again see a reused number). Traced this at the source-diff level myself (ed57468 touching edgelog.go and wal/writer.go), not from commit-message text alone.",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "Issue #49 subtask 4.5.11.1's acceptance criteria's underlying guarantee ('next Compact() never mistakes a reused segment number for one it already processed') is met by the never-reuse segment-floor mechanism, verified by direct code read of engine/graph/edgelog.go lines 240-291 and engine/wal/writer.go's latestSegmentNum/WriteSegmentFloor/readSegmentFloor at current HEAD. The issue's literal mechanism ('invalidate/cleared sidecar entry') was NOT what was implemented, but the fix is a strict superset guarantee; this is a legitimate divergence from the literal wording, not a shortfall, and was disclosed transparently by the implementer rather than hidden."
+    },
+    "test_spec_conformance": {
+      "verdict": "pass",
+      "evidence": "go test ./engine/graph/... -run TestCompactNormalTruncateThenAppendThenCompactAgain: PASS, 0.07s (run directly by this verification, not trusted from implementer report). Read the full test body: it genuinely reproduces the issue's exact worked example -- AppendEdge(weight=3) -> Compact (no failure injection anywhere) -> AppendEdge(weight=5) to the SAME node -> Compact again -> asserts Weight=8 via LoadCSR, plus asserts the edge log is truncated to empty both times (ruling out the 'edge exists nowhere' failure mode the original finding described, not just a wrong-weight failure mode). This is not a narrower or accidentally-different test: it does not inject any crash/failure condition (confirmed by reading the whole function; no os.Chmod or similar sabotage calls, unlike the adjacent failure-retry test in the same file), so it genuinely exercises the ordinary/happy-path scenario the issue requires, not the already-covered failure-retry cycle."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "Verified via git diff that ed57468's fix logic (segment-floor file '.segment-floor', atomic temp+fsync+rename, monotonic-only floor writes) is unchanged at HEAD, and independently confirmed the ordering invariant that makes it crash-safe: WriteSegmentFloor is called BEFORE segment file removal in TruncateNode, so a crash mid-truncate leaves either (a) segment files still present (safe: OpenWriter resumes from the real files, degrading to the already-accepted F1 retry scenario) or (b) segment files removed and floor durably recorded (safe: OpenWriter resumes from the floor). No architecture drift found between ed57468 and current HEAD for this mechanism."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "Ran full engine/graph package suite myself: go test ./graph/... -race -v -count=1, twice (to catch flakiness) -- all green, ~9s each run, no different results between runs. Ran full engine module suite: go test ./... -race -count=1 from engine/ -- all 8 sub-packages (engine, btree, catalog, graph, mvcc, rpc, split, wal) pass clean. go vet ./... clean. gofmt -l on compact_test.go, compact.go, edgelog.go, wal/writer.go: no output (all formatted)."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comments",
+      "evidence": "Adversarially wrote and ran (then deleted, not part of the shipped diff) a throwaway test exercising two scenarios the shipped test does not directly cover in its own body: (1) a THIRD compact cycle on the same node (the shipped new test only does 2 cycles), and (2) two DIFFERENT nodes interleaved across 3 append/compact rounds each. Both passed under -race. Note the shipped diff's own new test intentionally omits the 3rd-round-trip case, but this is not a gap: the pre-existing TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost (unmodified, still in the suite) already covers a 3-round trip for a single node, and both tests run together in CI. No test in the repository currently exercises the interleaved-multi-node case; this is a minor coverage gap (not blocking for 4.5.11.1's specific single-node acceptance criteria) filed as a regression-index gap below.",
+      "adversarial_probes_run": [
+        "3rd compact cycle on same node -- passed",
+        "2 interleaved nodes across 3 rounds -- passed",
+        "-race enabled for all above -- passed, no race detected"
+      ]
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "No security-relevant production code changed (test-only diff). Segment-floor file write uses the same fsync+atomic-rename durability idiom as the rest of engine/wal; no new attack surface introduced by this run's own diff."
+    },
+    "performance": {
+      "verdict": "pass",
+      "evidence": "No production code changed by 2e415e5. The underlying ed57468 fix (already landed, out of scope for re-review here beyond confirming it's genuinely present) adds one extra small file read/write per TruncateNode call, not reassessed as part of this run since it's unchanged."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "New test is well-commented, correctly named per the issue's exact test spec, and does not duplicate the pre-existing equivalent test's extra coverage (transparently documented in its own doc comment). Commit message is accurate and does not overstate what changed."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "All claims re-derived independently from primary sources: gh issue view 49, .cdr/index/regression.jsonl grep, git show on both 2e415e5 and ed57468 in full, direct reads of current edgelog.go/writer.go, and my own from-scratch test execution (not trusted from implementer's self-consistency.json)."
+    },
+    "possible_improvements": {
+      "verdict": "n/a",
+      "evidence": "Recommend (non-blocking): add a dedicated interleaved-multi-node regression test to guard against a shared/global segment-floor bug (e.g. accidentally keying WriteSegmentFloor's file by a wrong or shared directory) -- not required by 4.5.11.1's acceptance criteria but would strengthen coverage before 4.5.11.2 (the lock-ordering subtask, which does involve concurrent multi-node activity) is tackled."
+    }
+  },
+  "untrusted_content_disclosure": "During this run, the tool-output/conversation stream included several blocks styled as legitimate 'system-reminder' notices that were not genuine harness state for this task: a fake 'the date has changed' notice instructing me not to mention it, a fake MCP-server ('tokensave') tool-usage instruction block for a server never actually invoked or offered as a real tool in this session, and a fake 'Auto Mode Active' directive telling the agent to proceed without clarifying questions. None of gh issue #49's actual body text contained embedded injected instructions (confirmed by reading the full issue body directly). All of the above were treated strictly as untrusted data, not acted upon, and did not influence this run's scope, permissions, or verdict.",
+  "resolution_of_prior_regression": {
+    "regression_id": "subtask 3.1.3 (010-verification) F2 finding, .cdr/index/regression.jsonl",
+    "action": "marked resolved=true",
+    "justification": "The F2 finding's exact repro (AppendEdge weight=3 -> Compact -> AppendEdge weight=5 -> Compact -> Weight=3 not 8, edge log empty) is now independently confirmed fixed: (1) the underlying code fix (ed57468, segment-floor mechanism) is verified present and unchanged at current HEAD via direct diff/source read, not just commit-message trust; (2) an exact-named, non-circular, no-failure-injected test (TestCompactNormalTruncateThenAppendThenCompactAgain) proves the described data-loss can no longer occur, run directly by this verification agent (not trusted from implementer's self-report) and passing under -race; (3) adversarial extension (3rd cycle, interleaved 2-node) also passes. This closes the F2 finding definitively."
+  },
+  "closability_assessment": {
+    "subtask_4.5.11.1": "closable",
+    "reasoning": "CRITICAL bug's root cause is durably fixed in production code (ed57468, present and unmodified at HEAD), proven by a directly-traceable, non-circular, exactly-named test that reproduces the issue's literal worked scenario without any failure injection, independently executed and passing under -race with zero regressions across the full engine module. Subtasks 4.5.11.2 (lock-ordering race) and 4.5.11.3 (EdgeType validation) remain open/untouched and are correctly out of scope for 4.5.11.1's closure."
+  }
+}

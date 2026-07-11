@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "run_id": "036-verification",
+  "subtask": "4.5.11.1",
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification_result": ".cdr/runs/2026-07-11/036-verification/verification.json",
+    "commit_verified": "2e415e57340fb06f6ecb652d2c49cf586b79e454",
+    "root_cause_fix_commit": "ed5746834af9e4508c53c1b9ab59dae330d789c5",
+    "production_files_confirmed_unchanged_since_fix": [
+      "engine/graph/compact.go",
+      "engine/graph/edgelog.go (lines 240-291, TruncateNode)",
+      "engine/wal/writer.go (latestSegmentNum, WriteSegmentFloor, readSegmentFloor)"
+    ],
+    "new_test": "engine/graph/compact_test.go: TestCompactNormalTruncateThenAppendThenCompactAgain",
+    "prior_regression_entry_resolved": ".cdr/index/regression.jsonl (subtask 3.1.3, run .cdr/runs/2026-07-08/010-verification, F2 finding)",
+    "new_regression_entries_appended": [
+      ".cdr/index/regression.jsonl (subtask '4.5.11.1 (resolves 3.1.3 F2)', resolved=true)",
+      ".cdr/index/regression.jsonl (subtask '4.5.11.1 (coverage gap)', resolved=false, low, non-blocking)"
+    ]
+  },
+  "next_steps": "Subtask 4.5.11.1 is closable. 4.5.11.2 (lock-ordering) and 4.5.11.3 (EdgeType validation) remain open per issue #49 and were correctly out of scope for this run."
+}
