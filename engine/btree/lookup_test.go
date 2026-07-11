@@ -172,6 +172,153 @@ func TestLookup(t *testing.T) {
 	})
 }
 
+// TestLookupInternalNodeMultiKeyRouting is subtask 4.5.12.3's (issue #50)
+// required test spec. descendToLeaf/lookupOnce route through an internal
+// node via `i := sort.Search(len(internal.Keys), ...); currentID =
+// internal.Children[i]`; with an internal node that has only a single key
+// (as buildTestTree's fixture above exclusively uses), i can only ever be 0
+// (path < Keys[0]) or 1 == len(Keys) (path >= Keys[0]) -- the "route into a
+// strictly-interior child" case, 0 < i < len(Keys), which requires an
+// internal node with at least 2 keys (hence >= 3 children), is never
+// exercised by any existing test. This test hand-constructs exactly such a
+// node -- 2 keys, 3 children -- and looks up a path that sorts strictly
+// between Keys[0] and Keys[1], forcing i == 1 (0 < 1 < 2), i.e. routing into
+// the MIDDLE child, neither the leftmost (i==0) nor rightmost (i==len(Keys))
+// one. It exercises this both via the pre-existing single-threaded free
+// function Lookup (descendToLeaf) and via the concurrency-safe Tree.Lookup
+// (lookupOnce), since both implement this same routing shape independently.
+func TestLookupInternalNodeMultiKeyRouting(t *testing.T) {
+	const (
+		leafAID = uint64(1) // covers [-inf, "fruit/banana")
+		leafBID = uint64(2) // covers ["fruit/banana", "fruit/kiwi") -- the middle child
+		leafCID = uint64(3) // covers ["fruit/kiwi", +inf)
+		rootID  = uint64(4)
+	)
+
+	path := filepath.Join(t.TempDir(), "name.idx")
+	f, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile: %v", err)
+	}
+	t.Cleanup(func() { f.Close() })
+	store := NewNodeStore(f)
+
+	nodes := []struct {
+		id       uint64
+		leaf     *LeafNode
+		internal *InternalNode
+	}{
+		{id: leafAID, leaf: &LeafNode{
+			Keys: []string{"fruit/apple"}, FileIDs: []uint64{1}, NextLeaf: leafBID,
+		}},
+		{id: leafBID, leaf: &LeafNode{
+			Keys: []string{"fruit/banana", "fruit/grape"}, FileIDs: []uint64{2, 3}, NextLeaf: leafCID,
+		}},
+		{id: leafCID, leaf: &LeafNode{
+			Keys: []string{"fruit/kiwi", "fruit/mango"}, FileIDs: []uint64{4, 5}, NextLeaf: noSibling,
+		}},
+		// The node under test: 2 keys, 3 children. sort.Search over
+		// ["fruit/banana", "fruit/kiwi"] returns:
+		//   i=0 for path < "fruit/banana"          -> Children[0] (leafAID)
+		//   i=1 for "fruit/banana" <= path < "fruit/kiwi" -> Children[1] (leafBID, MIDDLE)
+		//   i=2 for path >= "fruit/kiwi"            -> Children[2] (leafCID)
+		{id: rootID, internal: &InternalNode{
+			Keys:     []string{"fruit/banana", "fruit/kiwi"},
+			Children: []uint64{leafAID, leafBID, leafCID},
+		}},
+	}
+
+	for _, n := range nodes {
+		var encoded []byte
+		var err error
+		if n.leaf != nil {
+			encoded, err = n.leaf.Encode()
+		} else {
+			encoded, err = n.internal.Encode()
+		}
+		if err != nil {
+			t.Fatalf("encoding node %d: %v", n.id, err)
+		}
+		if err := store.WriteNode(n.id, encoded); err != nil {
+			t.Fatalf("writing node %d: %v", n.id, err)
+		}
+	}
+
+	// middlePaths sort strictly between Keys[0] ("fruit/banana") and
+	// Keys[1] ("fruit/kiwi"), so i == 1 -- 0 < i < len(Keys) -- and descent
+	// must land on leafBID, the middle child. If the routing branch were
+	// broken (e.g. always picking Children[0] or Children[len(Keys)]),
+	// these would resolve to leafAID/leafCID instead and either return the
+	// wrong fileID or a false not-found.
+	middleCases := []struct {
+		path       string
+		wantFileID uint64
+	}{
+		{"fruit/banana", 2}, // == Keys[0]: sort.Search's f(0) is false, f(1) is true, so i=1
+		{"fruit/grape", 3},  // strictly between Keys[0] and Keys[1]: i=1
+	}
+
+	// leftCases/rightCases pin down that the OTHER branches (i==0,
+	// i==len(Keys)) still route correctly on this exact multi-key node, so
+	// this test also confirms the middle-child case isn't accidentally
+	// passing due to some other routing bug that happens to also land on
+	// leafBID.
+	leftCases := []struct {
+		path       string
+		wantFileID uint64
+	}{
+		{"fruit/apple", 1},
+	}
+	rightCases := []struct {
+		path       string
+		wantFileID uint64
+	}{
+		{"fruit/kiwi", 4},
+		{"fruit/mango", 5},
+	}
+
+	checkPresent := func(t *testing.T, path string, wantFileID uint64) {
+		t.Helper()
+		fileID, found, err := Lookup(store, rootID, path)
+		if err != nil {
+			t.Fatalf("Lookup(%q): unexpected error: %v", path, err)
+		}
+		if !found || fileID != wantFileID {
+			t.Fatalf("Lookup(%q): found=%v fileID=%d, want found=true fileID=%d", path, found, fileID, wantFileID)
+		}
+
+		alloc, err := NewNodeAllocator(store)
+		if err != nil {
+			t.Fatalf("NewNodeAllocator: %v", err)
+		}
+		t.Cleanup(func() { alloc.Close() })
+		tree := NewTree(store, alloc, rootID)
+		fileID, found, err = tree.Lookup(path)
+		if err != nil {
+			t.Fatalf("Tree.Lookup(%q): unexpected error: %v", path, err)
+		}
+		if !found || fileID != wantFileID {
+			t.Fatalf("Tree.Lookup(%q): found=%v fileID=%d, want found=true fileID=%d", path, found, fileID, wantFileID)
+		}
+	}
+
+	t.Run("middle child (0 < i < len(Keys))", func(t *testing.T) {
+		for _, tc := range middleCases {
+			checkPresent(t, tc.path, tc.wantFileID)
+		}
+	})
+	t.Run("leftmost child (i == 0)", func(t *testing.T) {
+		for _, tc := range leftCases {
+			checkPresent(t, tc.path, tc.wantFileID)
+		}
+	})
+	t.Run("rightmost child (i == len(Keys))", func(t *testing.T) {
+		for _, tc := range rightCases {
+			checkPresent(t, tc.path, tc.wantFileID)
+		}
+	})
+}
+
 // TestOptimisticRead is task-2a.4.4's acceptance test: Tree.Lookup (the new
 // lock-free, optimistic-version-counter read path) must never block a
 // concurrent writer or be blocked by one, and must never return
