@@ -123,13 +123,20 @@ func (s *NodeStore) Version(nodeID uint64) uint64 {
 //
 // This is pending.md's "consider an optional attempt counter/metric (not a
 // hard cap) to make pathological retry storms observable" recommendation
-// (surfaced during task-2a.4.2 verification): none of these restart loops
-// have, or should have, a maximum-attempt cap -- giving up would mean
-// silently dropping a write or a read, which this package never does. This
-// counter changes nothing about that: it is purely additive instrumentation,
-// read with a single atomic load/increment, with no effect on retry timing,
-// backoff, or control flow. It exists solely so an operator (or a test) can
-// notice an abnormally high restart rate, which would otherwise be invisible.
+// (surfaced during task-2a.4.2 verification).
+//
+// Update (subtask 4.5.1.2): crabInsert and crabDelete now bound their own
+// restart loops at crabMaxRestarts (insert.go), surfacing errTooManyRestarts
+// as a purely theoretical, never-observed-in-practice livelock guard rather
+// than retrying forever -- see crabMaxRestarts' doc comment for why this is
+// not a correctness fix. Tree.Lookup's restart loop (lookup.go) is
+// deliberately left uncapped: an optimistic reader that gives up would mean
+// silently dropping a read, which this package still never does for reads.
+// This counter itself changes nothing about any of that either way: it is
+// purely additive instrumentation, read with a single atomic load/increment,
+// with no effect on retry timing, backoff, or control flow. It exists solely
+// so an operator (or a test) can notice an abnormally high restart rate,
+// which would otherwise be invisible.
 var restartFromRootCount atomic.Uint64
 
 // RestartFromRootCount returns the total number of times, across every Tree

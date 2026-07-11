@@ -455,9 +455,19 @@ func (t *Tree) Delete(path string) (found bool, err error) {
 
 // crabDelete retries crabDeleteOnce from the root on every errRestartFromRoot
 // (a hand-over-hand TryLock miss), with jittered backoff between attempts --
-// identical retry shape to crabInsert/findParent.
+// identical retry shape to crabInsert/findParent, including the same
+// crabMaxRestarts bound (see insert.go's doc comment on crabMaxRestarts):
+// past that many consecutive restarts without a single attempt succeeding,
+// this gives up and surfaces errTooManyRestarts rather than retrying
+// forever. As with crabInsert, this is a theoretical, never-observed-in-
+// practice defensive livelock guard, not a correctness fix -- every restart
+// here happens strictly before any mutation for that attempt, so restarting
+// any number of times is always structurally safe.
 func (t *Tree) crabDelete(rootID uint64, path string) (bool, error) {
 	for attempt := 0; ; attempt++ {
+		if attempt >= crabMaxRestarts {
+			return false, errTooManyRestarts
+		}
 		if attempt > 0 {
 			crabRetryBackoff(attempt)
 		}

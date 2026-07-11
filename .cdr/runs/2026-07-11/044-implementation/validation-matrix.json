@@ -1,0 +1,31 @@
+{
+  "acceptance_criteria": [
+    {
+      "criterion": "crabInsert's errRestartFromRoot retry loop has a bounded retry count",
+      "covered_by": "insert.go crabInsert loop now checks attempt >= crabMaxRestarts; TestCrabbingRetryCapSurfacesError (Insert phase)"
+    },
+    {
+      "criterion": "crabDeleteOnce's (crabDelete's) errRestartFromRoot retry loop has a bounded retry count",
+      "covered_by": "delete.go crabDelete loop now checks attempt >= crabMaxRestarts; TestCrabbingRetryCapSurfacesError (Delete phase)"
+    },
+    {
+      "criterion": "After the bound is exceeded, surfaces an explicit error rather than retrying forever",
+      "covered_by": "errTooManyRestarts sentinel returned; test asserts errors.Is(err, errTooManyRestarts) and that the call returns within a bounded wall-clock window instead of hanging"
+    },
+    {
+      "criterion": "Documented as a theoretical (never observed) livelock mitigation, not a correctness fix",
+      "covered_by": "crabMaxRestarts doc comment in insert.go explicitly states this; errRestartFromRoot's existing doc comment (unchanged) already establishes why any retry count is always safe"
+    },
+    {
+      "criterion": "Test spec: go test ./engine/btree/... -run TestCrabbingRetryCapSurfacesError -- inject a mechanism forcing TryLock to always fail, assert bounded-retries error not a hang",
+      "covered_by": "TestCrabbingRetryCapSurfacesError uses permanent real lock contention (precedent: TestCrabbingConcurrentPropagateNoDeadlock) to force every TryLock against the target node to fail for the whole test; asserts errTooManyRestarts returned within a bounded timeout"
+    }
+  ],
+  "regression_checks": [
+    "go build ./...",
+    "gofmt -l (clean)",
+    "go vet ./engine/btree/...",
+    "go test ./engine/btree/... -race -v (zero regressions vs. baseline)",
+    "go test ./engine/... -race (zero regressions vs. baseline; pre-existing engine/split TestReaderDuringSplit flake documented, not chased if isolated)"
+  ]
+}

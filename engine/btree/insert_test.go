@@ -872,3 +872,106 @@ func TestCrabbingConcurrentPropagateNoDeadlock(t *testing.T) {
 	assertAllLookupable(t, store, finalRoot, inserted)
 	assertStructuralInvariants(t, store, finalRoot, len(inserted))
 }
+
+// TestCrabbingRetryCapSurfacesError is subtask 4.5.1.2's test spec: force
+// TryLock to always fail against a target node -- by permanently holding its
+// latch from a separate goroutine for the entire test, the same real-lock-
+// contention technique TestCrabbingConcurrentPropagateNoDeadlock uses to
+// force a single restart, just never released -- so crabInsert/crabDelete
+// can never make progress and are forced to exhaust crabMaxRestarts on every
+// single attempt. Asserts the call returns errTooManyRestarts within a
+// generous but bounded wall-clock timeout, instead of hanging forever: a
+// regression back to an unbounded retry loop would surface here as a clear
+// t.Fatal on that timeout, never as a silent multi-minute (or worse) hang.
+func TestCrabbingRetryCapSurfacesError(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	const prebuilt = 250 // forces at least one leaf split into an internal root (see testInsertLeafSplit)
+	rootID, inserted := insertN(t, store, alloc, prebuilt)
+	tree := NewTree(store, alloc, rootID)
+
+	isLeaf, _, rootInternal, err := store.ReadNode(rootID)
+	if err != nil {
+		t.Fatalf("ReadNode(root): unexpected error: %v", err)
+	}
+	if isLeaf || len(rootInternal.Children) < 2 {
+		t.Fatalf("prebuilt tree root is not an internal node with >= 2 children (isLeaf=%v children=%v); test setup assumption broken", isLeaf, rootInternal.Children)
+	}
+
+	// Mirror crabInsert's own routing logic exactly, as
+	// TestCrabbingConcurrentPropagateNoDeadlock does, so contendedChildID is
+	// guaranteed to be the node every attempt's next hand-over-hand step will
+	// target -- both for the new key inserted below and for the existing key
+	// deleted below, since both route through the same child at this level
+	// for a key >= every key already in the prebuilt tree.
+	newKey := genKey(prebuilt)
+	childIdx := sort.Search(len(rootInternal.Keys), func(i int) bool { return newKey < rootInternal.Keys[i] })
+	contendedChildID := rootInternal.Children[childIdx]
+
+	// Hold contendedChildID's latch for the rest of the test: every
+	// hand-over-hand TryLock attempt against it, on every single restart
+	// attempt, will miss. crabInsert/crabDelete therefore have no way to ever
+	// make progress and must hit crabMaxRestarts.
+	store.Lock(contendedChildID)
+	t.Cleanup(func() { store.Unlock(contendedChildID) })
+
+	var restarts int32
+	prevHook := crabRetryHook
+	crabRetryHook = func(nodeID uint64) {
+		if nodeID == contendedChildID {
+			atomic.AddInt32(&restarts, 1)
+		}
+	}
+	t.Cleanup(func() { crabRetryHook = prevHook })
+
+	// crabMaxRestarts (1000) attempts at crabRetryBackoff's capped 2ms
+	// ceiling is at most ~2s; 30s is a generous, hang-safe upper bound for
+	// this bounded-but-slow operation, not a tight timing assertion.
+	const timeout = 30 * time.Second
+
+	t.Run("Insert", func(t *testing.T) {
+		done := make(chan error, 1)
+		go func() { done <- tree.Insert(newKey, uint64(prebuilt+1)) }()
+
+		select {
+		case err := <-done:
+			if err != errTooManyRestarts {
+				t.Fatalf("Insert: got err=%v, want errTooManyRestarts", err)
+			}
+		case <-time.After(timeout):
+			t.Fatalf("Insert did not return within %s: crabMaxRestarts regression (unbounded retry loop hung instead of surfacing errTooManyRestarts)", timeout)
+		}
+		if atomic.LoadInt32(&restarts) == 0 {
+			t.Fatal("crabRetryHook was never invoked for the contended node; test did not actually exercise the restart-from-root path")
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		atomic.StoreInt32(&restarts, 0)
+
+		// Delete the largest already-inserted key (genKey(prebuilt-1)): being
+		// the second-largest key overall (just below newKey), it routes
+		// through the exact same root-level child boundary as newKey did
+		// above -- i.e. contendedChildID -- so this exercises the identical
+		// permanently-contended hand-over-hand step crabDeleteOnce takes.
+		deleteKey := genKey(prebuilt - 1)
+		if _, ok := inserted[deleteKey]; !ok {
+			t.Fatalf("test setup assumption broken: %q was not actually inserted", deleteKey)
+		}
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := tree.Delete(deleteKey)
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			if err != errTooManyRestarts {
+				t.Fatalf("Delete: got err=%v, want errTooManyRestarts", err)
+			}
+		case <-time.After(timeout):
+			t.Fatalf("Delete did not return within %s: crabMaxRestarts regression (unbounded retry loop hung instead of surfacing errTooManyRestarts)", timeout)
+		}
+	})
+}

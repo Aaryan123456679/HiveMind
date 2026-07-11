@@ -483,6 +483,38 @@ func crabRetryBackoff(attempt int) {
 	time.Sleep(d)
 }
 
+// crabMaxRestarts bounds how many times crabInsert (below) and crabDelete
+// (delete.go) may restart their walk from the root after a hand-over-hand
+// TryLock miss (errRestartFromRoot) before giving up and surfacing
+// errTooManyRestarts instead of retrying forever.
+//
+// This is a theoretical, defensive livelock guard, NOT a correctness fix:
+// every errRestartFromRoot restart happens strictly before any mutation for
+// that attempt, so restarting is always structurally safe no matter how many
+// times it happens (see errRestartFromRoot's doc comment above) -- nothing
+// about correctness requires a cap. In practice this cap has never been
+// observed to trigger, in this package's own stress tests or otherwise:
+// crabRetryBackoff's jittered, increasing delay already makes sustained
+// collisions against the very same node vanishingly unlikely. The cap exists
+// solely so a truly pathological scenario -- e.g. a goroutine that leaks a
+// node's latch and never releases it -- surfaces to the caller as an
+// explicit, diagnosable error instead of hanging the calling goroutine
+// indefinitely.
+//
+// 1000 was chosen comfortably above any realistic contention burst (even
+// this package's heaviest concurrent stress tests restart at most a handful
+// of times) while still keeping the worst-case wall-clock bound small: at
+// crabRetryBackoff's capped 2ms-per-attempt ceiling, 1000 attempts is at most
+// ~2 seconds of retrying before giving up, never an unbounded hang.
+const crabMaxRestarts = 1000
+
+// errTooManyRestarts is returned by crabInsert/crabDelete once crabMaxRestarts
+// consecutive errRestartFromRoot restarts have occurred without a single
+// attempt succeeding. See crabMaxRestarts' doc comment for why this is a
+// theoretical livelock guard, not a correctness fix, and is expected to
+// never actually be observed in practice.
+var errTooManyRestarts = fmt.Errorf("btree: gave up after %d restart-from-root attempts without making progress (possible livelock); this is a defensive bound, see crabMaxRestarts", crabMaxRestarts)
+
 // Tree is the concurrency-safe entry point for latch-crabbing insert
 // (2a.4.2) and, later, delete (2a.4.3). It wraps a *NodeStore and
 // *NodeAllocator (both already safe for concurrent use per 2a.4.1) together
@@ -597,6 +629,9 @@ func (t *Tree) Insert(path string, fileID uint64) error {
 // own subtree changes based on what (if anything) sits above it.
 func (t *Tree) crabInsert(rootID uint64, path string, fileID uint64) error {
 	for attempt := 0; ; attempt++ {
+		if attempt >= crabMaxRestarts {
+			return errTooManyRestarts
+		}
 		if attempt > 0 {
 			crabRetryBackoff(attempt)
 		}
