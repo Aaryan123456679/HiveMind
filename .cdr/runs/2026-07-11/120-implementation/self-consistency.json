@@ -1,0 +1,12 @@
+{
+  "subtask": "4.5.15.2",
+  "build_green": true,
+  "commands_run": [
+    "python3 -m pytest ingestion/test_normalize_pdf.py -k unicode_round_trip -v  (cwd=agents/) -> 2 passed",
+    "python3 -m pytest ingestion/test_normalize_pdf.py -v  (cwd=agents/) -> 14 passed (12 pre-existing + 2 new), zero failures/deselections beyond -k filter runs",
+    "ruff check ingestion/test_normalize_pdf.py -> All checks passed (clean)"
+  ],
+  "validation_matrix_covered": true,
+  "scope_check": "git diff --cached --stat shows exactly agents/ingestion/test_normalize_pdf.py (+46 lines, 0 removed) plus this run's own .cdr/runs artifacts -- no production code, no other subtask's files touched",
+  "note": "This is internal sanity only, not verification (invariant I4). Handing off to /cdr:verify for independent review."
+}

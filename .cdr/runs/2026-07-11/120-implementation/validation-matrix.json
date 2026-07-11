@@ -1,0 +1,35 @@
+{
+  "subtask": "4.5.15.2",
+  "criteria": [
+    {
+      "criterion": "Test exercises iter_pages(_page_marker(1, unicode_text)) with non-ASCII/multi-byte text (accented chars, CJK, emoji/astral-plane)",
+      "test": "test_unicode_round_trip_accented_cjk_and_emoji_survive_iter_pages",
+      "covered": true
+    },
+    {
+      "criterion": "Asserts exact round-trip fidelity",
+      "test": "both new tests assert recovered text == expected (post _page_marker newline normalization)",
+      "covered": true
+    },
+    {
+      "criterion": "Matched by pytest -k unicode_round_trip",
+      "test": "both new test function names contain 'unicode_round_trip'",
+      "covered": true
+    },
+    {
+      "criterion": "Multi-page boundary integrity not broken by multi-byte content",
+      "test": "test_unicode_round_trip_multiple_pages_preserve_boundaries",
+      "covered": true
+    },
+    {
+      "criterion": "No regression in pre-existing 12 tests in test_normalize_pdf.py",
+      "test": "full pytest agents/ingestion/test_normalize_pdf.py -v run",
+      "covered": true
+    },
+    {
+      "criterion": "No production code (normalize_pdf.py) modified",
+      "test": "git diff --stat shows only test_normalize_pdf.py changed",
+      "covered": true
+    }
+  ]
+}

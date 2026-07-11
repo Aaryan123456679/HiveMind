@@ -198,3 +198,49 @@ def test_len_trust_boundary_len_exceeding_remaining_text_raises_value_error() ->
 
     with pytest.raises(ValueError, match="exceeds remaining text"):
         list(iter_pages(blob))
+
+
+# --- 4.5.15.2 (issue #53): Unicode round-trip regression ---
+
+
+def test_unicode_round_trip_accented_cjk_and_emoji_survive_iter_pages() -> None:
+    """`LEN=<n>` is computed by `_page_marker` via Python's `len()`, which
+    counts Unicode code points (not UTF-16 code units or UTF-8 bytes), and
+    `iter_pages` slices using that same code-point-count convention. This
+    must hold for non-ASCII/multi-byte content: accented Latin characters,
+    CJK ideographs, and astral-plane emoji (code points above the Basic
+    Multilingual Plane, e.g. U+1F600) must all round-trip byte-for-byte
+    (char-for-char) with no truncation, mis-slicing, or mojibake."""
+    unicode_text = (
+        "Accented: café, naïve, résumé.\n"
+        "CJK: 漢字テスト, 北京.\n"
+        "Emoji/astral-plane: \U0001f600 \U0001f468‍\U0001f469‍"
+        "\U0001f467‍\U0001f466.\n"
+    )
+    blob = _page_marker(1, unicode_text)
+
+    pages = list(iter_pages(blob))
+
+    assert len(pages) == 1
+    page_number, recovered_text = pages[0]
+    assert page_number == 1
+    assert recovered_text == unicode_text
+
+
+def test_unicode_round_trip_multiple_pages_preserve_boundaries() -> None:
+    """Multi-byte/multi-codepoint content on one page must not corrupt the
+    marker boundary for the *next* page -- each page's LEN is computed and
+    consumed independently, so boundaries must stay exact even with heavy
+    non-ASCII payloads on either side."""
+    page1_text = "日本語ページ一: \U0001f600\n"
+    page2_text = "Página dos: ñ, é, \U0001f389 fiesta!\n"
+    page3_text = "Здравствуйте, 世界.\n"
+    blob = (
+        _page_marker(1, page1_text)
+        + _page_marker(2, page2_text)
+        + _page_marker(3, page3_text)
+    )
+
+    pages = list(iter_pages(blob))
+
+    assert pages == [(1, page1_text), (2, page2_text), (3, page3_text)]
