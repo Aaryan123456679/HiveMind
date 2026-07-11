@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -411,3 +412,31 @@ def test_unparseable_json_still_raises_after_sanitization_fallback() -> None:
 
     with pytest.raises(SegmentParseError, match="not valid JSON"):
         segment(_make_doc(), _make_shortlist(), client)
+
+
+def test_omitting_llm_client_constructs_one_via_factory() -> None:
+    """Issue #54 subtask 4.5.16.4: when `llm_client` is omitted, `segment()`
+    must obtain one via `llm.factory.create_llm_client` (the same
+    config-driven factory `agents/query/` already uses), not by
+    instantiating a concrete provider client itself.
+    """
+    fake_client = _FakeLLMClient(response=json.dumps(_VALID_APPEND_PAYLOAD))
+
+    with patch("ingestion.segment.create_llm_client", return_value=fake_client) as mock_factory:
+        result = segment(_make_doc(), _make_shortlist())
+
+    mock_factory.assert_called_once_with()
+    assert result.topic_action == "APPEND_EXISTING"
+
+
+def test_explicit_llm_client_bypasses_factory() -> None:
+    """Backward compatibility: passing `llm_client` explicitly (the existing,
+    still-supported call shape) must not invoke the factory at all.
+    """
+    client = _FakeLLMClient(response=json.dumps(_VALID_APPEND_PAYLOAD))
+
+    with patch("ingestion.segment.create_llm_client") as mock_factory:
+        result = segment(_make_doc(), _make_shortlist(), client)
+
+    mock_factory.assert_not_called()
+    assert result.topic_action == "APPEND_EXISTING"

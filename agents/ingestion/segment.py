@@ -104,6 +104,23 @@ raising `SegmentParseError`. Gating the retry behind the first failure (rather t
 always sanitizing) means the already-working happy path is untouched -- it can only
 turn some previously-failing malformed completions into successfully-parsed ones,
 never change behavior for already-valid JSON.
+
+LLM client construction -- disclosed choice (issue #54, subtask 4.5.16.4)
+--------------------------------------------------------------------------
+`segment()`'s `llm_client` parameter was previously required: every caller had to
+construct (or otherwise obtain) an `LLMClient` itself before calling in. That is
+still fully supported -- explicit injection remains byte-for-byte unchanged, which
+is what every current caller (this module's own test suite, plus the live/smoke
+harnesses in `test_segment_live.py`/`test_e2e_smoke.py`) already does. `llm_client`
+now additionally defaults to `None`, in which case `segment()` obtains one via
+`llm.factory.create_llm_client()` -- the same config-driven factory
+`agents/query/` already uses (issue #20 subtask 4.1.3), rather than this module
+picking one concrete provider client itself. Calling `create_llm_client()` with no
+explicit `provider=` lets it resolve from the `LLM_PROVIDER` environment variable
+per the factory's own documented convention, giving this module the same
+runtime-provider-switching capability `agents/query/` already has, proactively
+(this module does not yet have a caller relying on the default), matching the
+issue's own "even before it strictly needs" framing.
 """
 
 from __future__ import annotations
@@ -113,6 +130,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Sequence
 
 from json_fences import sanitize_control_chars_and_triple_quotes, strip_code_fences
+from llm.factory import create_llm_client
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
@@ -307,7 +325,7 @@ def _parse_segment_json(raw: str) -> SegmentResult:
 def segment(
     doc: "RawDocument",
     shortlist: Sequence["TopicCandidate"],
-    llm_client: "LLMClient",
+    llm_client: "LLMClient | None" = None,
     *,
     model: str | None = None,
     temperature: float = 0.0,
@@ -322,6 +340,11 @@ def segment(
         shortlist: The bounded candidate topic list (e.g. from
             `ingestion.shortlist.shortlist()`) embedded into the prompt.
         llm_client: The `LLMClient` used to perform the completion call.
+            Defaults to `None`, in which case one is obtained via
+            `llm.factory.create_llm_client()` (see module docstring's "LLM
+            client construction" section). Callers that already hold a
+            client (or need a non-default provider/config) can still pass
+            one explicitly, unchanged from before.
         model, temperature, max_tokens, timeout: Forwarded verbatim to
             `llm_client.complete()`.
 
@@ -329,6 +352,9 @@ def segment(
         A validated `SegmentResult`.
 
     Raises:
+        LLMFactoryError: Propagated unwrapped if `llm_client` is omitted and
+            `create_llm_client()` cannot resolve a supported provider (see
+            `llm.factory`).
         LLMError: Propagated unwrapped if `llm_client.complete()` itself
             fails (provider call failure) -- not converted into
             `SegmentParseError`, since that means something different (see
@@ -337,6 +363,8 @@ def segment(
             segment (unparseable JSON, missing/mistyped field, or an
             internally inconsistent field combination).
     """
+    if llm_client is None:
+        llm_client = create_llm_client()
     prompt = _build_prompt(doc, shortlist)
     raw = llm_client.complete(
         prompt,
