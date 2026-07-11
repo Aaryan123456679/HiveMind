@@ -72,13 +72,13 @@ func (r *recordingRecorder) snapshot() []rpc.RPCMetric {
 // TestStorageCoreIntegration -- adapted to this file's external rpc_test package, which only
 // has access to exported identifiers.
 type integrationFixture struct {
-	cs         *catalog.ContentStore
-	btreeStore *btree.NodeStore
-	btreeRoot  uint64
+	cat       *catalog.Catalog
+	cs        *catalog.ContentStore
+	pathIndex *btree.Tree
 
 	// edgeLog/graphPath back PutEdge; entityIndex backs PutEntity/LookupEntity -- new scope
 	// added during issue #18 subtask 3.4.4's verification. Deliberately separate from
-	// btreeStore/btreeRoot above, matching server_test.go's fixture (see server.go's
+	// pathIndex above, matching server_test.go's fixture (see server.go's
 	// Server.entityIndex doc comment for why).
 	edgeLog     *graph.EdgeLog
 	graphPath   string
@@ -235,7 +235,9 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	})
 	entityIndex := btree.NewTree(entityStore, entityAlloc, 0)
 
-	srv, err := rpc.NewServer(cat, cs, idAlloc, g, store, rootNodeID, edgeLog, entityIndex)
+	pathIndex := btree.NewTree(store, nodeAlloc, rootNodeID)
+
+	srv, err := rpc.NewServer(cat, cs, idAlloc, g, pathIndex, edgeLog, entityIndex)
 	if err != nil {
 		t.Fatalf("rpc.NewServer: %v", err)
 	}
@@ -243,9 +245,9 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	client, rec := startRealServer(t, srv)
 
 	return &integrationFixture{
+		cat:         cat,
 		cs:          cs,
-		btreeStore:  store,
-		btreeRoot:   rootNodeID,
+		pathIndex:   pathIndex,
 		edgeLog:     edgeLog,
 		graphPath:   graphPath,
 		entityIndex: entityIndex,
@@ -444,7 +446,7 @@ func TestRPCIntegration(t *testing.T) {
 		}
 
 		// Cross-check directly against btree.PrefixScan on the same real store/root.
-		direct, err := btree.PrefixScan(f.btreeStore, f.btreeRoot, "topics/")
+		direct, err := btree.PrefixScan(f.pathIndex.Store, f.pathIndex.Root(), "topics/")
 		if err != nil {
 			t.Fatalf("btree.PrefixScan (cross-check): %v", err)
 		}
@@ -466,6 +468,73 @@ func TestRPCIntegration(t *testing.T) {
 			if gotPaths[i] != wantPaths[i] {
 				t.Fatalf("SearchCandidates: paths = %v, want %v", gotPaths, wantPaths)
 			}
+		}
+	})
+
+	// PutSegment_Create_DiscoverableViaSearchCandidates is GitHub issue #43's own
+	// acceptance-bar regression test (commit 2/3): a file created via PutSegment with a
+	// path must be discoverable via SearchCandidates immediately afterward, without any
+	// separate out-of-band indexing step. Deliberately distinct from PutSegment_Create
+	// above (which omits path, matching this handler's pre-issue-#43 call shape and
+	// proving that legacy path-less callers are unaffected) and from SearchCandidates
+	// above (which only exercises the fixture's pre-seeded topics/alpha,beta/intro paths,
+	// inserted directly via btree.Insert during fixture setup, never through PutSegment
+	// itself -- so it could not have caught this bug). A PathHash-set-but-undiscoverable
+	// result would fail this test, since it asserts against SearchCandidates' actual
+	// response, not CatalogRecord.PathHash directly.
+	t.Run("PutSegment_Create_DiscoverableViaSearchCandidates", func(t *testing.T) {
+		// newPath's leading path segment ("gamma") is used, unmodified, as the
+		// SearchCandidates query below: candidatePool (search_candidates.go) resolves
+		// each query term via a literal btree.PrefixScan against stored path keys (it is a
+		// PREFIX search, not full-text/substring search -- see search_candidates.go's own
+		// doc comment and its "graph"/"graph/full-match" style fixtures in
+		// search_candidates_test.go), so the query term must itself be a genuine leading
+		// prefix of the indexed path, distinct from this fixture's other seeded paths
+		// ("topics/alpha/intro", "topics/beta/intro") to unambiguously identify this one
+		// new candidate.
+		const newPath = "gamma/graph-database"
+		content := []byte("# Gamma\n\ngraph database body\n")
+
+		createResp, err := f.client.PutSegment(ctx, &hivemindv1.PutSegmentRequest{
+			FileId:  0,
+			Content: content,
+			Path:    newPath,
+		})
+		if err != nil {
+			t.Fatalf("PutSegment (create with path): %v", err)
+		}
+		newFileID := createResp.GetFileId()
+		if newFileID == 0 {
+			t.Fatalf("PutSegment (create with path): got FileId 0, want non-zero allocated fileID")
+		}
+
+		rec, err := f.cat.Get(newFileID)
+		if err != nil {
+			t.Fatalf("catalog.Get after PutSegment create: %v", err)
+		}
+		if rec.PathHash != catalog.HashPath(newPath) {
+			t.Fatalf("catalog.Get after PutSegment create: PathHash = %d, want %d (catalog.HashPath(%q))", rec.PathHash, catalog.HashPath(newPath), newPath)
+		}
+
+		resp, err := f.client.SearchCandidates(ctx, &hivemindv1.SearchCandidatesRequest{
+			Query:      "gamma",
+			MaxResults: 0,
+		})
+		if err != nil {
+			t.Fatalf("SearchCandidates: %v", err)
+		}
+
+		var found bool
+		for _, c := range resp.GetCandidates() {
+			if c.GetFileId() == newFileID {
+				found = true
+				if c.GetPath() != newPath {
+					t.Fatalf("SearchCandidates: candidate fileID=%d path = %q, want %q", newFileID, c.GetPath(), newPath)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("SearchCandidates(query=%q): newly created fileID=%d (path=%q) not found in candidates %v -- issue #43 regression", "gamma", newFileID, newPath, resp.GetCandidates())
 		}
 	})
 

@@ -130,6 +130,12 @@ func run(root, addr string) error {
 	if err != nil {
 		return fmt.Errorf("btree.Insert (bootstrap root): %w", err)
 	}
+	// pathIndex wraps the same store/nodeAlloc/rootNodeID as a self-tracking *btree.Tree
+	// (issue #43, commit 2/3): PutSegment's CREATE handler now inserts newly created
+	// files' paths into this tree via pathIndex.Insert, and SearchCandidates reads via
+	// pathIndex.Store/pathIndex.Root() -- both against the same underlying tree this
+	// bootstrap placeholder was seeded into above.
+	pathIndex := btree.NewTree(store, nodeAlloc, rootNodeID)
 
 	// Empty CSR graph: this is a fresh engine instance, no pre-existing edges. PutEdge's
 	// edgeLog below is the real write path; Compact would fold it into a fresh CSR
@@ -156,7 +162,7 @@ func run(root, addr string) error {
 	defer entityAlloc.Close()
 	entityIndex := btree.NewTree(entityStore, entityAlloc, 0)
 
-	srv, err := rpc.NewServer(cat, cs, idAlloc, g, store, rootNodeID, edgeLog, entityIndex)
+	srv, err := rpc.NewServer(cat, cs, idAlloc, g, pathIndex, edgeLog, entityIndex)
 	if err != nil {
 		return fmt.Errorf("rpc.NewServer: %w", err)
 	}

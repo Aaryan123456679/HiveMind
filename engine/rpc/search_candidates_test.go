@@ -105,7 +105,9 @@ func newRankingFixture(t *testing.T, paths []string) *rankingFixture {
 		}
 	}
 
-	srv, err := NewServer(cat, cs, idAlloc, nil, store, rootNodeID, nil, nil)
+	pathIndex := btree.NewTree(store, nodeAlloc, rootNodeID)
+
+	srv, err := NewServer(cat, cs, idAlloc, nil, pathIndex, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -204,7 +206,7 @@ func TestSearchCandidates(t *testing.T) {
 		paths := []string{"docs/alpha/intro", "docs/beta/intro", "docs/gamma/intro"}
 		f := newRankingFixture(t, paths)
 
-		want, err := btree.PrefixScan(f.srv.btreeStore, f.srv.btreeRootNodeID, "")
+		want, err := btree.PrefixScan(f.srv.pathIndex.Store, f.srv.pathIndex.Root(), "")
 		if err != nil {
 			t.Fatalf("btree.PrefixScan (direct): %v", err)
 		}

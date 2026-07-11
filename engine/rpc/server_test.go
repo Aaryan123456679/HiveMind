@@ -20,16 +20,15 @@ import (
 // engine/integration_test.go's TestStorageCoreIntegration does, so server_test.go's fixture
 // setup matches this repo's established real-module (not mocked) test composition.
 type fixture struct {
-	cat        *catalog.Catalog
-	cs         *catalog.ContentStore
-	idAlloc    *catalog.IDAllocator
-	btreeStore *btree.NodeStore
-	btreeRoot  uint64
-	srv        *Server
+	cat       *catalog.Catalog
+	cs        *catalog.ContentStore
+	idAlloc   *catalog.IDAllocator
+	pathIndex *btree.Tree
+	srv       *Server
 
 	// edgeLog/graphPath back PutEdge; entityIndex backs PutEntity/LookupEntity. Both are
-	// wholly separate from btreeStore/btreeRoot above (the pre-existing, read-only path
-	// index) -- see server.go's Server.entityIndex doc comment for why.
+	// wholly separate from pathIndex above -- see server.go's Server.entityIndex doc
+	// comment for why.
 	edgeLog     *graph.EdgeLog
 	graphPath   string
 	entityIndex *btree.Tree
@@ -99,7 +98,7 @@ func newFixture(t *testing.T) *fixture {
 		}
 	})
 
-	f := &fixture{cat: cat, cs: cs, idAlloc: idAlloc, btreeStore: store}
+	f := &fixture{cat: cat, cs: cs, idAlloc: idAlloc}
 
 	// --- Seed two fixture topic files directly via ContentStore/Catalog. ---
 	seed := func(content []byte) uint64 {
@@ -143,7 +142,8 @@ func newFixture(t *testing.T) *fixture {
 	}
 	insertPath("topics/alpha/intro", alphaID)
 	insertPath("topics/beta/intro", betaID)
-	f.btreeRoot = rootNodeID
+	pathIndex := btree.NewTree(store, nodeAlloc, rootNodeID)
+	f.pathIndex = pathIndex
 
 	// --- Seed a fixture CSR graph: alphaID -> betaID (ENTITY_COOCCUR) at hop 1. ---
 	adjacency := map[uint64][]graph.CSREdge{
@@ -188,7 +188,7 @@ func newFixture(t *testing.T) *fixture {
 	entityIndex := btree.NewTree(entityStore, entityAlloc, 0)
 	f.entityIndex = entityIndex
 
-	srv, err := NewServer(cat, cs, idAlloc, g, store, rootNodeID, edgeLog, entityIndex)
+	srv, err := NewServer(cat, cs, idAlloc, g, pathIndex, edgeLog, entityIndex)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -222,6 +222,69 @@ func TestRPCServerHandlers(t *testing.T) {
 		}
 		if string(got) != string(content) {
 			t.Fatalf("PutSegment (create): content mismatch: got %q, want %q", got, content)
+		}
+	})
+
+	t.Run("PutSegment_Create_WithPath_SetsPathHashAndIndexesForSearch", func(t *testing.T) {
+		// Issue #43, commit 2/3: a create with path must (a) set CatalogRecord.PathHash to
+		// catalog.HashPath(path), and (b) insert (path, fileID) into pathIndex -- the exact
+		// same tree SearchCandidates reads from -- not just one or the other. See
+		// engine/rpc/integration_test.go's PutSegment_Create_DiscoverableViaSearchCandidates
+		// for the full end-to-end (real gRPC transport) version of this same assertion.
+		f := newFixture(t)
+		const path = "unit/pathhash-check"
+		content := []byte("# Unit\n\nbody\n")
+		resp, err := f.srv.PutSegment(context.Background(), &hivemindv1.PutSegmentRequest{
+			FileId:  0,
+			Content: content,
+			Path:    path,
+		})
+		if err != nil {
+			t.Fatalf("PutSegment (create with path): %v", err)
+		}
+
+		rec, err := f.cat.Get(resp.GetFileId())
+		if err != nil {
+			t.Fatalf("catalog.Get after PutSegment create: %v", err)
+		}
+		if want := catalog.HashPath(path); rec.PathHash != want {
+			t.Fatalf("PutSegment (create with path): CatalogRecord.PathHash = %d, want %d (catalog.HashPath(%q))", rec.PathHash, want, path)
+		}
+
+		entries, err := btree.PrefixScan(f.pathIndex.Store, f.pathIndex.Root(), path)
+		if err != nil {
+			t.Fatalf("btree.PrefixScan (direct, after PutSegment create): %v", err)
+		}
+		var foundInIndex bool
+		for _, e := range entries {
+			if e.Path == path && e.FileID == resp.GetFileId() {
+				foundInIndex = true
+			}
+		}
+		if !foundInIndex {
+			t.Fatalf("PutSegment (create with path): pathIndex has no (path=%q, fileID=%d) entry after create (entries=%v) -- issue #43 regression", path, resp.GetFileId(), entries)
+		}
+	})
+
+	t.Run("PutSegment_Create_NoPath_LeavesPathHashZeroAndSkipsIndexing", func(t *testing.T) {
+		// A caller that omits path (this handler's pre-issue-#43 call shape) must be
+		// completely unaffected: PathHash stays at its zero-value default and nothing is
+		// inserted into pathIndex.
+		f := newFixture(t)
+		resp, err := f.srv.PutSegment(context.Background(), &hivemindv1.PutSegmentRequest{
+			FileId:  0,
+			Content: []byte("# NoPath\n\nbody\n"),
+		})
+		if err != nil {
+			t.Fatalf("PutSegment (create, no path): %v", err)
+		}
+
+		rec, err := f.cat.Get(resp.GetFileId())
+		if err != nil {
+			t.Fatalf("catalog.Get after PutSegment create (no path): %v", err)
+		}
+		if rec.PathHash != 0 {
+			t.Fatalf("PutSegment (create, no path): CatalogRecord.PathHash = %d, want 0 (unset)", rec.PathHash)
 		}
 	})
 

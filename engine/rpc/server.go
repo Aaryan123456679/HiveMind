@@ -38,7 +38,7 @@ import (
 
 // Server implements hivemindv1.HiveMindServer as a thin adapter over the already-built
 // storage engine packages. It owns none of its dependencies' lifecycles (does not open or
-// close cat/cs/idAlloc/g/btreeStore) -- callers construct and close those, then pass them to
+// close cat/cs/idAlloc/g/pathIndex) -- callers construct and close those, then pass them to
 // NewServer, mirroring catalog.OpenContentStore's "does not own cat/w lifecycle" convention.
 type Server struct {
 	hivemindv1.UnimplementedHiveMindServer
@@ -52,14 +52,21 @@ type Server struct {
 	// constructed before any graph.dat snapshot has been built/loaded.
 	g *graph.CSRGraph
 
-	// btreeStore/btreeRootNodeID back SearchCandidates. Nothing in this file's 5 in-scope
-	// RPCs writes to the B+Tree: PutSegmentRequest (proto/hivemind.proto) carries only
-	// file_id + content, no path, so there is no path for PutSegment to index. The B+Tree
-	// is therefore purely an injected read dependency here, populated by whatever caller
-	// outside this RPC surface owns path->fileID indexing. A nil btreeStore is valid
-	// (SearchCandidates returns an empty result set rather than erroring).
-	btreeStore      *btree.NodeStore
-	btreeRootNodeID uint64
+	// pathIndex backs both SearchCandidates (read, via
+	// btree.PrefixScan(s.pathIndex.Store, s.pathIndex.Root(), term)) and, as of GitHub
+	// issue #43's commit 2/3, PutSegment's CREATE handler (write, via
+	// s.pathIndex.Insert(path, fileID)) -- a newly created file's path is now inserted
+	// into the exact same tree SearchCandidates reads from, so it becomes discoverable
+	// immediately, not just after some out-of-band indexing step. Deliberately a
+	// self-tracking *btree.Tree (Insert/Root), mirroring entityIndex's existing pattern
+	// below, rather than the bare (*btree.NodeStore, rootNodeID uint64) pair this field
+	// used to be before issue #43: a bare rootNodeID uint64 field could not observe
+	// root-node changes caused by PutSegment's own inserts (e.g. a root split), whereas
+	// Tree.Root() always returns the current root under its own mutex. A nil pathIndex is
+	// valid -- SearchCandidates returns an empty result set and PutSegment's CREATE
+	// handler simply skips indexing (neither errors), exactly mirroring entityIndex's
+	// nil-is-valid convention.
+	pathIndex *btree.Tree
 
 	// edgeLog backs PutEdge (new scope, see this file's package doc comment above). A nil
 	// edgeLog is valid -- PutEdge returns codes.Unavailable rather than panicking or
@@ -69,11 +76,10 @@ type Server struct {
 	edgeLog *graph.EdgeLog
 
 	// entityIndex backs PutEntity/LookupEntity (new scope, see this file's package doc
-	// comment above). Deliberately a SEPARATE *btree.Tree from btreeStore/btreeRootNodeID
-	// above (which stay read-only, exactly as before this change): entity-index writes
-	// need a concurrency-safe, self-tracking root (btree.Tree.Insert/Root), and keeping it
-	// in a wholly separate tree means entity keys can never leak into SearchCandidates'
-	// path-prefix scans, regardless of key-namespacing correctness. A nil entityIndex is
+	// comment above). Deliberately a SEPARATE *btree.Tree from pathIndex above (both are
+	// self-tracking *btree.Tree values as of issue #43, but keeping entity keys in a
+	// wholly separate tree from paths means they can never leak into SearchCandidates'
+	// path-prefix scans, regardless of key-namespacing correctness). A nil entityIndex is
 	// valid -- PutEntity/LookupEntity return codes.Unavailable rather than panicking.
 	entityIndex *btree.Tree
 
@@ -85,9 +91,9 @@ type Server struct {
 
 // NewServer constructs a Server backed by the given already-open engine dependencies. cat,
 // cs, and idAlloc must be non-nil (every in-scope RPC except GraphNeighbors/SearchCandidates
-// needs them); g, btreeStore, edgeLog, and entityIndex may all be nil (see their field docs
+// needs them); g, pathIndex, edgeLog, and entityIndex may all be nil (see their field docs
 // above).
-func NewServer(cat *catalog.Catalog, cs *catalog.ContentStore, idAlloc *catalog.IDAllocator, g *graph.CSRGraph, btreeStore *btree.NodeStore, btreeRootNodeID uint64, edgeLog *graph.EdgeLog, entityIndex *btree.Tree) (*Server, error) {
+func NewServer(cat *catalog.Catalog, cs *catalog.ContentStore, idAlloc *catalog.IDAllocator, g *graph.CSRGraph, pathIndex *btree.Tree, edgeLog *graph.EdgeLog, entityIndex *btree.Tree) (*Server, error) {
 	if cat == nil {
 		return nil, fmt.Errorf("rpc: NewServer: cat must not be nil")
 	}
@@ -98,15 +104,14 @@ func NewServer(cat *catalog.Catalog, cs *catalog.ContentStore, idAlloc *catalog.
 		return nil, fmt.Errorf("rpc: NewServer: idAlloc must not be nil")
 	}
 	return &Server{
-		cat:             cat,
-		cs:              cs,
-		idAlloc:         idAlloc,
-		g:               g,
-		btreeStore:      btreeStore,
-		btreeRootNodeID: btreeRootNodeID,
-		edgeLog:         edgeLog,
-		entityIndex:     entityIndex,
-		now:             time.Now,
+		cat:       cat,
+		cs:        cs,
+		idAlloc:     idAlloc,
+		g:           g,
+		pathIndex:   pathIndex,
+		edgeLog:     edgeLog,
+		entityIndex: entityIndex,
+		now:         time.Now,
 	}, nil
 }
 
@@ -131,9 +136,11 @@ func mapCatalogError(op string, err error) error {
 // means create a new file (a fresh fileID is allocated via the injected IDAllocator);
 // file_id != 0 means append to the existing file.
 //
-// See the Server doc comment for why PutSegment does not (and, given
-// PutSegmentRequest's current proto shape with no path field, cannot) perform any B+Tree
-// path-index insert.
+// On create, if the caller supplies path (PutSegmentRequest.path, added by issue #43's
+// commit 1/3), the CREATE branch below also computes PathHash and inserts the new file
+// into pathIndex (see Server.pathIndex's doc comment) so it is immediately discoverable
+// via SearchCandidates -- this closes GitHub issue #43 (before this fix, PathHash was
+// never set and no B+Tree insert ever happened here, regardless of path).
 func (s *Server) PutSegment(ctx context.Context, req *hivemindv1.PutSegmentRequest) (*hivemindv1.PutSegmentResponse, error) {
 	if req.GetFileId() == catalog.InvalidFileID {
 		fileID, err := s.idAlloc.Next()
@@ -141,14 +148,39 @@ func (s *Server) PutSegment(ctx context.Context, req *hivemindv1.PutSegmentReque
 			return nil, status.Errorf(codes.Internal, "rpc: PutSegment: allocating fileID: %v", err)
 		}
 
+		// path is used only on create (this branch), per proto/hivemind.proto's
+		// PutSegmentRequest.path doc comment (added by issue #43's commit 1/3): it computes
+		// PathHash below and indexes the file for SearchCandidates discovery. An empty path
+		// (a caller that doesn't supply one) leaves PathHash at its zero-value default and
+		// skips indexing entirely -- same as this handler's pre-issue-#43 behavior -- since
+		// there is no meaningful path to hash or index in that case.
+		path := req.GetPath()
+
 		rec := catalog.CatalogRecord{
 			FileID:         fileID,
 			CurrentVersion: 1,
 			SizeBytes:      uint64(len(req.GetContent())),
 			Status:         catalog.StatusActive,
 		}
+		if path != "" {
+			rec.PathHash = catalog.HashPath(path)
+		}
 		if _, err := s.cs.Create(rec, req.GetContent()); err != nil {
 			return nil, mapCatalogError("PutSegment (create)", err)
+		}
+
+		// Index the new file's path into pathIndex, the exact same B+Tree SearchCandidates
+		// reads from (see Server.pathIndex's doc comment above) -- this is the fix for
+		// GitHub issue #43: a newly created file is now genuinely discoverable via
+		// SearchCandidates immediately after this call returns, not just after some
+		// separate out-of-band indexing step. A nil pathIndex (no B+Tree configured for
+		// this Server) is a no-op, mirroring PutEntity/LookupEntity's nil-entityIndex
+		// convention: SearchCandidates without a pathIndex already returns an empty result
+		// set, so there is nothing useful to index into in that case either.
+		if path != "" && s.pathIndex != nil {
+			if err := s.pathIndex.Insert(path, fileID); err != nil {
+				return nil, status.Errorf(codes.Internal, "rpc: PutSegment: indexing path %q: %v", path, err)
+			}
 		}
 
 		return &hivemindv1.PutSegmentResponse{
@@ -176,6 +208,21 @@ func (s *Server) PutSegment(ctx context.Context, req *hivemindv1.PutSegmentReque
 // GetFile performs a full-file read at the current (pre-MVCC, single-version) snapshot.
 // Delegates to engine/catalog.ContentStore.Read for content and engine/catalog.Catalog.Get
 // for the file's CurrentVersion.
+//
+// path (GitHub issue #56 subtask 4.6.3.2): GetFileResponse.path is populated on a
+// best-effort basis via lookupPathForFileID, a reverse (fileID -> path) scan over the same
+// s.pathIndex B+Tree SearchCandidates already reads (see Server.pathIndex's field doc).
+// catalog.CatalogRecord (s.cat.Get above) cannot supply this itself: it stores only a
+// one-way PathHash (see engine/catalog/record.go's CatalogRecord.PathHash doc comment and
+// GitHub issue #43), never the literal path string, so pathIndex is the only place in this
+// server with real path text to give back. A miss (pathIndex is nil, or fileID has no
+// pathIndex entry -- e.g. it predates path-indexing, or was never inserted because
+// PutSegment's create call supplied path == "") is not an error: path is simply left "",
+// proto3's zero-value, exactly like SearchCandidates already treats a nil pathIndex as an
+// empty (not error) result. This closes the "GraphNeighbors-expansion-only file_ids have
+// no proto-carried path anywhere" gap disclosed by subtask 4.6.3.1 -- callers (e.g.
+// agents/query/wiring.py's GrpcGetFileClient) can now source a path for ANY file_id via
+// plain GetFile, not just ones already present in a SearchCandidates result.
 func (s *Server) GetFile(ctx context.Context, req *hivemindv1.GetFileRequest) (*hivemindv1.GetFileResponse, error) {
 	fileID := req.GetFileId()
 	if fileID == catalog.InvalidFileID {
@@ -192,10 +239,42 @@ func (s *Server) GetFile(ctx context.Context, req *hivemindv1.GetFileRequest) (*
 		return nil, mapCatalogError("GetFile (version lookup)", err)
 	}
 
+	path, err := s.lookupPathForFileID(fileID)
+	if err != nil {
+		return nil, mapCatalogError("GetFile (path lookup)", err)
+	}
+
 	return &hivemindv1.GetFileResponse{
 		Content: content,
 		Version: rec.CurrentVersion,
+		Path:    path,
 	}, nil
+}
+
+// lookupPathForFileID performs a best-effort reverse (fileID -> path) lookup against
+// s.pathIndex, returning "" (not an error) when pathIndex is nil or fileID has no entry in
+// it. See GetFile's doc comment above for why this exists (pathIndex is keyed path ->
+// fileID only -- there is no reverse index -- so this reuses the exact same
+// "PrefixScan(store, root, \"\") returns every entry" full-scan mechanism SearchCandidates'
+// candidatePool (search_candidates.go) and agents/ingestion/shortlist.py's empty-query pool
+// retrieval already rely on, rather than introducing a new access pattern. This is an
+// O(number of indexed paths) scan per GetFile call; acceptable at this project's current
+// scale (see docs/LLD/rpc.md), but a real reverse index would be the right fix if indexed-
+// path volume ever makes this a bottleneck.
+func (s *Server) lookupPathForFileID(fileID uint64) (string, error) {
+	if s.pathIndex == nil {
+		return "", nil
+	}
+	entries, err := btree.PrefixScan(s.pathIndex.Store, s.pathIndex.Root(), "")
+	if err != nil {
+		return "", fmt.Errorf("rpc: lookupPathForFileID: scanning pathIndex: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.FileID == fileID {
+			return entry.Path, nil
+		}
+	}
+	return "", nil
 }
 
 // ReadPartial performs a section-level read using the markdown header-offset cache.
@@ -322,19 +401,18 @@ func (s *Server) GraphNeighbors(ctx context.Context, req *hivemindv1.GraphNeighb
 // full decision history, subtasks 4.5.9.1-4.5.9.2):
 //   - the btree pool is assembled by candidatePool (search_candidates.go): one PrefixScan
 //     per DISTINCT term of req.Query (split via splitTerms, the same non-alphanumeric-run
-//     convention rankCandidates' tokenizeTerms uses for scoring, then de-duplicated via
-//     dedupTerms), merged and deduplicated by FileID/Path. perTermPoolCap/mergedPoolCap
-//     bound the merged pool's retained memory only, NOT scan cost (CHANGES_REQUESTED
-//     re-fix, .cdr/runs/2026-07-11/110-verification -- see search_candidates.go's doc
-//     comments on those two caps, dedupTerms, and maxQueryTerms for the full correction);
-//     the actual bound on worst-case scan cost is dedupTerms (a repeated term scans once,
-//     not once per repetition) plus maxQueryTerms/validateQueryTermCount, below, which
-//     rejects a request with a pathological number of distinct terms with
-//     codes.InvalidArgument before candidatePool issues a single PrefixScan call. A
-//     zero-term query (e.g. "") is a special case scanning the literal empty prefix once,
-//     unbounded -- fully backward compatible with task-3.2.2's original single-token-query
-//     usage and agents/ingestion/shortlist.py's query="" pool-retrieval usage (task-3.4.2),
-//     neither of which this change affects;
+//     convention rankCandidates' tokenizeTerms uses for scoring, then deduplicated via
+//     dedupTerms so a repeated term is scanned only once), merged and deduplicated by
+//     FileID/Path. Before candidatePool is even called, this handler rejects (below) a
+//     query with more than maxQueryTerms distinct terms (search_candidates.go), which is
+//     the actual bound on candidatePool's worst-case scan COST (number of PrefixScan
+//     calls) -- perTermPoolCap/mergedPoolCap additionally bound RETAINED pool memory, but
+//     (per a CHANGES_REQUESTED re-fix, .cdr/runs/2026-07-11/110-verification) do NOT bound
+//     scan cost on their own, since btree.PrefixScan already completes its full traversal
+//     before either cap is applied. A zero-term query (e.g. "") is a special case scanning
+//     the literal empty prefix once, unbounded -- fully backward compatible with
+//     task-3.2.2's original single-token-query usage and agents/ingestion/shortlist.py's
+//     query="" pool-retrieval usage (task-3.4.2), neither of which this change affects;
 //   - the FULL req.Query string (all its terms, not just the first) is tokenized and used
 //     to rank the resulting merged pool, via rankCandidates (search_candidates.go,
 //     unmodified by 4.5.9.2). This lets a genuinely multi-term natural-language query
@@ -358,7 +436,7 @@ func (s *Server) GraphNeighbors(ctx context.Context, req *hivemindv1.GraphNeighb
 // This interpretation choice is called out here explicitly since it is not dictated by the
 // proto contract itself.
 func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCandidatesRequest) (*hivemindv1.SearchCandidatesResponse, error) {
-	if s.btreeStore == nil {
+	if s.pathIndex == nil {
 		return &hivemindv1.SearchCandidatesResponse{}, nil
 	}
 
@@ -377,7 +455,7 @@ func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCan
 		return nil, status.Errorf(codes.InvalidArgument, "rpc: SearchCandidates: %v", err)
 	}
 
-	entries, err := candidatePool(s.btreeStore, s.btreeRootNodeID, req.GetQuery())
+	entries, err := candidatePool(s.pathIndex.Store, s.pathIndex.Root(), req.GetQuery())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "rpc: SearchCandidates: %v", err)
 	}
@@ -394,8 +472,8 @@ func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCan
 // entityIndexPrefix namespaces every entity.idx key under a leading NUL byte, which sorts
 // before every ordinary printable path SearchCandidates' own tree stores -- belt-and-
 // suspenders isolation, since entityIndex is already a wholly separate *btree.Tree from
-// btreeStore/btreeRootNodeID (see Server's field docs above), not something either
-// PutEntity/LookupEntity or SearchCandidates actually depends on for correctness today.
+// pathIndex (see Server's field docs above), not something either PutEntity/LookupEntity
+// or SearchCandidates actually depends on for correctness today.
 const entityIndexPrefix = "\x00entity\x00"
 
 // entityKeyPrefix returns the common key prefix every (entityName, *) association is

@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 )
 
 // RecordStatus is the lifecycle status of a catalog record.
@@ -48,6 +49,23 @@ type CatalogRecord struct {
 	ParentTopicID uint64
 	// LastModified is the last-modified timestamp, stored as Unix nanoseconds.
 	LastModified int64
+}
+
+// HashPath computes the 64-bit PathHash value for a topic file's path (see
+// CatalogRecord.PathHash's doc comment above: "a simple uint64 hash is sufficient for a
+// first pass; not a full content hash"). Uses FNV-1a (hash/fnv, Go stdlib), a standard,
+// deterministic, allocation-free non-cryptographic hash -- no prior convention for
+// hashing a path into PathHash existed anywhere in this codebase before GitHub issue #43
+// (grepped: PathHash was previously only ever set to ad hoc placeholder values in test
+// fixtures, e.g. fileID*31 in engine/integration_test.go, never derived from a real path
+// string), so this is the first real definition of that convention. Callers that need to
+// set PathHash from a real path (e.g. engine/rpc/server.go's PutSegment CREATE handler)
+// should call this rather than hashing paths themselves, so every PathHash in the system
+// is computed the same way.
+func HashPath(path string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(path)) // fnv.New64a's Write never returns an error.
+	return h.Sum64()
 }
 
 // Fixed byte offsets/widths for the encoded record layout. All multi-byte integers are
