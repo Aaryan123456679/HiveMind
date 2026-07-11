@@ -1,0 +1,40 @@
+{
+  "run_dir": ".cdr/runs/2026-07-11/097-implementation",
+  "subtask": "task-4.6.3.1",
+  "issue": 56,
+  "milestone": 10,
+  "commit": "2b5e7103f30dde17e3bb269a508bd957e0eda017",
+  "title": "Fix GetFileFn proto-shape mismatch (F-4.6.1-2) + add agents/query/wiring.py real gRPC callables (Python-side half of F-4.6.1-1)",
+  "files_changed": [
+    "agents/query/pipeline.py",
+    "agents/query/test_pipeline.py",
+    "agents/query/test_query_e2e.py",
+    "agents/query/wiring.py",
+    "agents/query/test_wiring.py"
+  ],
+  "findings_closed": ["F-4.6.1-2", "F-4.6.1-1 (Python-side callables only)"],
+  "findings_forwarded": [
+    {
+      "id": "F-4.6.1-1-remainder",
+      "description": "api/main.go's notImplementedPipeline is still unreplaced. Closing it requires a new proto/hivemind.proto RPC through which api/'s Go /query route can invoke agents/query/pipeline.py's run_query_pipeline (Python as gRPC server, mirroring ProposeSplit's reversed direction -- no such RPC exists today), regenerated Go+Python stubs, a runnable Python server process, and a real Go gRPC client replacing notImplementedPipeline in api/main.go.",
+      "suggested_next_subtask": "task-4.6.3.2"
+    },
+    {
+      "id": "F-4.6.2-1",
+      "description": "test_query_e2e.py still only uses k=1; the topic-expansion branch (expand_insufficient_topics) remains untested end-to-end on-disk. Needs a k=2 (or otherwise expansion-triggering) e2e test extending test_query_e2e.py's real-corpus pattern.",
+      "suggested_next_subtask": "task-4.6.3.3"
+    },
+    {
+      "id": "residual-path-gap",
+      "description": "For file_ids reachable only via GraphNeighbors expansion (never present in select_top_k's selected TopicCandidates), no message anywhere in proto/hivemind.proto (Neighbor, GetFileResponse) carries a path. pipeline.py's _build_selected_markdown now falls back to a disclosed placeholder header for these ids rather than fabricating a path. Closing this for good needs either a path field added to GetFileResponse/Neighbor, or a new path-lookup RPC -- out of scope for 4.6.3.1, forwarded alongside task-4.6.3.2.",
+      "suggested_next_subtask": "task-4.6.3.2 or a dedicated follow-up"
+    }
+  ],
+  "self_consistency": {
+    "test_command": "agents/.venv/bin/python -m pytest -q",
+    "result": "304 passed, 0 failed",
+    "environment_note": "System/anaconda python has a pre-existing, unrelated protobuf gencode/runtime version mismatch causing hivemind_pb2 import failures (reproduces identically on already-committed agents/ingestion/test_shortlist.py's grpc tests) -- not introduced by this run. Use agents/.venv/bin/python, not the anaconda python, to reproduce these results."
+  },
+  "verification_not_performed": true,
+  "note_to_verifier": "Per invariant I4, this agent did not verify its own work. Please verify: (1) GetFileFn's new shape and path_by_id sourcing in pipeline.py, (2) wiring.py's three Grpc*Client translations against proto/hivemind.proto's actual message shapes, (3) that test_pipeline.py's updated fixtures/assertions are not vacuous, (4) that api/ and proto/ are genuinely untouched (git diff scope), (5) the two forwarded findings above are legitimately out of scope for a single commit rather than corner-cutting."
+}
