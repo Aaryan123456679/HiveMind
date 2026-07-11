@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-098-implementation",
+  "from_agent": "implementation",
+  "to_agent": "verification",
+  "subtask": "4.5.9.1",
+  "issue": 47,
+  "milestone": 10,
+  "commit": "19c14288225530a1452749e0ca6eac4de2483b48",
+  "commit_parent": "b32042e050f02ce9f1e0930a3943ba72f8c41a02",
+  "change_type": "doc-only",
+  "files_changed": [
+    "docs/LLD/btree.md",
+    "docs/LLD/query-agent.md"
+  ],
+  "decision_summary": "Option (b) chosen: engine/rpc/search_candidates.go will issue one btree.PrefixScan per whitespace-separated query term and merge the resulting ScanEntry pools (dedup by FileID/Path) before ranking with the existing, unmodified rankCandidates term-overlap scorer. engine/btree is not extended with a new primitive (rejected option a); the limitation is not merely accepted as-is (rejected option c). Residual gap disclosed and accepted: a query with no term matching any indexed path prefix still returns zero candidates.",
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-11/098-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-11/098-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-11/098-implementation/impact-analysis.md",
+    "plan": ".cdr/runs/2026-07-11/098-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-11/098-implementation/validation-matrix.md",
+    "self_consistency": ".cdr/runs/2026-07-11/098-implementation/self-consistency.md",
+    "source_issue": "gh issue view 47",
+    "related_issue_no_overlap": "gh issue view 56 (concurrent, no file overlap, material context only)",
+    "prior_regression_entry": ".cdr/index/regression.jsonl (subtask 4.2.1, issue #21, commit b8ebc64, line tagged design_limitation/non_blocking)",
+    "prior_pending_entry": ".cdr/memory/pending.md (top entry, prior to this dispatch)",
+    "edited_doc_sections": [
+      "docs/LLD/btree.md#known-risks",
+      "docs/LLD/query-agent.md#known-risks"
+    ]
+  },
+  "verification_focus": [
+    "Confirm docs/LLD/btree.md and docs/LLD/query-agent.md are the correct target doc(s) per the issue's acceptance criteria wording ('and/or').",
+    "Confirm the decision text accurately reflects agents/query/topic_selector.py's real current behavior (it does not call SearchCandidates yet) -- re-read the file directly, do not trust only this handoff's summary.",
+    "Confirm the decision text accurately reflects engine/rpc/search_candidates.go's real current behavior (prefixTerm uses fields[0] only; rankCandidates/termOverlapScore already score against the full query term set).",
+    "Confirm this commit touches ONLY docs/LLD/btree.md, docs/LLD/query-agent.md, and this run's own .cdr/runs/2026-07-11/098-implementation/* artifacts -- no engine/rpc, engine/btree, or agents/query source files.",
+    "Confirm subtask 4.5.9.2 (actual code implementation) was correctly NOT attempted in this commit.",
+    "Note for verifier: issue #56 is running concurrently on unrelated files (agents/query/pipeline.py, agents/query/wiring.py, api/); do not conflate its diffs with this run's scope."
+  ],
+  "not_in_scope_confirmed_deferred": [
+    "engine/rpc/search_candidates.go code change (merge-and-rank implementation)",
+    "engine/rpc/search_candidates_test.go new TestSearchCandidatesMultiWordQuery",
+    "engine/btree/scan.go (expected unchanged, to be confirmed at 4.5.9.2 time)"
+  ],
+  "self_verification_performed": false,
+  "note_on_invariant_i4": "This agent did not verify its own work. Independent verification is required via /cdr:verify before this decision is considered final."
+}

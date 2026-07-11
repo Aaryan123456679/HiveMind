@@ -42,6 +42,23 @@ A custom on-disk B+Tree, persisted at `index/name.idx`, mapping topic path strin
 - None unique to this module beyond the general correctness bar for latch-crabbing
   implementations (must be validated under `go test -race`, per the engine-wide convention in
   [AGENT.md](../../AGENT.md)).
+- **`PrefixScan` is a literal-prefix-only query primitive — no multi-term/fuzzy query support.**
+  `PrefixScan` matches only paths whose leading bytes equal a supplied prefix string; it has no
+  concept of "any of these terms" or "these terms in any order". This was flagged as a
+  `design_limitation` (non-blocking) during task 4.2.1 (issue #21, commit `b8ebc64`,
+  `.cdr/index/regression.jsonl`), because `engine/rpc/search_candidates.go`'s term-overlap
+  ranking delegates candidate-**pool selection** entirely to a single `PrefixScan` call on the
+  query's first whitespace-separated token — so a multi-word natural-language query whose first
+  token is not itself a path-leading segment (e.g. "how do I configure the graph database")
+  returns zero candidates before term-overlap ranking ever runs.
+  - **Decision (issue #47, subtask 4.5.9.1)**: `btree` itself is **not** extended with a new
+    non-prefix query primitive. The chosen fix lives one layer up, in the RPC caller
+    (`engine/rpc/search_candidates.go`): issue one `PrefixScan` per whitespace-separated query
+    term (not just the first) and merge the resulting `ScanEntry` sets (deduplicated by
+    `FileID`/`Path`) into one pool before ranking. `PrefixScan`'s signature and semantics are
+    unchanged by this decision — see [query-agent.md](query-agent.md#known-risks) for the full
+    rationale and the still-open residual gap this does not close. Actual implementation is
+    deferred to subtask 4.5.9.2 (this subtask, 4.5.9.1, is decision + documentation only).
 
 ## Cross-references
 
