@@ -11,6 +11,6 @@
   "last_completed_step": "handoff",
   "started_at": "2026-07-11T00:00:00Z",
   "ended_at": "2026-07-11T12:20:00Z",
-  "note": "Code change landed in commit 13cb049 via shared-index sweep by a concurrent agent's commit, not this agent's own git commit invocation (transient index.lock race). Verified via git diff (empty) and git show 13cb049. This run's own commit (below) is docs-only, recording the anomaly for the record, following the established pattern in this repo.",
-  "docs_commit": "<see git log after this run's own commit>"
+  "note": "Code change (engine/split/split_race_test.go) landed in commit 13cb049 via shared-index sweep by a concurrent agent's commit, not this agent's own git commit invocation (transient index.lock race). This run's own CDR artifacts (this directory) subsequently ALSO landed via a second shared-index sweep, in commit e4ab0e0 (a different concurrent agent's unrelated 4.5.3.3 handoff commit). Both verified byte-for-byte via `git diff HEAD` (empty in both cases) before concluding no re-commit was needed. No git reset/restore/amend performed at any point.",
+  "docs_commit": "e4ab0e06fb0834dfb37d001266a427a2e186204f (unintentional sweep, not authored by this agent's own commit invocation)"
 }
