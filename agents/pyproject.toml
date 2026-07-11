@@ -15,6 +15,13 @@ dependencies = [
     "pydantic>=2.9",
     "httpx>=0.27",
     "pymupdf>=1.24",
+    # Issue #28 subtask 5.3.5 (agents/eval/run_live_benchmark.py): auto-loads a gitignored
+    # `.env` file (if present) into os.environ at process start, purely for local-clone
+    # convenience so a fresh checkout doesn't require manually exporting
+    # OPENROUTER_API_KEY/GEMINI_API_KEY before a real judge-provider run. Does not change the
+    # security boundary: OpenRouterClient/GeminiClient still resolve keys exclusively via
+    # os.environ (unchanged); this only pre-populates it. No-op if no .env file exists.
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

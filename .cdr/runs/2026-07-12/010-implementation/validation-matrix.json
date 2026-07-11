@@ -1,0 +1,65 @@
+{
+  "subtask": "task-5.3.5",
+  "rows": [
+    {
+      "requirement": "Constraint (a): path casing preserved unmodified",
+      "test": "test_load_live_corpus_preserves_original_title_casing",
+      "status": "covered"
+    },
+    {
+      "requirement": "Constraint (b): PipelineError -> [] mapping",
+      "test": "test_retriever_maps_pipeline_error_to_empty_list",
+      "status": "covered"
+    },
+    {
+      "requirement": "file_id -> doc_id mapping, unknown ids skipped",
+      "test": "test_retriever_maps_selected_file_ids_back_to_doc_ids",
+      "status": "covered"
+    },
+    {
+      "requirement": "Constraint (c): resilient retry-until-bare-JSON, temperature bump on retry",
+      "test": "test_resilient_client_returns_first_valid_json_attempt, test_resilient_client_returns_last_attempt_if_never_valid, test_resilient_client_single_valid_first_attempt_no_retry",
+      "status": "covered"
+    },
+    {
+      "requirement": "Fail-closed cost cap: call never attempted once cap reached",
+      "test": "test_cost_capped_interceptor_blocks_once_cap_reached",
+      "status": "covered"
+    },
+    {
+      "requirement": "Free provider always allowed regardless of cap",
+      "test": "test_cost_capped_interceptor_allows_free_provider_regardless_of_cap",
+      "status": "covered"
+    },
+    {
+      "requirement": "sum_real_cost_usd sums resolved costs",
+      "test": "test_sum_real_cost_usd_sums_resolved_costs",
+      "status": "covered"
+    },
+    {
+      "requirement": "Constraint (d): judge client never wrapped in ResilientLLMClient, for every --judge-provider value",
+      "test": "test_judge_client_never_wrapped_in_resilient_client[ollama|openrouter|gemini]",
+      "status": "covered"
+    },
+    {
+      "requirement": "_looks_like_bare_json helper correctness",
+      "test": "test_looks_like_bare_json_true_for_valid_json, test_looks_like_bare_json_false_for_markdown_fenced, test_looks_like_bare_json_false_for_prose_prefixed, test_looks_like_bare_json_false_for_empty_string",
+      "status": "covered"
+    },
+    {
+      "requirement": "No regressions in sibling benchmark harness",
+      "test": "full agents/eval/ suite (179 passed, 0 failed)",
+      "status": "covered"
+    },
+    {
+      "requirement": "Lint clean",
+      "test": "ruff check agents/eval/run_live_benchmark.py agents/eval/test_run_live_benchmark.py",
+      "status": "covered"
+    },
+    {
+      "requirement": "Real end-to-end live run against actual Go engine + real corpus + real paid judge",
+      "test": "not exercised in this run (requires real infra/paid API keys) -- explicitly out of scope for automated CI per acceptance criteria (2); deferred to a manually-gated live run by the orchestrator/user",
+      "status": "not_covered_by_design"
+    }
+  ]
+}

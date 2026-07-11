@@ -1,0 +1,26 @@
+{
+  "subtask": "task-5.3.5",
+  "note": "Internal sanity only (build green, matrix covered) -- NOT verification. Per invariant I4, the implementation agent does not verify its own work; /cdr:verify is the delegated verification step.",
+  "checks": [
+    {
+      "check": "New test file passes in isolation",
+      "command": "python3 -m pytest eval/test_run_live_benchmark.py -q",
+      "result": "16 passed"
+    },
+    {
+      "check": "Full agents/eval/ suite passes (no regressions)",
+      "command": "python3 -m pytest eval/ -q",
+      "result": "179 passed, 5 warnings (pre-existing unrelated pymupdf SwigPy deprecation warnings)"
+    },
+    {
+      "check": "Lint clean on new files",
+      "command": "python3 -m ruff check eval/run_live_benchmark.py eval/test_run_live_benchmark.py",
+      "result": "All checks passed!"
+    },
+    {
+      "check": "Validation matrix coverage",
+      "result": "All in-scope rows (constraints a-d, helper correctness, no-regression) covered; the single not-covered row (real live run against real infra/paid APIs) is explicitly out of scope for CI per acceptance criteria (2), deferred to a manually-gated run."
+    }
+  ],
+  "status": "self_consistent"
+}

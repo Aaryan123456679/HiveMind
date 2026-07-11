@@ -1,0 +1,36 @@
+{
+  "subtask": "task-5.3.5",
+  "new_files": [
+    "agents/eval/run_live_benchmark.py",
+    "agents/eval/test_run_live_benchmark.py"
+  ],
+  "modified_files": [
+    {
+      "path": "agents/pyproject.toml",
+      "change": "Added declared dependency \"python-dotenv>=1.0\" to [project].dependencies, with an explanatory comment tying it to issue #28 subtask 5.3.5 and clarifying the security boundary is unchanged."
+    }
+  ],
+  "unmodified_dependencies_reused": [
+    "agents/eval/run_benchmark.py",
+    "agents/eval/traversal_precision.py",
+    "agents/eval/chart.py",
+    "agents/eval/cost_latency.py",
+    "agents/eval/ground_truth.py",
+    "agents/eval/llm_judge.py",
+    "agents/eval/pipeline.py",
+    "agents/llm/factory.py",
+    "agents/llm/interceptor.py",
+    "agents/llm/client.py",
+    "agents/query/pipeline.py",
+    "agents/query/wiring.py",
+    "agents/ingestion/wiring.py",
+    "agents/ingestion/normalize_pdf.py",
+    "engine/cmd/smokeserver"
+  ],
+  "regression_surface": "Zero. Diff only adds two new files under agents/eval/ and one additive dependency-list entry in agents/pyproject.toml; no existing production or test file is modified.",
+  "risk_notes": [
+    "run_live_benchmark.py performs real subprocess (Go build/run) and real network (gRPC, and optionally paid LLM API) calls when actually executed -- but this is gated behind explicit CLI invocation by a human/orchestrator, never imported/executed by any test or CI job by default.",
+    "test_run_live_benchmark.py exercises only pure-Python logic (retry policy, PipelineError mapping, path casing, cost-cap enforcement, judge-wrapping invariant) via mocks/monkeypatches -- zero real infra, zero real network, zero .env reads.",
+    "python-dotenv is a new third-party dependency; it is a small, widely-used, zero-transitive-dependency library with no known conflicts with existing pinned deps (fastapi/uvicorn/grpcio/pydantic/httpx/pymupdf)."
+  ]
+}

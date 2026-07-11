@@ -1,0 +1,34 @@
+{
+  "subtask": "task-5.3.5",
+  "run_dir": ".cdr/runs/2026-07-12/010-implementation",
+  "status": "completed",
+  "next_step": "/cdr:verify --subtask 5.3.5",
+  "self_verification_performed": false,
+  "invariant_i4_note": "This implementation agent did not verify its own work. Verification is delegated to /cdr:verify.",
+  "artifacts": {
+    "new_files": [
+      "agents/eval/run_live_benchmark.py",
+      "agents/eval/test_run_live_benchmark.py"
+    ],
+    "modified_files": [
+      "agents/pyproject.toml"
+    ]
+  },
+  "key_pointers": {
+    "constraint_a_path_casing": "agents/eval/run_live_benchmark.py: load_live_corpus() -- doc_titles[doc_id] = entry[\"primary_topic\"][\"title\"] (unmodified casing)",
+    "constraint_b_pipeline_error": "agents/eval/run_live_benchmark.py: LiveHivemindRetriever.__call__ -- except PipelineError: return []",
+    "constraint_c_resilient_retry": "agents/eval/run_live_benchmark.py: class ResilientLLMClient",
+    "constraint_d_judge_never_wrapped": "agents/eval/run_live_benchmark.py: _build_judge_config() -- judge_llm_client never passed through ResilientLLMClient; tested in agents/eval/test_run_live_benchmark.py::test_judge_client_never_wrapped_in_resilient_client",
+    "cost_cap_enforcement": "agents/eval/run_live_benchmark.py: class CostCappedInterceptor",
+    "dotenv_addendum": "agents/eval/run_live_benchmark.py: main() calls load_dotenv() first; agents/pyproject.toml adds python-dotenv>=1.0"
+  },
+  "test_results": {
+    "new_test_file": "agents/eval/test_run_live_benchmark.py -- 16 passed",
+    "full_eval_suite": "agents/eval/ -- 179 passed, 5 warnings (pre-existing pymupdf deprecation warnings, unrelated)",
+    "lint": "ruff check on both new files -- all checks passed"
+  },
+  "index_updates": [
+    ".cdr/index/task.jsonl: added task-5.3.5 entry, state=implemented, commit=null pending this handoff's commit hash update by the caller/cdr-commit step"
+  ],
+  "commit": "PENDING -- see final response for the actual commit hash created immediately after this handoff.json was written"
+}
