@@ -79,13 +79,13 @@ def _seed_corpus(tmp_path: Path) -> dict[str, int]:
 
 def _make_get_file(tmp_path: Path, id_to_path: dict[int, str]):
     """Return a `GetFileFn` that reads the real seeded file's content off disk on every call
-    (genuine I/O against the corpus, not a canned in-memory dict). `file_id -> content` only,
-    matching `GetFileFn`'s real (post-4.6.3.1) shape -- see `pipeline.py`'s `GetFileFn`
-    proto-shape fix disclosure for why path is no longer part of this callable's contract."""
+    (genuine I/O against the corpus, not a canned in-memory dict). `file_id -> (path,
+    content)`, matching `GetFileFn`'s real (post-4.6.3.2) shape -- see `pipeline.py`'s
+    "Residual gap -- closed by issue #56 subtask 4.6.3.2" docstring section."""
 
-    def get_file(file_id: int) -> str:
+    def get_file(file_id: int) -> tuple[str, str]:
         path = id_to_path[file_id]
-        return (tmp_path / path).read_text()
+        return path, (tmp_path / path).read_text()
 
     return get_file
 

@@ -45,12 +45,14 @@ class GetFileRequest(_message.Message):
     def __init__(self, file_id: _Optional[int] = ...) -> None: ...
 
 class GetFileResponse(_message.Message):
-    __slots__ = ("content", "version")
+    __slots__ = ("content", "version", "path")
     CONTENT_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
     content: bytes
     version: int
-    def __init__(self, content: _Optional[bytes] = ..., version: _Optional[int] = ...) -> None: ...
+    path: str
+    def __init__(self, content: _Optional[bytes] = ..., version: _Optional[int] = ..., path: _Optional[str] = ...) -> None: ...
 
 class ReadPartialRequest(_message.Message):
     __slots__ = ("file_id",)
@@ -195,3 +197,19 @@ class LookupEntityResponse(_message.Message):
     FILE_IDS_FIELD_NUMBER: _ClassVar[int]
     file_ids: _containers.RepeatedScalarFieldContainer[int]
     def __init__(self, file_ids: _Optional[_Iterable[int]] = ...) -> None: ...
+
+class RunQueryRequest(_message.Message):
+    __slots__ = ("query", "history")
+    QUERY_FIELD_NUMBER: _ClassVar[int]
+    HISTORY_FIELD_NUMBER: _ClassVar[int]
+    query: str
+    history: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, query: _Optional[str] = ..., history: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class RunQueryResponse(_message.Message):
+    __slots__ = ("answer", "citations")
+    ANSWER_FIELD_NUMBER: _ClassVar[int]
+    CITATIONS_FIELD_NUMBER: _ClassVar[int]
+    answer: str
+    citations: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, answer: _Optional[str] = ..., citations: _Optional[_Iterable[str]] = ...) -> None: ...

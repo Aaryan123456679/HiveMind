@@ -48,16 +48,27 @@ sources each `file_id`'s `path` from the already-known `TopicCandidate.path` val
 `path_by_id` mapping built in `run_query_pipeline` before `combine_and_cap` runs, rather than
 asking `get_file`/`GetFileResponse` to invent a field neither has.
 
-Residual, honestly-disclosed gap: `combine_and_cap()`'s own module comment already documents
-that its output can include `file_id`s reachable **only** via a `GraphNeighbors` expansion
-(never present in `selected`) -- and `proto/hivemind.proto`'s `Neighbor` message (like
-`GetFileResponse`) also carries no `path` field. For those `file_id`s specifically, no
-message anywhere in the current proto contract carries a path at all, so `path_by_id` cannot
-resolve them; `_build_selected_markdown` falls back to a clearly-labeled placeholder header
-(`"## File: (path unknown; file_id=<id>)"`) rather than fabricating a path. Closing this
-residual case for good would need a new path-lookup RPC or a `path` field added to
-`GetFileResponse`/`Neighbor` -- out of scope here, forwarded to task-4.6.3.2 per this run's
-handoff.
+Residual gap -- closed by issue #56 subtask 4.6.3.2
+----------------------------------------------------
+Subtask 4.6.3.1 (above) disclosed a residual gap: `combine_and_cap()`'s own module comment
+already documents that its output can include `file_id`s reachable **only** via a
+`GraphNeighbors` expansion (never present in `selected`), and neither `GetFileResponse` nor
+`Neighbor` carried a `path` field at the time, so `path_by_id` (sourced only from
+`TopicCandidate.path`) could not resolve those `file_id`s.
+
+Subtask 4.6.3.2 closes this: `proto/hivemind.proto`'s `GetFileResponse` now additionally
+carries `path` (a best-effort reverse pathIndex lookup performed server-side, see
+`engine/rpc/server.go`'s `GetFile`/`lookupPathForFileID`), so `GetFileFn` is changed back to
+`Callable[[int], tuple[str, str]]` (`file_id -> (path, content)`) -- the *original* issue #25
+shape, now legitimately satisfiable by a real `GetFile`-backed implementation
+(`agents/query/wiring.py`'s `GrpcGetFileClient`). `_build_selected_markdown` still prefers
+`path_by_id` (the cheap, already-known `TopicCandidate.path` for `file_id`s reachable from
+`select_top_k`'s own output) to avoid an unnecessary reliance on `get_file`'s path for the
+common case, but now falls back to `get_file`'s own returned path -- rather than the
+`_UNKNOWN_PATH_TEMPLATE` placeholder -- for `file_id`s absent from `path_by_id`. The
+placeholder itself is retained as a final fallback only for the now-narrower case of a
+`file_id` with genuinely no indexed path anywhere (e.g. `GetFileResponse.path == ""`, see
+`engine/rpc/server.go`'s `GetFile` doc comment for when this can still happen).
 
 Call order (per this subtask's test spec: "assert correct call order ... end-to-end")
 ------------------------------------------------------------------------------------------
@@ -105,13 +116,15 @@ from query.topic_selector import (
 if TYPE_CHECKING:
     from llm.client import LLMClient
 
-#: Injection point for resolving a `combine_and_cap()`-produced `file_id` back to its markdown
-#: content, for building `synthesize_answer()`'s `selected_markdown` input. `file_id -> content`
-#: only (not `(path, content)`) -- matches `proto/hivemind.proto`'s real `GetFileResponse`
-#: shape exactly (`content`/`version`, no `path`); see module docstring's `GetFileFn` proto-shape
-#: fix disclosure (closes F-4.6.1-2). `agents/query/wiring.py`'s `GrpcGetFileClient` is the real,
-#: gRPC-backed implementation of this shape; tests supply a plain fixture function.
-GetFileFn = Callable[[int], str]
+#: Injection point for resolving a `combine_and_cap()`-produced `file_id` back to its path and
+#: markdown content, for building `synthesize_answer()`'s `selected_markdown` input.
+#: `file_id -> (path, content)` -- matches `proto/hivemind.proto`'s real `GetFileResponse`
+#: shape as of issue #56 subtask 4.6.3.2 (`content`/`version`/`path`); see module docstring's
+#: "Residual gap -- closed by issue #56 subtask 4.6.3.2" section for why this reverted from the
+#: content-only shape subtask 4.6.3.1 temporarily used. `agents/query/wiring.py`'s
+#: `GrpcGetFileClient` is the real, gRPC-backed implementation of this shape; tests supply a
+#: plain fixture function.
+GetFileFn = Callable[[int], tuple[str, str]]
 
 #: Placeholder header path used by `_build_selected_markdown` for a `file_id` reachable only via
 #: `GraphNeighbors` expansion (never present in `select_top_k`'s output), for which no message in
@@ -157,7 +170,8 @@ def _build_selected_markdown(
     get_file: GetFileFn,
 ) -> str:
     """Resolve each `file_id` in `file_ids` into a `"## File: <path>"`-headered markdown block
-    (content via `get_file`, path via `path_by_id`), and join them in order.
+    (content always via `get_file`; path preferentially via `path_by_id`, falling back to
+    `get_file`'s own returned path), and join them in order.
 
     Matches `synthesizer.py`'s documented file-path header format
     (`^##\\s*File:\\s*(?P<path>.+?)\\s*$`) exactly, so `synthesize_answer`'s own
@@ -167,19 +181,28 @@ def _build_selected_markdown(
         file_ids: `combine_and_cap()`'s output, in order.
         path_by_id: Maps `file_id -> path` for every `file_id` reachable from
             `select_top_k`'s output (i.e. every `TopicCandidate` `search_candidates`
-            returned that survived selection). See module docstring's `GetFileFn`
-            proto-shape fix disclosure for why this is the only reliable path source.
-        get_file: Callable satisfying `GetFileFn` (`file_id -> content`).
+            returned that survived selection). Preferred over `get_file`'s path (cheaper --
+            no extra proto-carried lookup needed) whenever it has an entry.
+        get_file: Callable satisfying `GetFileFn` (`file_id -> (path, content)`). Always
+            called once per `file_id` for `content`; its returned `path` is used as a
+            fallback for any `file_id` absent from `path_by_id` (see module docstring's
+            "Residual gap -- closed by issue #56 subtask 4.6.3.2" section).
 
     Returns:
-        The joined markdown blocks. A `file_id` absent from `path_by_id` (reachable only via
-        `GraphNeighbors` expansion) gets `_UNKNOWN_PATH_TEMPLATE`'s placeholder header instead
-        of a real path -- see module docstring's residual-gap disclosure.
+        The joined markdown blocks. A `file_id` absent from `path_by_id` AND for which
+        `get_file` itself returns an empty path (genuinely no indexed path anywhere, see
+        `engine/rpc/server.go`'s `GetFile` doc comment) gets `_UNKNOWN_PATH_TEMPLATE`'s
+        placeholder header instead of a real path -- see module docstring's residual-gap
+        disclosure.
     """
     blocks: list[str] = []
     for file_id in file_ids:
-        path = path_by_id.get(file_id) or _UNKNOWN_PATH_TEMPLATE.format(file_id=file_id)
-        content = get_file(file_id)
+        get_file_path, content = get_file(file_id)
+        path = (
+            path_by_id.get(file_id)
+            or get_file_path
+            or _UNKNOWN_PATH_TEMPLATE.format(file_id=file_id)
+        )
         blocks.append(f"## File: {path}\n{content}\n")
     return "\n".join(blocks)
 
@@ -216,10 +239,12 @@ def run_query_pipeline(
             implementation.
         graph_neighbors: Callable satisfying `topic_selector.GraphNeighborsFn`, forwarded to
             `expand_insufficient_topics`.
-        get_file: Callable satisfying `GetFileFn` (`file_id -> content`), called once per
-            entry in the final selected `file_id` list. See module docstring's `GetFileFn`
-            proto-shape fix disclosure -- path is sourced from `TopicCandidate.path`, not
-            from this callable.
+        get_file: Callable satisfying `GetFileFn` (`file_id -> (path, content)`), called once
+            per entry in the final selected `file_id` list. Path is preferentially sourced
+            from `TopicCandidate.path` (cheaper), falling back to this callable's own
+            returned path for `file_id`s only reachable via `GraphNeighbors` expansion --
+            see module docstring's "Residual gap -- closed by issue #56 subtask 4.6.3.2"
+            section.
         k: Forwarded to `select_top_k` and `combine_and_cap`. Defaults to `DEFAULT_K` (3).
         max_candidates: The `max_results` argument passed to `search_candidates`. Defaults to
             `DEFAULT_MAX_CANDIDATES` (20).

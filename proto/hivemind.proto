@@ -78,6 +78,18 @@ message GetFileRequest {
 message GetFileResponse {
   bytes content = 1;
   uint64 version = 2;
+  // path is the file's topic path (e.g. "docs/beta/graph-database.md"), added by GitHub
+  // issue #56 subtask 4.6.3.2. Sourced server-side from the same pathIndex B+Tree
+  // SearchCandidates already reads (see engine/rpc/server.go's GetFile doc comment) via a
+  // reverse (fileID -> path) lookup -- best-effort: a file with no pathIndex entry (e.g.
+  // pathIndex is nil, or the file predates path-indexing) returns "" here, matching
+  // proto3's zero-value convention rather than erroring the whole GetFile call over a
+  // missing, non-essential field. This closes the "file_ids reachable only via
+  // GraphNeighbors expansion have no proto-carried path" gap disclosed by issue #56
+  // subtask 4.6.3.1 (agents/query/pipeline.py's _build_selected_markdown fallback
+  // placeholder): agents/query/wiring.py's GrpcGetFileClient can now return this path for
+  // ANY file_id, not just ones present in SearchCandidates' selected TopicCandidates pool.
+  string path = 3;
 }
 
 // ReadPartial performs a section-level read using the markdown
@@ -216,6 +228,33 @@ message LookupEntityResponse {
   repeated uint64 file_ids = 1;
 }
 
+// RunQuery invokes the full Python query pipeline (agents/query/pipeline.py's
+// run_query_pipeline: intent_refiner -> topic_selector -> synthesizer), added by GitHub
+// issue #56 subtask 4.6.3.2 to close F-4.6.1-1 (api/main.go's notImplementedPipeline
+// stand-in for the /query HTTP route, api/routes/query.go). Direction mirrors
+// ProposeSplit: Go is the CLIENT (api/'s new query-pipeline gRPC client, replacing
+// notImplementedPipeline), Python is the SERVER (agents/query/server.py, a new
+// grpc.Server exposing exactly this one RPC by subclassing the generated
+// HiveMindServicer and leaving every other method's Unimplemented default untouched --
+// same "thin single-RPC servicer" shape ProposeSplit's still-undelivered Python server
+// side was always expected to take, see proto/README.md and engine/split/proposer_grpc.go's
+// doc comment). history is the prior turns' raw query strings, oldest first, matching
+// run_query_pipeline's own history: list[str] parameter shape -- this RPC carries no
+// richer conversation-turn structure (e.g. per-turn answers) because run_query_pipeline
+// itself does not consume any.
+message RunQueryRequest {
+  string query = 1;
+  repeated string history = 2;
+}
+
+// RunQueryResponse mirrors agents/query/pipeline.py's QueryPipelineResult.synthesis shape
+// (SynthesizerResult.answer / .citations), and api/routes/query.go's QueryResult JSON
+// shape it is translated into.
+message RunQueryResponse {
+  string answer = 1;
+  repeated string citations = 2;
+}
+
 // HiveMind is the single shared gRPC service exposing every RPC this
 // contract defines. A single service (rather than one per RPC-group) keeps
 // the generated client/server surface simple -- engine/rpc/'s server
@@ -231,4 +270,5 @@ service HiveMind {
   rpc PutEdge(PutEdgeRequest) returns (PutEdgeResponse);
   rpc PutEntity(PutEntityRequest) returns (PutEntityResponse);
   rpc LookupEntity(LookupEntityRequest) returns (LookupEntityResponse);
+  rpc RunQuery(RunQueryRequest) returns (RunQueryResponse);
 }

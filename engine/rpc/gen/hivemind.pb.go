@@ -282,9 +282,21 @@ func (x *GetFileRequest) GetFileId() uint64 {
 }
 
 type GetFileResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Content       []byte                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
-	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Content []byte                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
+	Version uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	// path is the file's topic path (e.g. "docs/beta/graph-database.md"), added by GitHub
+	// issue #56 subtask 4.6.3.2. Sourced server-side from the same pathIndex B+Tree
+	// SearchCandidates already reads (see engine/rpc/server.go's GetFile doc comment) via a
+	// reverse (fileID -> path) lookup -- best-effort: a file with no pathIndex entry (e.g.
+	// pathIndex is nil, or the file predates path-indexing) returns "" here, matching
+	// proto3's zero-value convention rather than erroring the whole GetFile call over a
+	// missing, non-essential field. This closes the "file_ids reachable only via
+	// GraphNeighbors expansion have no proto-carried path" gap disclosed by issue #56
+	// subtask 4.6.3.1 (agents/query/pipeline.py's _build_selected_markdown fallback
+	// placeholder): agents/query/wiring.py's GrpcGetFileClient can now return this path for
+	// ANY file_id, not just ones present in SearchCandidates' selected TopicCandidates pool.
+	Path          string `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -331,6 +343,13 @@ func (x *GetFileResponse) GetVersion() uint64 {
 		return x.Version
 	}
 	return 0
+}
+
+func (x *GetFileResponse) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
 }
 
 // ReadPartial performs a section-level read using the markdown
@@ -1337,6 +1356,127 @@ func (x *LookupEntityResponse) GetFileIds() []uint64 {
 	return nil
 }
 
+// RunQuery invokes the full Python query pipeline (agents/query/pipeline.py's
+// run_query_pipeline: intent_refiner -> topic_selector -> synthesizer), added by GitHub
+// issue #56 subtask 4.6.3.2 to close F-4.6.1-1 (api/main.go's notImplementedPipeline
+// stand-in for the /query HTTP route, api/routes/query.go). Direction mirrors
+// ProposeSplit: Go is the CLIENT (api/'s new query-pipeline gRPC client, replacing
+// notImplementedPipeline), Python is the SERVER (agents/query/server.py, a new
+// grpc.Server exposing exactly this one RPC by subclassing the generated
+// HiveMindServicer and leaving every other method's Unimplemented default untouched --
+// same "thin single-RPC servicer" shape ProposeSplit's still-undelivered Python server
+// side was always expected to take, see proto/README.md and engine/split/proposer_grpc.go's
+// doc comment). history is the prior turns' raw query strings, oldest first, matching
+// run_query_pipeline's own history: list[str] parameter shape -- this RPC carries no
+// richer conversation-turn structure (e.g. per-turn answers) because run_query_pipeline
+// itself does not consume any.
+type RunQueryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Query         string                 `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`
+	History       []string               `protobuf:"bytes,2,rep,name=history,proto3" json:"history,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunQueryRequest) Reset() {
+	*x = RunQueryRequest{}
+	mi := &file_proto_hivemind_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunQueryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunQueryRequest) ProtoMessage() {}
+
+func (x *RunQueryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_hivemind_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunQueryRequest.ProtoReflect.Descriptor instead.
+func (*RunQueryRequest) Descriptor() ([]byte, []int) {
+	return file_proto_hivemind_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *RunQueryRequest) GetQuery() string {
+	if x != nil {
+		return x.Query
+	}
+	return ""
+}
+
+func (x *RunQueryRequest) GetHistory() []string {
+	if x != nil {
+		return x.History
+	}
+	return nil
+}
+
+// RunQueryResponse mirrors agents/query/pipeline.py's QueryPipelineResult.synthesis shape
+// (SynthesizerResult.answer / .citations), and api/routes/query.go's QueryResult JSON
+// shape it is translated into.
+type RunQueryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Answer        string                 `protobuf:"bytes,1,opt,name=answer,proto3" json:"answer,omitempty"`
+	Citations     []string               `protobuf:"bytes,2,rep,name=citations,proto3" json:"citations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunQueryResponse) Reset() {
+	*x = RunQueryResponse{}
+	mi := &file_proto_hivemind_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunQueryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunQueryResponse) ProtoMessage() {}
+
+func (x *RunQueryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_hivemind_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunQueryResponse.ProtoReflect.Descriptor instead.
+func (*RunQueryResponse) Descriptor() ([]byte, []int) {
+	return file_proto_hivemind_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *RunQueryResponse) GetAnswer() string {
+	if x != nil {
+		return x.Answer
+	}
+	return ""
+}
+
+func (x *RunQueryResponse) GetCitations() []string {
+	if x != nil {
+		return x.Citations
+	}
+	return nil
+}
+
 var File_proto_hivemind_proto protoreflect.FileDescriptor
 
 const file_proto_hivemind_proto_rawDesc = "" +
@@ -1351,10 +1491,11 @@ const file_proto_hivemind_proto_rawDesc = "" +
 	"\vnew_version\x18\x02 \x01(\x04R\n" +
 	"newVersion\")\n" +
 	"\x0eGetFileRequest\x12\x17\n" +
-	"\afile_id\x18\x01 \x01(\x04R\x06fileId\"E\n" +
+	"\afile_id\x18\x01 \x01(\x04R\x06fileId\"Y\n" +
 	"\x0fGetFileResponse\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\fR\acontent\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\x04R\aversion\"-\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\"-\n" +
 	"\x12ReadPartialRequest\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\x04R\x06fileId\">\n" +
 	"\fHeaderOffset\x12\x16\n" +
@@ -1412,13 +1553,19 @@ const file_proto_hivemind_proto_rawDesc = "" +
 	"\ventity_name\x18\x01 \x01(\tR\n" +
 	"entityName\"1\n" +
 	"\x14LookupEntityResponse\x12\x19\n" +
-	"\bfile_ids\x18\x01 \x03(\x04R\afileIds*l\n" +
+	"\bfile_ids\x18\x01 \x03(\x04R\afileIds\"A\n" +
+	"\x0fRunQueryRequest\x12\x14\n" +
+	"\x05query\x18\x01 \x01(\tR\x05query\x12\x18\n" +
+	"\ahistory\x18\x02 \x03(\tR\ahistory\"H\n" +
+	"\x10RunQueryResponse\x12\x16\n" +
+	"\x06answer\x18\x01 \x01(\tR\x06answer\x12\x1c\n" +
+	"\tcitations\x18\x02 \x03(\tR\tcitations*l\n" +
 	"\bEdgeType\x12\x19\n" +
 	"\x15EDGE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eENTITY_COOCCUR\x10\x01\x12\x10\n" +
 	"\fLLM_ASSERTED\x10\x02\x12\x11\n" +
 	"\rSPLIT_SIBLING\x10\x03\x12\f\n" +
-	"\bREDIRECT\x10\x042\xe9\x05\n" +
+	"\bREDIRECT\x10\x042\xb2\x06\n" +
 	"\bHiveMind\x12M\n" +
 	"\n" +
 	"PutSegment\x12\x1e.hivemind.v1.PutSegmentRequest\x1a\x1f.hivemind.v1.PutSegmentResponse\x12D\n" +
@@ -1429,7 +1576,8 @@ const file_proto_hivemind_proto_rawDesc = "" +
 	"\fProposeSplit\x12 .hivemind.v1.ProposeSplitRequest\x1a!.hivemind.v1.ProposeSplitResponse\x12D\n" +
 	"\aPutEdge\x12\x1b.hivemind.v1.PutEdgeRequest\x1a\x1c.hivemind.v1.PutEdgeResponse\x12J\n" +
 	"\tPutEntity\x12\x1d.hivemind.v1.PutEntityRequest\x1a\x1e.hivemind.v1.PutEntityResponse\x12S\n" +
-	"\fLookupEntity\x12 .hivemind.v1.LookupEntityRequest\x1a!.hivemind.v1.LookupEntityResponseB?Z=github.com/Aaryan123456679/HiveMind/engine/rpc/gen;hivemindv1b\x06proto3"
+	"\fLookupEntity\x12 .hivemind.v1.LookupEntityRequest\x1a!.hivemind.v1.LookupEntityResponse\x12G\n" +
+	"\bRunQuery\x12\x1c.hivemind.v1.RunQueryRequest\x1a\x1d.hivemind.v1.RunQueryResponseB?Z=github.com/Aaryan123456679/HiveMind/engine/rpc/gen;hivemindv1b\x06proto3"
 
 var (
 	file_proto_hivemind_proto_rawDescOnce sync.Once
@@ -1444,7 +1592,7 @@ func file_proto_hivemind_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_hivemind_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_hivemind_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_proto_hivemind_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_proto_hivemind_proto_goTypes = []any{
 	(EdgeType)(0),                    // 0: hivemind.v1.EdgeType
 	(*PutSegmentRequest)(nil),        // 1: hivemind.v1.PutSegmentRequest
@@ -1470,6 +1618,8 @@ var file_proto_hivemind_proto_goTypes = []any{
 	(*PutEntityResponse)(nil),        // 21: hivemind.v1.PutEntityResponse
 	(*LookupEntityRequest)(nil),      // 22: hivemind.v1.LookupEntityRequest
 	(*LookupEntityResponse)(nil),     // 23: hivemind.v1.LookupEntityResponse
+	(*RunQueryRequest)(nil),          // 24: hivemind.v1.RunQueryRequest
+	(*RunQueryResponse)(nil),         // 25: hivemind.v1.RunQueryResponse
 }
 var file_proto_hivemind_proto_depIdxs = []int32{
 	6,  // 0: hivemind.v1.ReadPartialResponse.headers:type_name -> hivemind.v1.HeaderOffset
@@ -1489,17 +1639,19 @@ var file_proto_hivemind_proto_depIdxs = []int32{
 	18, // 14: hivemind.v1.HiveMind.PutEdge:input_type -> hivemind.v1.PutEdgeRequest
 	20, // 15: hivemind.v1.HiveMind.PutEntity:input_type -> hivemind.v1.PutEntityRequest
 	22, // 16: hivemind.v1.HiveMind.LookupEntity:input_type -> hivemind.v1.LookupEntityRequest
-	2,  // 17: hivemind.v1.HiveMind.PutSegment:output_type -> hivemind.v1.PutSegmentResponse
-	4,  // 18: hivemind.v1.HiveMind.GetFile:output_type -> hivemind.v1.GetFileResponse
-	7,  // 19: hivemind.v1.HiveMind.ReadPartial:output_type -> hivemind.v1.ReadPartialResponse
-	10, // 20: hivemind.v1.HiveMind.GraphNeighbors:output_type -> hivemind.v1.GraphNeighborsResponse
-	13, // 21: hivemind.v1.HiveMind.SearchCandidates:output_type -> hivemind.v1.SearchCandidatesResponse
-	17, // 22: hivemind.v1.HiveMind.ProposeSplit:output_type -> hivemind.v1.ProposeSplitResponse
-	19, // 23: hivemind.v1.HiveMind.PutEdge:output_type -> hivemind.v1.PutEdgeResponse
-	21, // 24: hivemind.v1.HiveMind.PutEntity:output_type -> hivemind.v1.PutEntityResponse
-	23, // 25: hivemind.v1.HiveMind.LookupEntity:output_type -> hivemind.v1.LookupEntityResponse
-	17, // [17:26] is the sub-list for method output_type
-	8,  // [8:17] is the sub-list for method input_type
+	24, // 17: hivemind.v1.HiveMind.RunQuery:input_type -> hivemind.v1.RunQueryRequest
+	2,  // 18: hivemind.v1.HiveMind.PutSegment:output_type -> hivemind.v1.PutSegmentResponse
+	4,  // 19: hivemind.v1.HiveMind.GetFile:output_type -> hivemind.v1.GetFileResponse
+	7,  // 20: hivemind.v1.HiveMind.ReadPartial:output_type -> hivemind.v1.ReadPartialResponse
+	10, // 21: hivemind.v1.HiveMind.GraphNeighbors:output_type -> hivemind.v1.GraphNeighborsResponse
+	13, // 22: hivemind.v1.HiveMind.SearchCandidates:output_type -> hivemind.v1.SearchCandidatesResponse
+	17, // 23: hivemind.v1.HiveMind.ProposeSplit:output_type -> hivemind.v1.ProposeSplitResponse
+	19, // 24: hivemind.v1.HiveMind.PutEdge:output_type -> hivemind.v1.PutEdgeResponse
+	21, // 25: hivemind.v1.HiveMind.PutEntity:output_type -> hivemind.v1.PutEntityResponse
+	23, // 26: hivemind.v1.HiveMind.LookupEntity:output_type -> hivemind.v1.LookupEntityResponse
+	25, // 27: hivemind.v1.HiveMind.RunQuery:output_type -> hivemind.v1.RunQueryResponse
+	18, // [18:28] is the sub-list for method output_type
+	8,  // [8:18] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -1516,7 +1668,7 @@ func file_proto_hivemind_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_hivemind_proto_rawDesc), len(file_proto_hivemind_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -21,22 +21,30 @@ all three of `pipeline.py`'s injection points, including the same lazy-import he
 defining their own copy) so importing this module never requires `grpc` to be installed
 or the generated stubs to exist unless a caller actually constructs one of these classes.
 
-What this module does **not** do -- disclosed, forwarded scope
+What this module does **not** do
 --------------------------------------------------------------------------------------------
-This module supplies the *outbound* RPC calls `agents/query/pipeline.py` makes to the Go
-engine. It does not stand up any server, and it does not wire the Go `api/` gateway's
-`/query` route (`api/routes/query.go`, `api/main.go`'s `notImplementedPipeline`) to invoke
-`run_query_pipeline` itself -- that direction needs a new RPC on `proto/hivemind.proto`
-(Python as server, mirroring `ProposeSplit`'s reversed direction) that does not exist today,
-and is forwarded to a later sub-subtask (task-4.6.3.2) per this run's handoff.
+This module supplies only the *outbound* RPC calls `agents/query/pipeline.py` makes to the
+Go engine (`SearchCandidates`/`GraphNeighbors`/`GetFile`). The *inbound* side -- a real
+`RunQuery` gRPC server that lets the Go `api/` gateway's `/query` route
+(`api/routes/query.go`) invoke `run_query_pipeline` itself, replacing `api/main.go`'s
+`notImplementedPipeline` -- is `agents/query/server.py` (issue #56 subtask 4.6.3.2), which
+constructs this module's three client classes (against the engine's own gRPC address) plus
+an `LLMClient` (`agents/llm/factory.create_llm_client`) and passes them all to
+`run_query_pipeline` on every `RunQuery` call it serves.
 
-`GetFileFn`'s shape -- follows pipeline.py's fixed, proto-accurate contract
+`GetFileFn`'s shape -- proto-accurate as of issue #56 subtask 4.6.3.2
 --------------------------------------------------------------------------------------------
-`GrpcGetFileClient.__call__` returns `content` only (`str`, decoded as UTF-8 from the wire's
-`bytes`), matching `proto/hivemind.proto`'s real `GetFileResponse{content, version}` message
-exactly and `pipeline.GetFileFn`'s now-fixed shape (see `pipeline.py`'s `GetFileFn`
-proto-shape fix disclosure, closing F-4.6.1-2). It does not and cannot return a path --
-`GetFileResponse` has no such field.
+`GrpcGetFileClient.__call__` returns `(path, content)` (`path: str`, `content: str` decoded
+as UTF-8 from the wire's `bytes`), matching `proto/hivemind.proto`'s real
+`GetFileResponse{content, version, path}` message exactly and `pipeline.GetFileFn`'s current
+shape. Subtask 4.6.3.1 had temporarily narrowed this to `content`-only because
+`GetFileResponse` had no `path` field at the time (closing F-4.6.1-2's proto-shape
+mismatch); subtask 4.6.3.2 added `path` to `GetFileResponse` (a server-side best-effort
+reverse pathIndex lookup, see `engine/rpc/server.go`'s `GetFile`/`lookupPathForFileID`) and
+reverted `GetFileFn` back to returning both, closing the "`GraphNeighbors`-expansion-only
+`file_id`s have no proto-carried path" gap 4.6.3.1 disclosed (see `pipeline.py`'s
+`_build_selected_markdown` and its module docstring's "Residual gap -- closed by issue #56
+subtask 4.6.3.2" section).
 
 `GraphNeighborsFn`'s `edge_type` translation
 --------------------------------------------------------------------------------------------
@@ -141,14 +149,17 @@ class GrpcGraphNeighborsClient:
 
 class GrpcGetFileClient:
     """Real `pipeline.GetFileFn` implementation: calls the engine's `GetFile` RPC via
-    `hivemind_pb2_grpc.HiveMindStub` over `channel`, returning the resolved file's content
-    only (decoded as UTF-8).
+    `hivemind_pb2_grpc.HiveMindStub` over `channel`, returning the resolved file's
+    `(path, content)` (content decoded as UTF-8).
 
-    Matches `proto/hivemind.proto`'s real `GetFileResponse{content, version}` shape exactly
-    -- see module docstring's "`GetFileFn`'s shape" section for why no path is (or can be)
-    returned here. `version` is not surfaced by this callable either: `pipeline.GetFileFn`'s
-    contract is `file_id -> content` only (no caller in this package's current pipeline
-    consumes an MVCC version), so exposing it here would be speculative, unused scope.
+    As of GitHub issue #56 subtask 4.6.3.2, `proto/hivemind.proto`'s real `GetFileResponse`
+    carries `content`/`version`/`path` -- `path` is a server-side best-effort reverse
+    pathIndex lookup (see `engine/rpc/server.go`'s `GetFile`/`lookupPathForFileID`), which
+    may be `""` for a `file_id` with no indexed path anywhere (not an error; see that
+    handler's doc comment for when this can happen). `version` is still not surfaced by this
+    callable: `pipeline.GetFileFn`'s contract is `file_id -> (path, content)` only (no caller
+    in this package's current pipeline consumes an MVCC version), so exposing it here would
+    be speculative, unused scope.
     """
 
     def __init__(self, channel: "grpc.Channel") -> None:
@@ -156,9 +167,9 @@ class GrpcGetFileClient:
 
         self._stub = hivemind_pb2_grpc.HiveMindStub(channel)
 
-    def __call__(self, file_id: int) -> str:
+    def __call__(self, file_id: int) -> tuple[str, str]:
         hivemind_pb2, _ = _import_hivemind_grpc_modules()
 
         request = hivemind_pb2.GetFileRequest(file_id=file_id)
         response = self._stub.GetFile(request)
-        return response.content.decode("utf-8")
+        return response.path, response.content.decode("utf-8")

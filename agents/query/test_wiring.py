@@ -94,6 +94,7 @@ def test_get_file_client_translates_request_response(monkeypatch: pytest.MonkeyP
     fake_response = hivemind_pb2.GetFileResponse(
         content="Invoice 4521 was disputed.".encode("utf-8"),
         version=7,
+        path="billing/InvoiceDisputes.md",
     )
     mock_stub = MagicMock()
     mock_stub.GetFile.return_value = fake_response
@@ -108,28 +109,55 @@ def test_get_file_client_translates_request_response(monkeypatch: pytest.MonkeyP
     sent_request = mock_stub.GetFile.call_args.args[0]
     assert sent_request.file_id == 5
 
-    assert result == "Invoice 4521 was disputed."
+    assert result == ("billing/InvoiceDisputes.md", "Invoice 4521 was disputed.")
 
 
-def test_get_file_client_is_a_valid_get_file_fn_for_pipeline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`GrpcGetFileClient` must satisfy `pipeline.GetFileFn`'s exact shape (`file_id ->
-    content`, not a tuple), so it can be passed as `run_query_pipeline`'s `get_file`
-    argument directly.
+def test_get_file_client_translates_empty_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test for GitHub issue #56 subtask 4.6.3.2: `GetFileResponse.path == ""`
+    (proto3 zero-value, e.g. a `file_id` with no indexed path anywhere -- see
+    `engine/rpc/server.go`'s `GetFile` doc comment) must translate to `""`, not raise or
+    substitute a placeholder -- placeholder substitution is `pipeline._build_selected_markdown`'s
+    job, not this client's.
     """
     hivemind_pb2, hivemind_pb2_grpc = _import_hivemind_grpc_modules()
 
     mock_stub = MagicMock()
     mock_stub.GetFile.return_value = hivemind_pb2.GetFileResponse(
-        content=b"Refunds are issued within 5 business days.", version=1
+        content=b"no path indexed for this file", version=1, path=""
     )
     monkeypatch.setattr(
         hivemind_pb2_grpc, "HiveMindStub", MagicMock(return_value=mock_stub)
     )
 
     client = GrpcGetFileClient(channel=MagicMock())
-    content = client(3)
+    result = client(9)
 
+    assert result == ("", "no path indexed for this file")
+
+
+def test_get_file_client_is_a_valid_get_file_fn_for_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`GrpcGetFileClient` must satisfy `pipeline.GetFileFn`'s exact shape (`file_id ->
+    (path, content)`), so it can be passed as `run_query_pipeline`'s `get_file` argument
+    directly.
+    """
+    hivemind_pb2, hivemind_pb2_grpc = _import_hivemind_grpc_modules()
+
+    mock_stub = MagicMock()
+    mock_stub.GetFile.return_value = hivemind_pb2.GetFileResponse(
+        content=b"Refunds are issued within 5 business days.",
+        version=1,
+        path="billing/RefundPolicy.md",
+    )
+    monkeypatch.setattr(
+        hivemind_pb2_grpc, "HiveMindStub", MagicMock(return_value=mock_stub)
+    )
+
+    client = GrpcGetFileClient(channel=MagicMock())
+    path, content = client(3)
+
+    assert isinstance(path, str)
     assert isinstance(content, str)
+    assert path == "billing/RefundPolicy.md"
     assert content == "Refunds are issued within 5 business days."

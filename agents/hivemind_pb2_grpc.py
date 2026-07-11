@@ -84,6 +84,11 @@ class HiveMindStub:
                 request_serializer=hivemind__pb2.LookupEntityRequest.SerializeToString,
                 response_deserializer=hivemind__pb2.LookupEntityResponse.FromString,
                 _registered_method=True)
+        self.RunQuery = channel.unary_unary(
+                '/hivemind.v1.HiveMind/RunQuery',
+                request_serializer=hivemind__pb2.RunQueryRequest.SerializeToString,
+                response_deserializer=hivemind__pb2.RunQueryResponse.FromString,
+                _registered_method=True)
 
 
 class HiveMindServicer:
@@ -148,6 +153,12 @@ class HiveMindServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RunQuery(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_HiveMindServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -195,6 +206,11 @@ def add_HiveMindServicer_to_server(servicer, server):
                     servicer.LookupEntity,
                     request_deserializer=hivemind__pb2.LookupEntityRequest.FromString,
                     response_serializer=hivemind__pb2.LookupEntityResponse.SerializeToString,
+            ),
+            'RunQuery': grpc.unary_unary_rpc_method_handler(
+                    servicer.RunQuery,
+                    request_deserializer=hivemind__pb2.RunQueryRequest.FromString,
+                    response_serializer=hivemind__pb2.RunQueryResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -445,6 +461,33 @@ class HiveMind:
             '/hivemind.v1.HiveMind/LookupEntity',
             hivemind__pb2.LookupEntityRequest.SerializeToString,
             hivemind__pb2.LookupEntityResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunQuery(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hivemind.v1.HiveMind/RunQuery',
+            hivemind__pb2.RunQueryRequest.SerializeToString,
+            hivemind__pb2.RunQueryResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -286,6 +286,62 @@ func TestRPCServerHandlers(t *testing.T) {
 		if resp.GetVersion() != wantRec.CurrentVersion {
 			t.Fatalf("GetFile: version mismatch: got %d, want %d", resp.GetVersion(), wantRec.CurrentVersion)
 		}
+		// Regression test for GitHub issue #56 subtask 4.6.3.2: GetFileResponse.path is a
+		// reverse pathIndex lookup, populated for any fileID indexed via PutSegment/
+		// insertPath, not just fileIDs already present in a SearchCandidates result.
+		if resp.GetPath() != "topics/alpha/intro" {
+			t.Fatalf("GetFile: path mismatch: got %q, want %q", resp.GetPath(), "topics/alpha/intro")
+		}
+	})
+
+	// GetFile_PathIndexMiss: regression test for GitHub issue #56 subtask 4.6.3.2's
+	// lookupPathForFileID -- a fileID with no pathIndex entry (e.g. it was seeded directly
+	// via ContentStore/Catalog, bypassing PutSegment/insertPath, as betaID's
+	// topics/beta/intro entry always is here since insertPath is only ever called for it,
+	// never skipped -- so this test uses a *different*, never-indexed fileID) must return
+	// path == "" (proto3 zero-value), not error.
+	t.Run("GetFile_PathIndexMiss", func(t *testing.T) {
+		f := newFixture(t)
+		unindexedID, err := f.idAlloc.Next()
+		if err != nil {
+			t.Fatalf("IDAllocator.Next: %v", err)
+		}
+		rec := catalog.CatalogRecord{
+			FileID:         unindexedID,
+			CurrentVersion: 1,
+			SizeBytes:      5,
+			Status:         catalog.StatusActive,
+		}
+		if _, err := f.cs.Create(rec, []byte("hello")); err != nil {
+			t.Fatalf("ContentStore.Create: %v", err)
+		}
+
+		resp, err := f.srv.GetFile(context.Background(), &hivemindv1.GetFileRequest{FileId: unindexedID})
+		if err != nil {
+			t.Fatalf("GetFile: %v", err)
+		}
+		if resp.GetPath() != "" {
+			t.Fatalf("GetFile: path mismatch for unindexed fileID: got %q, want empty", resp.GetPath())
+		}
+	})
+
+	// GetFile_NilPathIndex: regression test for GitHub issue #56 subtask 4.6.3.2 -- a
+	// Server constructed with a nil pathIndex (a documented-valid configuration, see
+	// Server.pathIndex's field doc) must still answer GetFile successfully, with path == ""
+	// rather than erroring.
+	t.Run("GetFile_NilPathIndex", func(t *testing.T) {
+		f := newFixture(t)
+		srv, err := NewServer(f.cat, f.cs, f.idAlloc, nil, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+		resp, err := srv.GetFile(context.Background(), &hivemindv1.GetFileRequest{FileId: f.alphaID})
+		if err != nil {
+			t.Fatalf("GetFile: %v", err)
+		}
+		if resp.GetPath() != "" {
+			t.Fatalf("GetFile: path mismatch with nil pathIndex: got %q, want empty", resp.GetPath())
+		}
 	})
 
 	t.Run("GetFile_NotFound", func(t *testing.T) {

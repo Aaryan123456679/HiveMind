@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0ehivemind.proto\x12\x0bhivemind.v1\"C\n\x11PutSegmentRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\x12\x0c\n\x04path\x18\x03 \x01(\t\":\n\x12PutSegmentResponse\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\x13\n\x0bnew_version\x18\x02 \x01(\x04\"!\n\x0eGetFileRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\"3\n\x0fGetFileResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\x12\x0f\n\x07version\x18\x02 \x01(\x04\"%\n\x12ReadPartialRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\".\n\x0cHeaderOffset\x12\x0e\n\x06header\x18\x01 \x01(\t\x12\x0e\n\x06offset\x18\x02 \x01(\x03\"A\n\x13ReadPartialResponse\x12*\n\x07headers\x18\x01 \x03(\x0b\x32\x19.hivemind.v1.HeaderOffset\"{\n\x15GraphNeighborsRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\r\n\x05\x64\x65pth\x18\x02 \x01(\x05\x12/\n\x10\x65\x64ge_type_filter\x18\x03 \x01(\x0e\x32\x15.hivemind.v1.EdgeType\x12\x11\n\tmax_nodes\x18\x04 \x01(\x05\"d\n\x08Neighbor\x12\x16\n\x0etarget_file_id\x18\x01 \x01(\x04\x12#\n\x04type\x18\x02 \x01(\x0e\x32\x15.hivemind.v1.EdgeType\x12\x0e\n\x06weight\x18\x03 \x01(\r\x12\x0b\n\x03hop\x18\x04 \x01(\x05\"B\n\x16GraphNeighborsResponse\x12(\n\tneighbors\x18\x01 \x03(\x0b\x32\x15.hivemind.v1.Neighbor\"=\n\x17SearchCandidatesRequest\x12\r\n\x05query\x18\x01 \x01(\t\x12\x13\n\x0bmax_results\x18\x02 \x01(\x05\">\n\x0e\x43\x61ndidateTopic\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\x0c\n\x04path\x18\x02 \x01(\t\x12\r\n\x05score\x18\x03 \x01(\x02\"K\n\x18SearchCandidatesResponse\x12/\n\ncandidates\x18\x01 \x03(\x0b\x32\x1b.hivemind.v1.CandidateTopic\"+\n\x13ProposeSplitRequest\x12\x14\n\x0c\x66ile_content\x18\x01 \x01(\x0c\"*\n\x0cSectionRange\x12\r\n\x05start\x18\x01 \x01(\x03\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x03\"X\n\x11SplitFileProposal\x12\x10\n\x08new_path\x18\x01 \x01(\t\x12\x31\n\x0esection_ranges\x18\x02 \x03(\x0b\x32\x19.hivemind.v1.SectionRange\"_\n\x14ProposeSplitResponse\x12-\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x1e.hivemind.v1.SplitFileProposal\x12\x18\n\x10redirect_summary\x18\x02 \x01(\t\"z\n\x0ePutEdgeRequest\x12\x16\n\x0esource_file_id\x18\x01 \x01(\x04\x12\x16\n\x0etarget_file_id\x18\x02 \x01(\x04\x12(\n\tedge_type\x18\x03 \x01(\x0e\x32\x15.hivemind.v1.EdgeType\x12\x0e\n\x06weight\x18\x04 \x01(\r\"\x11\n\x0fPutEdgeResponse\"8\n\x10PutEntityRequest\x12\x13\n\x0b\x65ntity_name\x18\x01 \x01(\t\x12\x0f\n\x07\x66ile_id\x18\x02 \x01(\x04\"\x13\n\x11PutEntityResponse\"*\n\x13LookupEntityRequest\x12\x13\n\x0b\x65ntity_name\x18\x01 \x01(\t\"(\n\x14LookupEntityResponse\x12\x10\n\x08\x66ile_ids\x18\x01 \x03(\x04*l\n\x08\x45\x64geType\x12\x19\n\x15\x45\x44GE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x45NTITY_COOCCUR\x10\x01\x12\x10\n\x0cLLM_ASSERTED\x10\x02\x12\x11\n\rSPLIT_SIBLING\x10\x03\x12\x0c\n\x08REDIRECT\x10\x04\x32\xe9\x05\n\x08HiveMind\x12M\n\nPutSegment\x12\x1e.hivemind.v1.PutSegmentRequest\x1a\x1f.hivemind.v1.PutSegmentResponse\x12\x44\n\x07GetFile\x12\x1b.hivemind.v1.GetFileRequest\x1a\x1c.hivemind.v1.GetFileResponse\x12P\n\x0bReadPartial\x12\x1f.hivemind.v1.ReadPartialRequest\x1a .hivemind.v1.ReadPartialResponse\x12Y\n\x0eGraphNeighbors\x12\".hivemind.v1.GraphNeighborsRequest\x1a#.hivemind.v1.GraphNeighborsResponse\x12_\n\x10SearchCandidates\x12$.hivemind.v1.SearchCandidatesRequest\x1a%.hivemind.v1.SearchCandidatesResponse\x12S\n\x0cProposeSplit\x12 .hivemind.v1.ProposeSplitRequest\x1a!.hivemind.v1.ProposeSplitResponse\x12\x44\n\x07PutEdge\x12\x1b.hivemind.v1.PutEdgeRequest\x1a\x1c.hivemind.v1.PutEdgeResponse\x12J\n\tPutEntity\x12\x1d.hivemind.v1.PutEntityRequest\x1a\x1e.hivemind.v1.PutEntityResponse\x12S\n\x0cLookupEntity\x12 .hivemind.v1.LookupEntityRequest\x1a!.hivemind.v1.LookupEntityResponseB?Z=github.com/Aaryan123456679/HiveMind/engine/rpc/gen;hivemindv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0ehivemind.proto\x12\x0bhivemind.v1\"C\n\x11PutSegmentRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\x12\x0c\n\x04path\x18\x03 \x01(\t\":\n\x12PutSegmentResponse\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\x13\n\x0bnew_version\x18\x02 \x01(\x04\"!\n\x0eGetFileRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\"A\n\x0fGetFileResponse\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\x12\x0f\n\x07version\x18\x02 \x01(\x04\x12\x0c\n\x04path\x18\x03 \x01(\t\"%\n\x12ReadPartialRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\".\n\x0cHeaderOffset\x12\x0e\n\x06header\x18\x01 \x01(\t\x12\x0e\n\x06offset\x18\x02 \x01(\x03\"A\n\x13ReadPartialResponse\x12*\n\x07headers\x18\x01 \x03(\x0b\x32\x19.hivemind.v1.HeaderOffset\"{\n\x15GraphNeighborsRequest\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\r\n\x05\x64\x65pth\x18\x02 \x01(\x05\x12/\n\x10\x65\x64ge_type_filter\x18\x03 \x01(\x0e\x32\x15.hivemind.v1.EdgeType\x12\x11\n\tmax_nodes\x18\x04 \x01(\x05\"d\n\x08Neighbor\x12\x16\n\x0etarget_file_id\x18\x01 \x01(\x04\x12#\n\x04type\x18\x02 \x01(\x0e\x32\x15.hivemind.v1.EdgeType\x12\x0e\n\x06weight\x18\x03 \x01(\r\x12\x0b\n\x03hop\x18\x04 \x01(\x05\"B\n\x16GraphNeighborsResponse\x12(\n\tneighbors\x18\x01 \x03(\x0b\x32\x15.hivemind.v1.Neighbor\"=\n\x17SearchCandidatesRequest\x12\r\n\x05query\x18\x01 \x01(\t\x12\x13\n\x0bmax_results\x18\x02 \x01(\x05\">\n\x0e\x43\x61ndidateTopic\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\x04\x12\x0c\n\x04path\x18\x02 \x01(\t\x12\r\n\x05score\x18\x03 \x01(\x02\"K\n\x18SearchCandidatesResponse\x12/\n\ncandidates\x18\x01 \x03(\x0b\x32\x1b.hivemind.v1.CandidateTopic\"+\n\x13ProposeSplitRequest\x12\x14\n\x0c\x66ile_content\x18\x01 \x01(\x0c\"*\n\x0cSectionRange\x12\r\n\x05start\x18\x01 \x01(\x03\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x03\"X\n\x11SplitFileProposal\x12\x10\n\x08new_path\x18\x01 \x01(\t\x12\x31\n\x0esection_ranges\x18\x02 \x03(\x0b\x32\x19.hivemind.v1.SectionRange\"_\n\x14ProposeSplitResponse\x12-\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x1e.hivemind.v1.SplitFileProposal\x12\x18\n\x10redirect_summary\x18\x02 \x01(\t\"z\n\x0ePutEdgeRequest\x12\x16\n\x0esource_file_id\x18\x01 \x01(\x04\x12\x16\n\x0etarget_file_id\x18\x02 \x01(\x04\x12(\n\tedge_type\x18\x03 \x01(\x0e\x32\x15.hivemind.v1.EdgeType\x12\x0e\n\x06weight\x18\x04 \x01(\r\"\x11\n\x0fPutEdgeResponse\"8\n\x10PutEntityRequest\x12\x13\n\x0b\x65ntity_name\x18\x01 \x01(\t\x12\x0f\n\x07\x66ile_id\x18\x02 \x01(\x04\"\x13\n\x11PutEntityResponse\"*\n\x13LookupEntityRequest\x12\x13\n\x0b\x65ntity_name\x18\x01 \x01(\t\"(\n\x14LookupEntityResponse\x12\x10\n\x08\x66ile_ids\x18\x01 \x03(\x04\"1\n\x0fRunQueryRequest\x12\r\n\x05query\x18\x01 \x01(\t\x12\x0f\n\x07history\x18\x02 \x03(\t\"5\n\x10RunQueryResponse\x12\x0e\n\x06\x61nswer\x18\x01 \x01(\t\x12\x11\n\tcitations\x18\x02 \x03(\t*l\n\x08\x45\x64geType\x12\x19\n\x15\x45\x44GE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x45NTITY_COOCCUR\x10\x01\x12\x10\n\x0cLLM_ASSERTED\x10\x02\x12\x11\n\rSPLIT_SIBLING\x10\x03\x12\x0c\n\x08REDIRECT\x10\x04\x32\xb2\x06\n\x08HiveMind\x12M\n\nPutSegment\x12\x1e.hivemind.v1.PutSegmentRequest\x1a\x1f.hivemind.v1.PutSegmentResponse\x12\x44\n\x07GetFile\x12\x1b.hivemind.v1.GetFileRequest\x1a\x1c.hivemind.v1.GetFileResponse\x12P\n\x0bReadPartial\x12\x1f.hivemind.v1.ReadPartialRequest\x1a .hivemind.v1.ReadPartialResponse\x12Y\n\x0eGraphNeighbors\x12\".hivemind.v1.GraphNeighborsRequest\x1a#.hivemind.v1.GraphNeighborsResponse\x12_\n\x10SearchCandidates\x12$.hivemind.v1.SearchCandidatesRequest\x1a%.hivemind.v1.SearchCandidatesResponse\x12S\n\x0cProposeSplit\x12 .hivemind.v1.ProposeSplitRequest\x1a!.hivemind.v1.ProposeSplitResponse\x12\x44\n\x07PutEdge\x12\x1b.hivemind.v1.PutEdgeRequest\x1a\x1c.hivemind.v1.PutEdgeResponse\x12J\n\tPutEntity\x12\x1d.hivemind.v1.PutEntityRequest\x1a\x1e.hivemind.v1.PutEntityResponse\x12S\n\x0cLookupEntity\x12 .hivemind.v1.LookupEntityRequest\x1a!.hivemind.v1.LookupEntityResponse\x12G\n\x08RunQuery\x12\x1c.hivemind.v1.RunQueryRequest\x1a\x1d.hivemind.v1.RunQueryResponseB?Z=github.com/Aaryan123456679/HiveMind/engine/rpc/gen;hivemindv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,8 +32,8 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'hivemind_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'Z=github.com/Aaryan123456679/HiveMind/engine/rpc/gen;hivemindv1'
-  _globals['_EDGETYPE']._serialized_start=1485
-  _globals['_EDGETYPE']._serialized_end=1593
+  _globals['_EDGETYPE']._serialized_start=1605
+  _globals['_EDGETYPE']._serialized_end=1713
   _globals['_PUTSEGMENTREQUEST']._serialized_start=31
   _globals['_PUTSEGMENTREQUEST']._serialized_end=98
   _globals['_PUTSEGMENTRESPONSE']._serialized_start=100
@@ -41,45 +41,49 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GETFILEREQUEST']._serialized_start=160
   _globals['_GETFILEREQUEST']._serialized_end=193
   _globals['_GETFILERESPONSE']._serialized_start=195
-  _globals['_GETFILERESPONSE']._serialized_end=246
-  _globals['_READPARTIALREQUEST']._serialized_start=248
-  _globals['_READPARTIALREQUEST']._serialized_end=285
-  _globals['_HEADEROFFSET']._serialized_start=287
-  _globals['_HEADEROFFSET']._serialized_end=333
-  _globals['_READPARTIALRESPONSE']._serialized_start=335
-  _globals['_READPARTIALRESPONSE']._serialized_end=400
-  _globals['_GRAPHNEIGHBORSREQUEST']._serialized_start=402
-  _globals['_GRAPHNEIGHBORSREQUEST']._serialized_end=525
-  _globals['_NEIGHBOR']._serialized_start=527
-  _globals['_NEIGHBOR']._serialized_end=627
-  _globals['_GRAPHNEIGHBORSRESPONSE']._serialized_start=629
-  _globals['_GRAPHNEIGHBORSRESPONSE']._serialized_end=695
-  _globals['_SEARCHCANDIDATESREQUEST']._serialized_start=697
-  _globals['_SEARCHCANDIDATESREQUEST']._serialized_end=758
-  _globals['_CANDIDATETOPIC']._serialized_start=760
-  _globals['_CANDIDATETOPIC']._serialized_end=822
-  _globals['_SEARCHCANDIDATESRESPONSE']._serialized_start=824
-  _globals['_SEARCHCANDIDATESRESPONSE']._serialized_end=899
-  _globals['_PROPOSESPLITREQUEST']._serialized_start=901
-  _globals['_PROPOSESPLITREQUEST']._serialized_end=944
-  _globals['_SECTIONRANGE']._serialized_start=946
-  _globals['_SECTIONRANGE']._serialized_end=988
-  _globals['_SPLITFILEPROPOSAL']._serialized_start=990
-  _globals['_SPLITFILEPROPOSAL']._serialized_end=1078
-  _globals['_PROPOSESPLITRESPONSE']._serialized_start=1080
-  _globals['_PROPOSESPLITRESPONSE']._serialized_end=1175
-  _globals['_PUTEDGEREQUEST']._serialized_start=1177
-  _globals['_PUTEDGEREQUEST']._serialized_end=1299
-  _globals['_PUTEDGERESPONSE']._serialized_start=1301
-  _globals['_PUTEDGERESPONSE']._serialized_end=1318
-  _globals['_PUTENTITYREQUEST']._serialized_start=1320
-  _globals['_PUTENTITYREQUEST']._serialized_end=1376
-  _globals['_PUTENTITYRESPONSE']._serialized_start=1378
-  _globals['_PUTENTITYRESPONSE']._serialized_end=1397
-  _globals['_LOOKUPENTITYREQUEST']._serialized_start=1399
-  _globals['_LOOKUPENTITYREQUEST']._serialized_end=1441
-  _globals['_LOOKUPENTITYRESPONSE']._serialized_start=1443
-  _globals['_LOOKUPENTITYRESPONSE']._serialized_end=1483
-  _globals['_HIVEMIND']._serialized_start=1596
-  _globals['_HIVEMIND']._serialized_end=2341
+  _globals['_GETFILERESPONSE']._serialized_end=260
+  _globals['_READPARTIALREQUEST']._serialized_start=262
+  _globals['_READPARTIALREQUEST']._serialized_end=299
+  _globals['_HEADEROFFSET']._serialized_start=301
+  _globals['_HEADEROFFSET']._serialized_end=347
+  _globals['_READPARTIALRESPONSE']._serialized_start=349
+  _globals['_READPARTIALRESPONSE']._serialized_end=414
+  _globals['_GRAPHNEIGHBORSREQUEST']._serialized_start=416
+  _globals['_GRAPHNEIGHBORSREQUEST']._serialized_end=539
+  _globals['_NEIGHBOR']._serialized_start=541
+  _globals['_NEIGHBOR']._serialized_end=641
+  _globals['_GRAPHNEIGHBORSRESPONSE']._serialized_start=643
+  _globals['_GRAPHNEIGHBORSRESPONSE']._serialized_end=709
+  _globals['_SEARCHCANDIDATESREQUEST']._serialized_start=711
+  _globals['_SEARCHCANDIDATESREQUEST']._serialized_end=772
+  _globals['_CANDIDATETOPIC']._serialized_start=774
+  _globals['_CANDIDATETOPIC']._serialized_end=836
+  _globals['_SEARCHCANDIDATESRESPONSE']._serialized_start=838
+  _globals['_SEARCHCANDIDATESRESPONSE']._serialized_end=913
+  _globals['_PROPOSESPLITREQUEST']._serialized_start=915
+  _globals['_PROPOSESPLITREQUEST']._serialized_end=958
+  _globals['_SECTIONRANGE']._serialized_start=960
+  _globals['_SECTIONRANGE']._serialized_end=1002
+  _globals['_SPLITFILEPROPOSAL']._serialized_start=1004
+  _globals['_SPLITFILEPROPOSAL']._serialized_end=1092
+  _globals['_PROPOSESPLITRESPONSE']._serialized_start=1094
+  _globals['_PROPOSESPLITRESPONSE']._serialized_end=1189
+  _globals['_PUTEDGEREQUEST']._serialized_start=1191
+  _globals['_PUTEDGEREQUEST']._serialized_end=1313
+  _globals['_PUTEDGERESPONSE']._serialized_start=1315
+  _globals['_PUTEDGERESPONSE']._serialized_end=1332
+  _globals['_PUTENTITYREQUEST']._serialized_start=1334
+  _globals['_PUTENTITYREQUEST']._serialized_end=1390
+  _globals['_PUTENTITYRESPONSE']._serialized_start=1392
+  _globals['_PUTENTITYRESPONSE']._serialized_end=1411
+  _globals['_LOOKUPENTITYREQUEST']._serialized_start=1413
+  _globals['_LOOKUPENTITYREQUEST']._serialized_end=1455
+  _globals['_LOOKUPENTITYRESPONSE']._serialized_start=1457
+  _globals['_LOOKUPENTITYRESPONSE']._serialized_end=1497
+  _globals['_RUNQUERYREQUEST']._serialized_start=1499
+  _globals['_RUNQUERYREQUEST']._serialized_end=1548
+  _globals['_RUNQUERYRESPONSE']._serialized_start=1550
+  _globals['_RUNQUERYRESPONSE']._serialized_end=1603
+  _globals['_HIVEMIND']._serialized_start=1716
+  _globals['_HIVEMIND']._serialized_end=2534
 # @@protoc_insertion_point(module_scope)

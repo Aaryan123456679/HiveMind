@@ -81,13 +81,17 @@ def _make_candidates() -> list[TopicCandidate]:
     ]
 
 
-#: `file_id -> content` only, matching `GetFileFn`'s real (post-4.6.3.1) shape -- path is no
-#: longer part of this fixture's return value, mirroring `GetFileResponse`'s real shape
-#: (`content`/`version`, no `path`). See `pipeline.py`'s `GetFileFn` proto-shape fix disclosure.
-_FILE_CONTENT = {
-    1: "Invoice 4521 was disputed for a duplicate charge.",
-    2: "Payment for invoice 4521 was delayed.",
-    3: "Refunds are issued within 5 business days.",
+#: `file_id -> (path, content)`, matching `GetFileFn`'s real (post-4.6.3.2) shape
+#: (`GetFileResponse`'s `content`/`version`/`path`). file_id=3's path is deliberately left ""
+#: here (mirroring a `file_id` with genuinely no indexed path anywhere) so
+#: `test_run_query_pipeline_response_shape` below still exercises the `_UNKNOWN_PATH_TEMPLATE`
+#: placeholder fallback; `test_run_query_pipeline_falls_back_to_get_file_path` below uses a
+#: separate fixture with a real path for file_id=3 to prove the new fallback itself works. See
+#: `pipeline.py`'s "Residual gap -- closed by issue #56 subtask 4.6.3.2" docstring section.
+_FILE_DATA = {
+    1: ("billing/InvoiceDisputes.md", "Invoice 4521 was disputed for a duplicate charge."),
+    2: ("billing/PaymentDelays.md", "Payment for invoice 4521 was delayed."),
+    3: ("", "Refunds are issued within 5 business days."),
 }
 
 
@@ -106,9 +110,9 @@ def test_run_query_pipeline_calls_agents_in_order() -> None:
         call_log.append(("graph_neighbors", (file_id, hops)))
         return [GraphNeighbor(file_id=3, edge_type="ENTITY_COOCCUR", weight=1, hop=1)]
 
-    def fake_get_file(file_id: int) -> str:
+    def fake_get_file(file_id: int) -> tuple[str, str]:
         call_log.append(("get_file", (file_id,)))
-        return _FILE_CONTENT[file_id]
+        return _FILE_DATA[file_id]
 
     llm_client = _FakeLLMClient([_INTENT_RESPONSE, _SYNTHESIS_RESPONSE])
 
@@ -164,8 +168,8 @@ def test_run_query_pipeline_response_shape() -> None:
     def fake_graph_neighbors(file_id: int, hops: int) -> list[GraphNeighbor]:
         return [GraphNeighbor(file_id=3, edge_type="ENTITY_COOCCUR", weight=1, hop=1)]
 
-    def fake_get_file(file_id: int) -> str:
-        return _FILE_CONTENT[file_id]
+    def fake_get_file(file_id: int) -> tuple[str, str]:
+        return _FILE_DATA[file_id]
 
     llm_client = _FakeLLMClient([_INTENT_RESPONSE, _SYNTHESIS_RESPONSE])
 
@@ -195,9 +199,55 @@ def test_run_query_pipeline_response_shape() -> None:
     synthesis_prompt = llm_client.calls[1]["prompt"]
     assert "## File: billing/InvoiceDisputes.md" in synthesis_prompt
     # file_id=3 is reachable only via the graph_neighbors expansion (never present in
-    # select_top_k's output), so no TopicCandidate.path exists for it -- see pipeline.py's
-    # GetFileFn proto-shape fix disclosure for why this falls back to a placeholder path.
+    # select_top_k's output), so no TopicCandidate.path exists for it, and this fixture's
+    # fake_get_file also returns "" for it (genuinely no indexed path anywhere) -- see
+    # pipeline.py's "Residual gap -- closed by issue #56 subtask 4.6.3.2" docstring section
+    # for why this still falls back to the placeholder in that specific case.
     assert "## File: (path unknown; file_id=3)" in synthesis_prompt
+
+
+def test_run_query_pipeline_falls_back_to_get_file_path_for_graph_expansion_only_file_id() -> (
+    None
+):
+    """Regression test for GitHub issue #56 subtask 4.6.3.2: a `file_id` reachable only via
+    `graph_neighbors` expansion (absent from `path_by_id`) must use `get_file`'s own returned
+    path, not the `_UNKNOWN_PATH_TEMPLATE` placeholder, whenever `get_file` has a real path to
+    give -- this is the fix for the gap `test_run_query_pipeline_response_shape` above still
+    (correctly) demonstrates for the narrower "no path anywhere" case.
+    """
+
+    def fake_search_candidates(query: str, max_results: int) -> list[TopicCandidate]:
+        return _make_candidates()
+
+    def fake_graph_neighbors(file_id: int, hops: int) -> list[GraphNeighbor]:
+        return [GraphNeighbor(file_id=3, edge_type="ENTITY_COOCCUR", weight=1, hop=1)]
+
+    # Unlike _FILE_DATA, file_id=3 here has a real path -- sourced only from get_file (a
+    # GetFile RPC's reverse pathIndex lookup), never from path_by_id/TopicCandidate.path.
+    file_data = {
+        1: ("billing/InvoiceDisputes.md", "Invoice 4521 was disputed for a duplicate charge."),
+        2: ("billing/PaymentDelays.md", "Payment for invoice 4521 was delayed."),
+        3: ("billing/RefundPolicy.md", "Refunds are issued within 5 business days."),
+    }
+
+    def fake_get_file(file_id: int) -> tuple[str, str]:
+        return file_data[file_id]
+
+    llm_client = _FakeLLMClient([_INTENT_RESPONSE, _SYNTHESIS_RESPONSE])
+
+    run_query_pipeline(
+        "What's going on with invoice 4521?",
+        ["earlier turn"],
+        llm_client=llm_client,
+        search_candidates=fake_search_candidates,
+        graph_neighbors=fake_graph_neighbors,
+        get_file=fake_get_file,
+        k=2,
+    )
+
+    synthesis_prompt = llm_client.calls[1]["prompt"]
+    assert "## File: billing/RefundPolicy.md" in synthesis_prompt
+    assert "(path unknown; file_id=3)" not in synthesis_prompt
 
 
 def test_run_query_pipeline_raises_on_empty_selection() -> None:
@@ -210,7 +260,7 @@ def test_run_query_pipeline_raises_on_empty_selection() -> None:
     def fake_graph_neighbors(file_id: int, hops: int) -> list[GraphNeighbor]:
         raise AssertionError("graph_neighbors should not be called with no selected topics")
 
-    def fake_get_file(file_id: int) -> str:
+    def fake_get_file(file_id: int) -> tuple[str, str]:
         raise AssertionError("get_file should not be called with no selected file_ids")
 
     llm_client = _FakeLLMClient([_INTENT_RESPONSE])

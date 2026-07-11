@@ -55,6 +55,7 @@ const (
 	HiveMind_PutEdge_FullMethodName          = "/hivemind.v1.HiveMind/PutEdge"
 	HiveMind_PutEntity_FullMethodName        = "/hivemind.v1.HiveMind/PutEntity"
 	HiveMind_LookupEntity_FullMethodName     = "/hivemind.v1.HiveMind/LookupEntity"
+	HiveMind_RunQuery_FullMethodName         = "/hivemind.v1.HiveMind/RunQuery"
 )
 
 // HiveMindClient is the client API for HiveMind service.
@@ -76,6 +77,7 @@ type HiveMindClient interface {
 	PutEdge(ctx context.Context, in *PutEdgeRequest, opts ...grpc.CallOption) (*PutEdgeResponse, error)
 	PutEntity(ctx context.Context, in *PutEntityRequest, opts ...grpc.CallOption) (*PutEntityResponse, error)
 	LookupEntity(ctx context.Context, in *LookupEntityRequest, opts ...grpc.CallOption) (*LookupEntityResponse, error)
+	RunQuery(ctx context.Context, in *RunQueryRequest, opts ...grpc.CallOption) (*RunQueryResponse, error)
 }
 
 type hiveMindClient struct {
@@ -176,6 +178,16 @@ func (c *hiveMindClient) LookupEntity(ctx context.Context, in *LookupEntityReque
 	return out, nil
 }
 
+func (c *hiveMindClient) RunQuery(ctx context.Context, in *RunQueryRequest, opts ...grpc.CallOption) (*RunQueryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunQueryResponse)
+	err := c.cc.Invoke(ctx, HiveMind_RunQuery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HiveMindServer is the server API for HiveMind service.
 // All implementations must embed UnimplementedHiveMindServer
 // for forward compatibility.
@@ -195,6 +207,7 @@ type HiveMindServer interface {
 	PutEdge(context.Context, *PutEdgeRequest) (*PutEdgeResponse, error)
 	PutEntity(context.Context, *PutEntityRequest) (*PutEntityResponse, error)
 	LookupEntity(context.Context, *LookupEntityRequest) (*LookupEntityResponse, error)
+	RunQuery(context.Context, *RunQueryRequest) (*RunQueryResponse, error)
 	mustEmbedUnimplementedHiveMindServer()
 }
 
@@ -231,6 +244,9 @@ func (UnimplementedHiveMindServer) PutEntity(context.Context, *PutEntityRequest)
 }
 func (UnimplementedHiveMindServer) LookupEntity(context.Context, *LookupEntityRequest) (*LookupEntityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LookupEntity not implemented")
+}
+func (UnimplementedHiveMindServer) RunQuery(context.Context, *RunQueryRequest) (*RunQueryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RunQuery not implemented")
 }
 func (UnimplementedHiveMindServer) mustEmbedUnimplementedHiveMindServer() {}
 func (UnimplementedHiveMindServer) testEmbeddedByValue()                  {}
@@ -415,6 +431,24 @@ func _HiveMind_LookupEntity_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HiveMind_RunQuery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RunQueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HiveMindServer).RunQuery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HiveMind_RunQuery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HiveMindServer).RunQuery(ctx, req.(*RunQueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HiveMind_ServiceDesc is the grpc.ServiceDesc for HiveMind service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -457,6 +491,10 @@ var HiveMind_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LookupEntity",
 			Handler:    _HiveMind_LookupEntity_Handler,
+		},
+		{
+			MethodName: "RunQuery",
+			Handler:    _HiveMind_RunQuery_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
