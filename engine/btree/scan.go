@@ -38,6 +38,15 @@ type ScanEntry struct {
 // longer has the prefix, every subsequent key (being >= it, lexicographically)
 // cannot have the prefix either, so the scan can stop immediately (early
 // exit) instead of walking the rest of the tree.
+//
+// Note on subtree vs. byte-prefix semantics: prefix is matched with plain
+// strings.HasPrefix, i.e. by leading bytes, not by '/'-delimited path
+// segment. A prefix of "auth" therefore also matches an unrelated key like
+// "authorize/grant", which shares only leading bytes and is not part of the
+// "auth" subtree. Callers that want true subtree semantics -- only keys
+// nested under a given path, not merely sharing its leading bytes -- must
+// include the trailing path separator in prefix themselves (e.g. pass
+// "auth/" rather than "auth") to get that narrower match.
 func PrefixScan(store *NodeStore, rootNodeID uint64, prefix string) ([]ScanEntry, error) {
 	_, leaf, err := descendToLeaf(store, rootNodeID, prefix)
 	if err != nil {
