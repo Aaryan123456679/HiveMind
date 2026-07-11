@@ -1,0 +1,28 @@
+{
+  "subtask": "4.5.4.3",
+  "files_changed": [
+    {
+      "path": "engine/wal/record.go",
+      "change": "Add a guard clause in DecodeTypedRecord rejecting RecordTypeInvalid (0) and any out-of-range/unrecognized RecordType byte with an explicit fmt.Errorf, before constructing/returning the TypedRecord."
+    },
+    {
+      "path": "engine/wal/record_test.go",
+      "change": "Add TestDecodeTypedRecordRejectsInvalidType covering Type=0 and Type=out-of-range (e.g. 6, 255); assert both return non-nil errors. Extend/confirm existing round-trip test still passes for all 5 valid constants (no regression)."
+    }
+  ],
+  "callers_of_DecodeTypedRecord": [
+    "engine/wal/record_test.go (many subtests)",
+    "engine/wal/recovery.go (replay path, presumed reader of ReadSegment output)",
+    "engine/catalog (RecoverFromWAL, presumed)",
+    "engine/split (RecoverSplitCommits, presumed)"
+  ],
+  "risk": "Low. New validation only tightens an existing decode path; all currently-valid on-disk RecordType byte values (1-5) remain accepted unchanged. No changes to encode path, no changes to on-disk format. Downstream callers that only ever decode well-formed records written by this same package's Encode functions are unaffected; callers reading corrupted/foreign data now get an explicit error instead of silently misinterpreting bytes.",
+  "out_of_scope_confirmed": [
+    "engine/btree/persist.go (subtask 4.5.4.1, deferred)",
+    "engine/wal/checkpoint.go (subtask 4.5.4.4)",
+    "docs/LLD/wal.md (subtask 4.5.4.5)"
+  ],
+  "prior_landed_work": {
+    "subtask_4.5.4.2": "commit 5937be9 removed orphaned AppendAndApply doc-comment block from engine/wal/record.go; verified PASS. This run builds on top of that commit's record.go state, not in conflict (different region of file: doc-comment block was ~lines 342-370, this change is in DecodeTypedRecord ~line 103-113)."
+  }
+}

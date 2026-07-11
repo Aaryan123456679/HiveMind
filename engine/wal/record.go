@@ -106,8 +106,12 @@ func DecodeTypedRecord(data []byte) (TypedRecord, error) {
 	if len(data) < recordTypeSize {
 		return TypedRecord{}, fmt.Errorf("wal: record too short to contain a type tag: got %d bytes, need at least %d", len(data), recordTypeSize)
 	}
+	t := RecordType(data[0])
+	if t == RecordTypeInvalid || t > RecordSplitCommit {
+		return TypedRecord{}, fmt.Errorf("wal: decode: invalid record type %d", byte(t))
+	}
 	return TypedRecord{
-		Type:    RecordType(data[0]),
+		Type:    t,
 		Payload: data[recordTypeSize:],
 	}, nil
 }

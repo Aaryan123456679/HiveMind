@@ -1,0 +1,13 @@
+{
+  "subtask": "4.5.4.3",
+  "checks": [
+    { "check": "gofmt -l engine/wal/record.go engine/wal/record_test.go", "result": "clean (no output)" },
+    { "check": "go vet ./engine/wal/...", "result": "clean" },
+    { "check": "go test ./engine/wal/... -run TestDecodeTypedRecordRejectsInvalidType -v", "result": "PASS (3 subtests: zero_value, out_of_range, valid_types_still_decode)" },
+    { "check": "go test ./engine/wal/... -race -v (full suite)", "result": "PASS, all tests including pre-existing TestRecoveryReplayInvalidRecordType (recovery_test.go:298) which specifically exercises this exact gap end-to-end through Replay; zero regressions" },
+    { "check": "all 5 currently-valid RecordType constants still decode without error", "result": "confirmed via TestDecodeTypedRecordRejectsInvalidType/valid_types_still_decode and pre-existing TestRecordEncodeDecodeRoundTrip" }
+  ],
+  "validation_matrix_covered": true,
+  "build_green": true,
+  "note": "This is internal sanity only, NOT verification (invariant I4). Independent /cdr:verify pass required before this work is considered accepted."
+}

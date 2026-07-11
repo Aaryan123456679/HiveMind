@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "run_id": "057-implementation",
+  "macro": "cdr-implement",
+  "subtask": "4.5.4.3",
+  "issue": 41,
+  "status": "completed",
+  "commit": "70e1ba45fb423cef39a5045948e2c3ea5a8a83b9",
+  "commit_parent": "2555aa9c53c71f16359769b06bfaa564ae3c2a08",
+  "not_verified": true,
+  "verification_required": "/cdr:verify must independently confirm this commit before it is accepted (invariant I4: implementer never self-verifies).",
+  "files_changed": [
+    "engine/wal/record.go",
+    "engine/wal/record_test.go"
+  ],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-11/057-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-11/057-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-11/057-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-11/057-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-11/057-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-11/057-implementation/self-consistency.json",
+    "changed_function": "engine/wal/record.go DecodeTypedRecord (approx lines 103-115 post-change)",
+    "new_test": "engine/wal/record_test.go TestDecodeTypedRecordRejectsInvalidType (added directly after TestAsXxxTypeMismatch)"
+  },
+  "test_results_summary": {
+    "targeted": "go test ./engine/wal/... -run TestDecodeTypedRecordRejectsInvalidType -v => PASS (3 subtests)",
+    "full_suite": "go test ./engine/wal/... -race -v => PASS, zero regressions, includes pre-existing TestRecoveryReplayInvalidRecordType which now passes end-to-end against this fix"
+  },
+  "scope_note": "Only engine/wal/ touched, per scope isolation instructions. Does not touch engine/btree/persist.go (4.5.4.1, out of scope/deferred) or engine/wal/checkpoint.go (4.5.4.4). Builds cleanly on top of commit 5937be9 (subtask 4.5.4.2, already verified PASS).",
+  "last_completed_step": "commit_and_handoff",
+  "ended_at": "2026-07-11T06:05:00Z"
+}

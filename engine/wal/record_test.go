@@ -215,6 +215,50 @@ func TestAsXxxTypeMismatch(t *testing.T) {
 	}
 }
 
+// TestDecodeTypedRecordRejectsInvalidType verifies DecodeTypedRecord rejects
+// RecordTypeInvalid (the zero value) and any out-of-range RecordType byte
+// (i.e. greater than the highest currently-defined constant,
+// RecordSplitCommit) with an explicit error, instead of silently decoding a
+// corrupted/garbage record. It also confirms every currently-valid
+// RecordType constant is unaffected and still decodes successfully.
+func TestDecodeTypedRecordRejectsInvalidType(t *testing.T) {
+	t.Run("zero value", func(t *testing.T) {
+		data := []byte{byte(RecordTypeInvalid), 'x'}
+		if _, err := DecodeTypedRecord(data); err == nil {
+			t.Error("DecodeTypedRecord with RecordTypeInvalid (0): expected error, got nil")
+		}
+	})
+
+	t.Run("out of range", func(t *testing.T) {
+		for _, typeByte := range []byte{byte(RecordSplitCommit) + 1, 255} {
+			data := []byte{typeByte, 'x'}
+			if _, err := DecodeTypedRecord(data); err == nil {
+				t.Errorf("DecodeTypedRecord with out-of-range type %d: expected error, got nil", typeByte)
+			}
+		}
+	})
+
+	t.Run("valid types still decode", func(t *testing.T) {
+		for _, want := range []RecordType{
+			RecordCatalogPut,
+			RecordCatalogDelete,
+			RecordBTreeInsert,
+			RecordBTreeDelete,
+			RecordSplitCommit,
+		} {
+			data := []byte{byte(want), 'x'}
+			decoded, err := DecodeTypedRecord(data)
+			if err != nil {
+				t.Errorf("DecodeTypedRecord with valid type %v: unexpected error: %v", want, err)
+				continue
+			}
+			if decoded.Type != want {
+				t.Errorf("DecodeTypedRecord with valid type %v: Type = %v, want %v", want, decoded.Type, want)
+			}
+		}
+	})
+}
+
 // TestFsyncBeforeApply proves — empirically, via the package's own exported
 // API rather than by inspecting source — that AppendAndApply's apply
 // callback only fires after the WAL record has been durably fsynced to
