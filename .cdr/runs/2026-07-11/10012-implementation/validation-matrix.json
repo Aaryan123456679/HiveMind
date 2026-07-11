@@ -1,0 +1,49 @@
+{
+  "subtask": "5.2.2",
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "text": "A reranking step can be toggled on the vector-RAG baseline.",
+      "covered_by": [
+        "retrieve_documents_reranked(..., rerank=True|False) parameter",
+        "test_rerank_off_matches_plain_retrieve_documents",
+        "test_rerank_toggle_changes_result_on_discriminating_fixture"
+      ]
+    },
+    {
+      "id": "AC2",
+      "text": "Reranking measurably improves precision@k on a fixture set when enabled.",
+      "covered_by": [
+        "test_precision_at_k_without_rerank_is_imperfect_on_fixture (documents the discriminating case is real)",
+        "test_reranking_improves_precision_at_k_over_baseline (the core acceptance assertion, real numbers in self-consistency.json)"
+      ]
+    },
+    {
+      "id": "AC3 (test spec)",
+      "text": "pytest agents/eval/test_vector_rag_rerank.py: compare precision@k reranking on vs. off on a fixture set.",
+      "covered_by": ["test_reranking_improves_precision_at_k_over_baseline"]
+    },
+    {
+      "id": "AC4 (dispatch constraint)",
+      "text": "Reuse 5.2.1's baseline (chunker + OllamaEmbeddingClient + VectorRagIndex), not reimplement retrieval.",
+      "covered_by": ["vector_rag_rerank.py imports retrieve_documents/VectorRagIndex/OllamaEmbeddingClient from vector_rag.py, defines no chunking/embedding/cosine-similarity logic of its own"]
+    },
+    {
+      "id": "AC5 (dispatch constraint)",
+      "text": "No unjustified new heavy ML dependency; Ollama-only; no paid API; no .env.",
+      "covered_by": ["architecture-discovery.md section 3/5", "impact-analysis.json new_dependencies: []"]
+    }
+  ],
+  "test_tiers": {
+    "pure_unit_no_network": [
+      "test_precision_at_k_*",
+      "test_parse_rerank_order_*"
+    ],
+    "live_local_ollama_skip_if_unreachable": [
+      "test_rerank_off_matches_plain_retrieve_documents",
+      "test_precision_at_k_without_rerank_is_imperfect_on_fixture",
+      "test_reranking_improves_precision_at_k_over_baseline"
+    ]
+  },
+  "explicit_non_fabrication_gate": "If the live-local reranking-improves-precision test does not pass on first honest attempt, the fixture corpus/query is redesigned (not the assertion loosened or the result asserted without running) until a genuine discriminating case is found, per dispatch instruction. Actual iteration log recorded in self-consistency.json."
+}

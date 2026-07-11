@@ -1,0 +1,29 @@
+{
+  "subtask": "5.2.2",
+  "issue": 27,
+  "milestone": 7,
+  "new_files": [
+    "agents/eval/baselines/vector_rag_rerank.py",
+    "agents/eval/test_vector_rag_rerank.py"
+  ],
+  "modified_files": [],
+  "files_read_not_modified": [
+    "agents/eval/baselines/vector_rag.py",
+    "agents/eval/test_vector_rag_baseline.py",
+    "agents/llm/client.py",
+    "agents/llm/ollama_client.py",
+    "agents/pyproject.toml",
+    "docs/HLD.md",
+    "docs/LLD/eval.md"
+  ],
+  "new_dependencies": [],
+  "dependency_change_justification": "None added. Reranking implemented via existing agents/llm/client.py LLMClient + agents/llm/ollama_client.py OllamaClient (both already shipped, issue #18 subtask 3.4.1). No sentence-transformers/torch/cross-encoder model added -- see architecture-discovery.md section 3.",
+  "blast_radius": "Isolated additive change. No existing module's behavior changes: vector_rag.py is imported read-only (its public functions/classes), not modified. No other module in the repo imports agents/eval/baselines/, so zero downstream callers are affected.",
+  "downstream_consumers_of_new_module": [],
+  "external_services_touched": [
+    "local Ollama server (http://localhost:11434), /api/generate endpoint via OllamaClient -- already used by agents/llm/ollama_client.py",
+    "local Ollama server, /api/embed endpoint via OllamaEmbeddingClient -- already used by vector_rag.py (5.2.1), reused unmodified"
+  ],
+  "no_paid_api_confirmation": "Confirmed: no OpenRouter/Gemini/any paid API client instantiated or imported anywhere in the new module or test file.",
+  "env_file_confirmation": "No .env created or referenced."
+}
