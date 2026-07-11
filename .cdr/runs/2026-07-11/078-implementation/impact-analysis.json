@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.5.5.4",
+  "affected_files": [
+    {
+      "path": "engine/catalog/content.go",
+      "change_type": "doc-comment-only",
+      "detail": "Extend ContentStore.Create's doc comment to explicitly document duplicate-fileID overwrite semantics. No behavioral/logic change to createWithHook."
+    },
+    {
+      "path": "engine/catalog/content_test.go",
+      "change_type": "add-tests",
+      "detail": "Add TestContentCreateDuplicateFileID and TestContentCreateEmptyAndLargeContent."
+    }
+  ],
+  "not_touched": [
+    "engine/catalog/file.go",
+    "engine/catalog/idalloc.go",
+    "engine/catalog/catalog.go",
+    "engine/split/*",
+    "engine/btree/*",
+    "engine/wal/*",
+    "engine/mvcc/*",
+    "engine/rpc/*"
+  ],
+  "dependents": [
+    "engine/split (future Epic 2B caller of ContentStore.Create)",
+    "engine/rpc/server.go (delegates to engine/catalog primitives per feature.jsonl entry hivemind-grpc-server-handlers)"
+  ],
+  "risk_level": "low",
+  "risk_rationale": "Doc-comment-only change to production code; no logic modified in content.go. New tests are additive and exercise existing, already-safe (upsert + atomic rename) behavior. Matches prior verification finding's own risk=low rating.",
+  "regression_reference": "2026-07-04/047-verification, subtask 1.4.1 (.cdr/index/regression.jsonl line 42)"
+}

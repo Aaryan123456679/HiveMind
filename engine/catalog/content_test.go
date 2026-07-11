@@ -187,6 +187,145 @@ func TestContentCreateInvalidFileID(t *testing.T) {
 	}
 }
 
+// TestContentCreateDuplicateFileID covers subtask 4.5.5.4's core acceptance
+// criterion: calling Create a second time for the same fileID is legal and performs a
+// full, last-write-wins overwrite of both the content file and the catalog record (see
+// content.go's Create doc comment for the documented semantics this pins down). The
+// second Create's data and rec must entirely supersede the first's -- nothing from the
+// first call may survive (stale bytes, stale catalog fields) or leak (orphaned files in
+// the content directory).
+func TestContentCreateDuplicateFileID(t *testing.T) {
+	cs, cat, _ := newTestContentStore(t)
+
+	const fileID = uint64(123)
+
+	dataA := []byte("# First Version\n\nOriginal body.\n")
+	recA := testContentRecord(fileID)
+	recA.SizeBytes = uint64(len(dataA))
+	recA.LastModified = 1000
+
+	if _, err := cs.Create(recA, dataA); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	dataB := []byte("# Second Version\n\nCompletely different, longer replacement body.\n")
+	recB := testContentRecord(fileID)
+	recB.SizeBytes = uint64(len(dataB))
+	recB.LastModified = 2000
+
+	if _, err := cs.Create(recB, dataB); err != nil {
+		t.Fatalf("second (duplicate-fileID) Create: %v", err)
+	}
+
+	// Read must return the SECOND call's bytes exactly -- not the first's, and not a
+	// concatenation of both.
+	got, err := cs.Read(fileID)
+	if err != nil {
+		t.Fatalf("Read after duplicate Create: %v", err)
+	}
+	if !bytes.Equal(got, dataB) {
+		t.Fatalf("Read after duplicate Create = %q, want %q (second Create's data)", got, dataB)
+	}
+
+	// The catalog record must reflect the SECOND call's rec exactly.
+	gotRec, err := cat.Get(fileID)
+	if err != nil {
+		t.Fatalf("cat.Get after duplicate Create: %v", err)
+	}
+	if !reflect.DeepEqual(gotRec, recB) {
+		t.Fatalf("cat.Get after duplicate Create = %+v, want %+v (second Create's rec)", gotRec, recB)
+	}
+
+	// No leaked/orphaned files: exactly one file must exist in the content directory
+	// for this fileID (the final content/<fileID>.v1.md), and no stray temp files left
+	// behind by writeContentFile's write-temp-then-rename technique.
+	entries, err := os.ReadDir(cs.dir)
+	if err != nil {
+		t.Fatalf("os.ReadDir(cs.dir): %v", err)
+	}
+	var matching []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), fmt.Sprintf("%d", fileID)) {
+			matching = append(matching, e.Name())
+		}
+	}
+	wantName := fmt.Sprintf("%d%s", fileID, contentVersionSuffix)
+	if len(matching) != 1 || matching[0] != wantName {
+		t.Fatalf("content dir entries for fileID %d = %v, want exactly [%q] (no leaked/orphaned files after duplicate Create)", fileID, matching, wantName)
+	}
+}
+
+// TestContentCreateEmptyAndLargeContent covers subtask 4.5.5.4's empty-content and
+// very-large-content input coverage requirement: Create/Read must round-trip
+// zero-length content faithfully (as a zero-length result, not an error), and must
+// round-trip a multi-megabyte payload byte-for-byte, with the catalog's SizeBytes
+// matching in both cases.
+func TestContentCreateEmptyAndLargeContent(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		cs, cat, _ := newTestContentStore(t)
+
+		const fileID = uint64(1)
+		data := []byte{}
+		rec := testContentRecord(fileID)
+		rec.SizeBytes = 0
+
+		if _, err := cs.Create(rec, data); err != nil {
+			t.Fatalf("Create with empty content: %v", err)
+		}
+
+		got, err := cs.Read(fileID)
+		if err != nil {
+			t.Fatalf("Read after empty Create: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("Read after empty Create = %q (len %d), want zero-length", got, len(got))
+		}
+
+		gotRec, err := cat.Get(fileID)
+		if err != nil {
+			t.Fatalf("cat.Get after empty Create: %v", err)
+		}
+		if gotRec.SizeBytes != 0 {
+			t.Fatalf("SizeBytes after empty Create = %d, want 0", gotRec.SizeBytes)
+		}
+	})
+
+	t.Run("large", func(t *testing.T) {
+		cs, cat, _ := newTestContentStore(t)
+
+		const fileID = uint64(2)
+		const largeSize = 8 * 1024 * 1024 // 8 MiB, well over defaultSplitThresholdBytes
+
+		data := make([]byte, largeSize)
+		for i := range data {
+			data[i] = byte('A' + (i % 26)) // deterministic, non-uniform fill pattern
+		}
+
+		rec := testContentRecord(fileID)
+		rec.SizeBytes = uint64(len(data))
+
+		if _, err := cs.Create(rec, data); err != nil {
+			t.Fatalf("Create with large content: %v", err)
+		}
+
+		got, err := cs.Read(fileID)
+		if err != nil {
+			t.Fatalf("Read after large Create: %v", err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatalf("Read after large Create returned %d bytes, want %d bytes matching the original content byte-for-byte", len(got), len(data))
+		}
+
+		gotRec, err := cat.Get(fileID)
+		if err != nil {
+			t.Fatalf("cat.Get after large Create: %v", err)
+		}
+		if gotRec.SizeBytes != uint64(largeSize) {
+			t.Fatalf("SizeBytes after large Create = %d, want %d", gotRec.SizeBytes, largeSize)
+		}
+	})
+}
+
 // TestContentRead covers subtask 1.4.2's full test spec: writing content via
 // Create then reading it back via Read must return byte-for-byte identical
 // content to what was written.

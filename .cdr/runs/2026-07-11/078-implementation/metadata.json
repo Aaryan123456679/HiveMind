@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "078-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "4.5.5.4",
+  "git_head": "a99882cb0489194e1b09823337cbcf4f8fcc92ad",
+  "run_key": "issue42-4.5.5.4-a99882cb-content-duplicate-fileid",
+  "status": "in_progress",
+  "last_completed_step": "impact-analysis",
+  "started_at": "2026-07-11T00:00:00Z",
+  "ended_at": null,
+  "_repair_note": "This metadata.json was inadvertently overwritten by a concurrent agent (running subtask 4.5.1.6, which raced onto this same ordinal 078) and has been reconstructed best-effort from this run's own requirement.md/impact-analysis.json/architecture-discovery.md. The colliding agent has moved its own run to a fresh ordinal (see .cdr/runs/2026-07-11/079-implementation). Please verify last_completed_step/status against your own run's actual progress."
+}

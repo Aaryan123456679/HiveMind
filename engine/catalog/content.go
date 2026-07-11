@@ -222,6 +222,23 @@ func (cs *ContentStore) ContentPath(fileID uint64) string {
 // fails, the WAL record is already durable (matching wal.AppendAndApply's documented
 // error-handling contract) — recovery/replay of that record is a later subtask's concern,
 // not this one's.
+//
+// Duplicate-fileID semantics (subtask 4.5.5.4): calling Create a second time for a
+// fileID that already has a catalog record and/or content file is LEGAL and
+// intentionally performs a full, last-write-wins overwrite — it is not guarded by any
+// already-exists check. This is safe rather than corrupting because both halves of the
+// write are themselves safe overwrites: writeContentFile always writes to a fresh temp
+// file and atomically os.Rename's it over ContentPath(rec.FileID), so a second Create
+// cleanly replaces the previous content file with no leaked file/inode and no
+// torn/partial state ever observable by a concurrent Read (see writeContentFile's and
+// Read's doc comments); and cs.cat.Put(rec) is Catalog's own documented upsert
+// (delete-old-slot-then-reinsert, no history kept, no leaked page slots — see
+// catalog.go's Put doc comment), not an in-place mutation that could leave a
+// half-updated record. Net effect of two Creates for the same fileID: the SECOND
+// call's data and rec entirely supersede the first's, byte-for-byte and field-for-field;
+// nothing from the first call survives or leaks. Callers that need "create only if
+// fileID does not already exist" semantics must check cs.cat.Get(rec.FileID) themselves
+// before calling Create — Create itself does not perform that check.
 func (cs *ContentStore) Create(rec CatalogRecord, data []byte) (int64, error) {
 	return cs.createWithHook(rec, data, nil)
 }
