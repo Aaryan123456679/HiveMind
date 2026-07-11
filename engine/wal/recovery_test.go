@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -622,5 +623,61 @@ func TestReplayCRCCorruption(t *testing.T) {
 		if got[i].Type != want[i].Type || !bytes.Equal(got[i].Payload, want[i].Payload) {
 			t.Errorf("replayed record %d = {%s, %x}, want {%s, %x}", i, got[i].Type, got[i].Payload, want[i].Type, want[i].Payload)
 		}
+	}
+}
+
+// TestReplayCheckpointBeyondExistingSegmentErrors verifies recovery.go's
+// guard (segNum > lastSegment) that rejects a checkpoint pointing at a
+// segment number beyond any existing wal-<N>.log file: this indicates the
+// on-disk state is inconsistent with the checkpoint (e.g. a segment file was
+// lost or the checkpoint was corrupted/tampered with), and Replay must
+// surface a hard error rather than silently treating it as nothing-to-replay
+// or as starting from a nonexistent segment. This guard existed prior to
+// this test (see recovery.go) but was previously unexercised by any test in
+// this package.
+func TestReplayCheckpointBeyondExistingSegmentErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	const maxSegmentBytes = 4096 // large enough that every record below stays in segment 0
+	w, err := OpenWriter(dir, maxSegmentBytes)
+	if err != nil {
+		t.Fatalf("OpenWriter: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		rec := NewCatalogPutRecord(uint64(i), []byte(fmt.Sprintf("value-%03d", i)))
+		if _, err := w.Append(rec.Encode()); err != nil {
+			t.Fatalf("Append(%d): %v", i, err)
+		}
+	}
+
+	lastSegNum := w.SegmentNum()
+	if err := w.Close(); err != nil {
+		t.Fatalf("Writer.Close: %v", err)
+	}
+	if lastSegNum != 0 {
+		t.Fatalf("test setup: expected all records to land in segment 0, got last segment %d", lastSegNum)
+	}
+
+	// Checkpoint against segment 5: no wal-5.log exists on disk (only
+	// wal-0.log does), so this manifest.json is inconsistent with the WAL
+	// directory's actual on-disk segments.
+	const checkpointSegment = 5
+	if err := Checkpoint(dir, uint64(checkpointSegment), 0); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if _, err := os.Stat(segmentPath(dir, checkpointSegment)); !os.IsNotExist(err) {
+		t.Fatalf("test setup: expected no wal-%d.log to exist, stat returned err=%v", checkpointSegment, err)
+	}
+
+	err = Replay(dir, func(TypedRecord) error {
+		t.Fatalf("Replay: apply was invoked, want the beyond-existing-segment guard to fire before any segment is read")
+		return nil
+	})
+	if err == nil {
+		t.Fatalf("Replay: got nil error, want a hard error because the checkpoint's segment (%d) is beyond the last existing segment (%d)", checkpointSegment, lastSegNum)
+	}
+	if !strings.Contains(err.Error(), "beyond the last existing segment") {
+		t.Errorf("Replay error = %q, want it to mention the checkpoint segment being beyond the last existing segment", err.Error())
 	}
 }
