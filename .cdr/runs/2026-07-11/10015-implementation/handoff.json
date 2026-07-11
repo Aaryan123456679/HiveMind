@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "run_id": "10015-implementation",
+  "subtask": "5.2.3",
+  "issue": 27,
+  "milestone": 7,
+  "status": "completed",
+  "commit": "2697d0746583dea2d5a0892c610bd3e0c6d42c41",
+  "commit_parent": "b85793e80f884844ccb4ce149b63e4d329d48470",
+  "new_files": [
+    "agents/eval/baselines/graphrag_lite.py",
+    "agents/eval/test_graphrag_baseline.py"
+  ],
+  "modified_files": [],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-11/10015-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-11/10015-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-11/10015-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-11/10015-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-11/10015-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-11/10015-implementation/self-consistency.json"
+  },
+  "key_symbols": {
+    "agents/eval/baselines/graphrag_lite.py": [
+      "DEFAULT_LLM_MODEL",
+      "DEFAULT_MAX_HOPS",
+      "HOP_DECAY",
+      "build_entity_extraction_prompt",
+      "parse_entity_list",
+      "extract_entities",
+      "EntityGraph",
+      "EntityGraph.build",
+      "retrieve_documents"
+    ],
+    "agents/eval/test_graphrag_baseline.py": [
+      "_StubLLMClient",
+      "test_hop_expansion_recovers_document_that_direct_match_alone_misses",
+      "test_top_hit_for_unambiguous_query_is_the_correct_document",
+      "test_mean_recall_at_k_is_plausible_on_fixture_queries",
+      "test_distractor_document_is_never_the_top_hit"
+    ]
+  },
+  "design_summary": "Entity extraction: prompted local Ollama completion (llama3.1:8b) via the existing LLMClient interface, JSON-array response parsed with json_fences.strip_code_fences/sanitize_control_chars_and_triple_quotes (reused, not reimplemented); non-primary capitalized-run heuristic fallback only on unparseable output. Graph representation: stdlib-only dataclass EntityGraph with three dict[str, set[str]] adjacency maps (entity->docs, entity->co-occurring entities, doc->entities) -- no new dependency (no networkx). retrieve_documents matches vector_rag.retrieve_documents's list[str] ranked-doc-id output shape; resolves query entities against the graph (exact + substring-containment fallback for paraphrase tolerance), then does a capped-hop BFS (DEFAULT_MAX_HOPS=1) with per-hop score decay (HOP_DECAY=0.5) as the disclosed mitigation for docs/HLD.md #7's graph-traversal-blow-up risk.",
+  "test_results": "21/21 new tests pass (9 pure-unit, 6 deterministic stub-LLMClient, 6 live-local against real Ollama), reproduced 3x with no flakiness observed. 83/83 across the full agents/eval/ suite (62 pre-existing + 21 new), no regressions. ruff check clean.",
+  "prompt_iteration_disclosed": "The initial entity-extraction prompt returned an empty JSON array for short question-style queries lacking formal proper nouns (e.g. 'How do I get a new password if I'm locked out of my account?'), which silently broke retrieval for those queries. Fixed during self-consistency by broadening the prompt to explicitly request noun-phrase concepts/topics in addition to proper nouns, with a worked question-style example. Also fixed the heuristic fallback's regex picking up sentence-initial 'The' as part of an entity string.",
+  "constraints_confirmed": {
+    "ollama_only": true,
+    "no_paid_api": true,
+    "no_env_file": true,
+    "no_new_pip_dependency": true,
+    "graph_is_stdlib_dict_of_sets_no_networkx": true
+  },
+  "not_verified_by_self": "Per invariant I4, this implementer did not verify its own work. Handoff is for /cdr:verify to independently re-run agents/eval/test_graphrag_baseline.py and confirm the disclosed reasoning.",
+  "open_items_for_verifier": [
+    "Confirm the entity-extraction prompt's reliability across repeated live runs on the verifier's own Ollama instance -- LLM-prompted extraction is inherently less deterministic than 5.2.1's embeddings even at temperature=0.0; this run observed 3/3 reproducible passes but that is not an exhaustive guarantee.",
+    "Confirm no existing file (vector_rag.py, vector_rag_rerank.py, agents/llm/*, agents/pyproject.toml) was modified -- git diff shows additions only (two new files).",
+    "Confirm the HOP_DECAY=0.5 / DEFAULT_MAX_HOPS=1 blow-up-mitigation design in architecture-discovery.md section 3 is sound and sufficiently disclosed, and that the substring-containment entity-matching fallback is a genuine (non-strawman, non-overly-permissive) design choice rather than one that trivially inflates recall.",
+    "Confirm the fixture corpus/query set in test_graphrag_baseline.py's live tier is a fair, discriminating test of entity-graph retrieval (not pre-rigged toward success), consistent with 5.2.1's/5.2.2's own fairness-disclosure standard."
+  ]
+}
