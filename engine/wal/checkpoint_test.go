@@ -1,7 +1,11 @@
 package wal
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -99,6 +103,129 @@ func TestCheckpointManifest(t *testing.T) {
 		if p == laterPath {
 			t.Errorf("ArchivableSegments included a segment %q newer than the checkpoint, want it excluded", p)
 		}
+	}
+}
+
+// TestCheckpointManifestRoundTripTableDriven is subtask 4.5.14.3's required
+// test (issue #52, originating from the 2026-07-04 040-verification
+// regression note on subtask 1.3.3): TestCheckpointManifest above only ever
+// empirically exercises Checkpoint+LoadCheckpoint round-trip fidelity for a
+// single (segmentNumber, offsetInSegment) pair. This test exercises several
+// distinct pairs table-driven, explicitly including offset=0 (both alone and
+// paired with segment 0), and a large segment/offset pair, each written to
+// and read back from its own fresh WAL directory.
+func TestCheckpointManifestRoundTripTableDriven(t *testing.T) {
+	tests := []struct {
+		name            string
+		segmentNumber   uint64
+		offsetInSegment int64
+	}{
+		{name: "segment0_offset0", segmentNumber: 0, offsetInSegment: 0},
+		{name: "segment0_offsetNonZero", segmentNumber: 0, offsetInSegment: 128},
+		{name: "segmentNonZero_offset0", segmentNumber: 1, offsetInSegment: 0},
+		{name: "midRangePair", segmentNumber: 5, offsetInSegment: 4096},
+		{name: "largeSegmentAndOffset", segmentNumber: uint64(math.MaxUint32), offsetInSegment: int64(math.MaxInt32)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			if err := Checkpoint(dir, tc.segmentNumber, tc.offsetInSegment); err != nil {
+				t.Fatalf("Checkpoint(%d, %d): %v", tc.segmentNumber, tc.offsetInSegment, err)
+			}
+
+			gotSegment, gotOffset, found, err := LoadCheckpoint(dir)
+			if err != nil {
+				t.Fatalf("LoadCheckpoint: %v", err)
+			}
+			if !found {
+				t.Fatalf("LoadCheckpoint found=false, want true after Checkpoint(%d, %d)", tc.segmentNumber, tc.offsetInSegment)
+			}
+			if gotSegment != tc.segmentNumber {
+				t.Errorf("LoadCheckpoint segmentNumber = %d, want %d", gotSegment, tc.segmentNumber)
+			}
+			if gotOffset != tc.offsetInSegment {
+				t.Errorf("LoadCheckpoint offsetInSegment = %d, want %d", gotOffset, tc.offsetInSegment)
+			}
+		})
+	}
+}
+
+// TestCheckpointDoubleOverwrite is subtask 4.5.14.3's second required test
+// (issue #52): calling Checkpoint twice in succession, with two distinct
+// pointers, must cleanly overwrite manifest.json with the second pointer's
+// values -- not merge, not corrupt, and not leave a stray manifest.json.tmp
+// behind (Checkpoint's atomic temp-file+Sync+os.Rename idiom should consume
+// the temp file into the final path on every call).
+func TestCheckpointDoubleOverwrite(t *testing.T) {
+	dir := t.TempDir()
+
+	first := CheckpointPointer{SegmentNumber: 2, OffsetInSegment: 64}
+	second := CheckpointPointer{SegmentNumber: 9, OffsetInSegment: 1024}
+
+	if err := Checkpoint(dir, first.SegmentNumber, first.OffsetInSegment); err != nil {
+		t.Fatalf("first Checkpoint(%d, %d): %v", first.SegmentNumber, first.OffsetInSegment, err)
+	}
+
+	tmpPath := filepath.Join(dir, manifestTempFileName)
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Fatalf("after first Checkpoint, manifest.json.tmp still exists (stat err = %v), want it consumed by os.Rename", err)
+	}
+
+	if err := Checkpoint(dir, second.SegmentNumber, second.OffsetInSegment); err != nil {
+		t.Fatalf("second Checkpoint(%d, %d): %v", second.SegmentNumber, second.OffsetInSegment, err)
+	}
+
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Fatalf("after second Checkpoint, manifest.json.tmp still exists (stat err = %v), want it consumed by os.Rename", err)
+	}
+
+	// LoadCheckpoint must report the second pointer's values, not the
+	// first's and not some merge of the two.
+	gotSegment, gotOffset, found, err := LoadCheckpoint(dir)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint: %v", err)
+	}
+	if !found {
+		t.Fatalf("LoadCheckpoint found=false, want true after two Checkpoint calls")
+	}
+	if gotSegment != second.SegmentNumber {
+		t.Errorf("LoadCheckpoint segmentNumber = %d, want %d (the second Checkpoint's value, want no trace of first Checkpoint's %d)", gotSegment, second.SegmentNumber, first.SegmentNumber)
+	}
+	if gotOffset != second.OffsetInSegment {
+		t.Errorf("LoadCheckpoint offsetInSegment = %d, want %d (the second Checkpoint's value, want no trace of first Checkpoint's %d)", gotOffset, second.OffsetInSegment, first.OffsetInSegment)
+	}
+
+	// Independently verify manifest.json on disk is a single, well-formed
+	// JSON document with exactly the second pointer's values -- not a
+	// concatenation/corruption of both writes, which LoadCheckpoint's
+	// json.Unmarshal alone might tolerate or mask (e.g. if additional
+	// trailing bytes happened not to break decoding of the first value).
+	manifestPath := filepath.Join(dir, manifestFileName)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("reading manifest.json directly: %v", err)
+	}
+
+	var onDisk CheckpointPointer
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("manifest.json is not valid, well-formed JSON: %v (raw contents: %s)", err, data)
+	}
+	if onDisk != second {
+		t.Errorf("manifest.json on disk decodes to %+v, want exactly the second pointer %+v (no corruption/merge)", onDisk, second)
+	}
+
+	// Ensure the decoder consumed the entire byte stream (no trailing
+	// garbage/second concatenated document), by re-encoding through the
+	// same MarshalIndent format Checkpoint uses and confirming byte-for-byte
+	// equality with what is actually on disk.
+	wantBytes, err := json.MarshalIndent(second, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent(second): %v", err)
+	}
+	if string(data) != string(wantBytes) {
+		t.Errorf("manifest.json raw bytes = %q, want exactly %q (byte-for-byte, no leftover/corrupted content)", data, wantBytes)
 	}
 }
 

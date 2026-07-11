@@ -1,0 +1,12 @@
+{
+  "subtask": "4.5.14.3",
+  "checks": [
+    {"check": "gofmt -l engine/wal/checkpoint_test.go", "result": "clean (no output)"},
+    {"check": "go vet ./engine/wal/...", "result": "clean"},
+    {"check": "go test ./engine/wal/... -run TestCheckpointManifestRoundTripTableDriven -v", "result": "PASS, all 5 subtests pass"},
+    {"check": "go test ./engine/wal/... -run TestCheckpointDoubleOverwrite -v", "result": "PASS"},
+    {"check": "go test ./engine/wal/... -race", "result": "ok, full package green (includes pre-existing tests, no regressions)"}
+  ],
+  "validation_matrix_covered": true,
+  "note": "This is internal sanity only (build green, matrix covered) per invariant I4 -- not independent verification. /cdr:verify must independently confirm."
+}
