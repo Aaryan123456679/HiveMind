@@ -1,0 +1,28 @@
+{
+  "subtask": "4.5.1.4",
+  "issue": 38,
+  "impacted_modules": ["engine/btree/lookup.go"],
+  "finding": "already_resolved",
+  "resolving_commit": "3ef7cdec542e74df80b405e2297ca54633d9d90e",
+  "resolving_commit_subject": "docs(btree): fix stale version-field/lock-free doc comments + add restart-attempt observability counter",
+  "verified_via": [
+    "read Tree.Lookup doc comment (engine/btree/lookup.go lines 347-379): already scopes the lock-free guarantee to per-node latches and contains a dedicated paragraph (lines 357-365) disclosing the rootMu/t.Root() exception",
+    "read Tree.Lookup implementation (line 380): calls t.Root() every retry-loop iteration, which acquires t.rootMu -- directly confirms the doc comment's claim rather than assuming the issue text is precise",
+    "git show 3ef7cde -- engine/btree/lookup.go: diff shows the old wording ('it never calls NodeStore.Lock or TryLock, so it can never block a writer and can never be blocked by one') was replaced by the current, scoped wording plus the new rootMu exception paragraph",
+    "grep -n 'never lock|never call.*Lock|rootMu' engine/btree/lookup.go against current file: no remaining 'never locks'-style overclaim"
+  ],
+  "planned_change": "none (source already satisfies the acceptance criterion)",
+  "risk_of_change": "editing already-correct wording risks introducing drift from the accurate, already-shipped account in commit 3ef7cde",
+  "action": "no-op confirmation, docs-only CDR artifacts under .cdr/runs/2026-07-11/066-implementation/, no production or test code touched",
+  "production_code_changed": false,
+  "out_of_scope_untouched": [
+    "engine/split/*",
+    "engine/wal/*",
+    "engine/catalog/*",
+    "engine/btree/delete.go (4.5.1.1)",
+    "engine/btree/insert.go (4.5.1.2)",
+    "engine/btree/latch.go (4.5.1.3)",
+    "engine/btree/delete_test.go, engine/btree/insert_test.go (4.5.1.5)",
+    "engine/btree/lookup_test.go, engine/btree/scan_test.go, engine/btree/btree_test.go (4.5.1.6)"
+  ]
+}
