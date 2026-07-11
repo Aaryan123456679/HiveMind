@@ -1,0 +1,36 @@
+{
+  "subtask": "4.5.14.1",
+  "type": "doc_only",
+  "criteria": [
+    {
+      "id": "AC-1",
+      "description": "writer.go's doc comments no longer claim Append's durability discipline matches engine/catalog's literal WriteAt+Sync idiom",
+      "validation": "Manual diff review of engine/wal/writer.go: confirm the phrase 'matching this repo's WriteAt+Sync durability idiom' referencing engine/catalog/file.go's FileManager.WritePage and engine/catalog/idalloc.go's IDAllocator.Next is removed/replaced.",
+      "status": "pending_implementation"
+    },
+    {
+      "id": "AC-2",
+      "description": "Comment corrected to describe the actual plain sequential file.Write+Sync behavior",
+      "validation": "Manual diff review: new comment text explicitly names sequential file.Write (header then payload) + file.Sync at current append position as the actual mechanism.",
+      "status": "pending_implementation"
+    },
+    {
+      "id": "AC-3",
+      "description": "go vet ./engine/wal/... clean",
+      "validation": "Run `go vet ./engine/wal/...` from repo root after edit; expect zero output/exit 0.",
+      "status": "pending_implementation"
+    },
+    {
+      "id": "AC-4",
+      "description": "gofmt -l clean",
+      "validation": "Run `gofmt -l engine/wal/` after edit; expect empty output.",
+      "status": "pending_implementation"
+    },
+    {
+      "id": "AC-5",
+      "description": "No behavioral change (doc-only)",
+      "validation": "git diff scoped to comment lines only, no changes to executable code, no changes to writer_test.go or other test files. Confirmed via `git diff --stat`.",
+      "status": "pending_implementation"
+    }
+  ]
+}

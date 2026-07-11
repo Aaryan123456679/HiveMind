@@ -1,0 +1,24 @@
+{
+  "subtask": "4.5.14.1",
+  "issue": 52,
+  "change_type": "doc_only",
+  "files_to_change": [
+    {
+      "path": "engine/wal/writer.go",
+      "reason": "Writer struct doc comment (lines ~46-51) literally claims Append's fsync-before-return matches engine/catalog's WriteAt+Sync durability idiom. Actual Append implementation (lines 326-364) uses plain sequential file.Write (header, then payload) followed by file.Sync -- no WriteAt, no absolute-offset addressing. Fix corrects the comment text only."
+    }
+  ],
+  "files_confirmed_no_change_needed": [
+    {
+      "path": "docs/LLD/wal.md",
+      "reason": "Already synced by issue #41 subtask 4.5.4.5 (commit 7e7b97a). Its 'Record header and rotation' section already describes Append as 'writes the header, then the payload, then calls file.Sync() before returning' with no WriteAt/catalog-idiom-match claim. No correction needed here."
+    },
+    {
+      "path": "engine/catalog/file.go, engine/catalog/idalloc.go",
+      "reason": "Read-only reference check: confirmed these do genuinely use WriteAt+Sync (FileManager.WritePage line 281/284, IDAllocator.Next line 204/207). No change needed -- the catalog side of the original comment's factual claim is correct; only the 'writer.go matches it' claim is wrong."
+    }
+  ],
+  "downstream_consumers": "None. Doc comment only; no exported API, type, or behavior changes. No callers of Writer.Append or any other engine/wal symbol are affected.",
+  "concurrency_check": "Confirmed via issue #52 dispatch note that other in-flight agents (issues #43/#47/#56, #50/#53) touch engine/rpc, api/main.go, agents/query, engine/btree, agents/ingestion, docs/LLD/{btree,query-agent}.md -- none touch engine/wal/. No file-level collision risk.",
+  "risk": "very_low"
+}

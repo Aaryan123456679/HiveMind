@@ -45,10 +45,19 @@ const (
 
 // Writer appends records to an append-only, size-rotated sequence of WAL
 // segment files. It is the durability mechanism described in
-// docs/LLD/wal.md: every Append fsyncs the record to disk before returning,
-// matching this repo's WriteAt+Sync durability idiom (see
-// engine/catalog/file.go's FileManager.WritePage and
-// engine/catalog/idalloc.go's IDAllocator.Next).
+// docs/LLD/wal.md: every Append writes the record (header, then payload)
+// via a plain sequential file.Write at the file's current append position,
+// then calls file.Sync before returning -- so no Append call returns until
+// its record is durably on disk.
+//
+// This is a plain sequential-write-then-Sync idiom, not engine/catalog's
+// WriteAt+Sync idiom (see engine/catalog/file.go's FileManager.WritePage
+// and engine/catalog/idalloc.go's IDAllocator.Next): catalog's idiom writes
+// to a computed absolute offset within a fixed-layout, random-access file
+// (pages/slots), whereas Append only ever writes at end-of-file in an
+// append-only log and never seeks to an arbitrary offset. Both are
+// reasonable, deliberate choices for their respective access patterns; this
+// file's approach should not be read as mirroring catalog's WriteAt-based one.
 //
 // Writer does NOT define record semantics/types (deferred to subtask 1.3.2)
 // and does NOT perform crash-recovery / torn-tail validation of a resumed
