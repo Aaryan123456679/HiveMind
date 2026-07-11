@@ -300,6 +300,52 @@ def test_unresolvable_related_topic_collected_not_raised():
     assert "unknown/topic" in result.errors[0]
 
 
+def test_execute_segment_related_topic_with_no_matching_file_isolated():
+    """Issue #57, 4.5.18.6 (F2): a new, dedicated unit test isolating
+    `execute_segment`'s fileID-resolution branch for a `related_topic` that has no
+    matching file, directly against `execute_segment` itself (not just a lower-level
+    resolver function) -- distinct from, and in addition to,
+    `test_unresolvable_related_topic_collected_not_raised` above (which exercises a
+    *mix* of one resolvable and one unresolvable related topic). Here the segment has
+    exactly one `related_topic`, which resolves to `None` (as if the catalog/shortlist
+    genuinely has no file for that path), with no entities and no other related
+    topics, isolating this branch from every other effect `execute_segment` can have.
+    """
+    client = _FakeWiringClient(next_file_id=77, new_version=1)
+    segment_result = _segment(
+        topic_action="CREATE_NEW",
+        new_topic_path="billing/InvoiceDisputes",
+        entities=[],
+        related_topics=["nonexistent/topic-with-no-file"],
+    )
+
+    def empty_catalog_resolver(_path: str) -> int | None:
+        # Mirrors a real caller's catalog genuinely containing no match for this path
+        # (as opposed to `_no_resolver`, which is used elsewhere purely as a stub for
+        # cases where resolution is irrelevant to what's under test).
+        return None
+
+    result = execute_segment(
+        segment_result, client, resolve_topic_file_id=empty_catalog_resolver
+    )
+
+    # The content write itself must still succeed -- an unresolvable related_topic is
+    # a best-effort-phase failure, not a fail-fast one (only APPEND_EXISTING's
+    # target_topic is fail-fast; see wiring.py's "Error-handling strategy" section).
+    assert result.file_id == 77
+    assert result.new_version == 1
+
+    # No edge is ever attempted for the unresolvable related_topic.
+    assert client.put_edge_calls == []
+    assert result.llm_asserted_edges_created == 0
+
+    # The failure is collected, not raised or silently dropped, and names the exact
+    # unresolvable related_topic for a caller to log/retry/surface.
+    assert len(result.errors) == 1
+    assert "nonexistent/topic-with-no-file" in result.errors[0]
+    assert "related_topic" in result.errors[0]
+
+
 def test_duplicate_related_topics_single_edge():
     client = _FakeWiringClient(next_file_id=42)
     segment_result = _segment(related_topics=["billing/Refunds", "billing/Refunds"])

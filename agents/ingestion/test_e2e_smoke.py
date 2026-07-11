@@ -72,6 +72,21 @@ observation to look like a regression when it was actually issue #43's fix worki
 as intended. The three affected assertions below (`created_file_ids`/duplicate
 check, the create/append-count partition, and the post-run `SearchCandidates`
 check) were rewritten to assert the corrected, post-#43 reality instead.
+
+Follow-up (issue #57, 4.5.18.6, F1) -- assertion 3 hardened to require a real append
+-------------------------------------------------------------------------------------
+4.5.18.1's own verification (run `990-verification`, PASS_WITH_COMMENTS) flagged that
+assertion 3 below only asserted `create_new_count + append_existing_count ==
+successful_docs` and `create_new_count >= 1` -- it did not hard-require
+`append_existing_count >= 1`, so a hypothetical future regression that made every
+successful doc resolve to `CREATE_NEW` again (i.e. a silent reversion of issue #43's
+`pathIndex` fix, or of this run's own `resolve_topic_file_id`/`search_candidates`
+wiring) would still pass this test. `append_existing_count >= 1` is now asserted
+explicitly: this run processes 11 real documents against an initially empty catalog,
+with the earlier-created-in-this-run topics discoverable via both `path_to_file_id`
+and the real post-#43 `SearchCandidates` path, so at least one later document
+legitimately resolving `APPEND_EXISTING` is the expected, deterministic-enough
+outcome of a healthy pipeline, not a coincidental one.
 """
 
 from __future__ import annotations
@@ -359,6 +374,21 @@ def test_full_pipeline_smoke(running_engine: str) -> None:
         #    at least the first-processed doc(s) must CREATE_NEW.
         assert create_new_count + append_existing_count == successful_docs
         assert create_new_count >= 1
+        # Issue #57, 4.5.18.6 (F1): hard-require at least one real APPEND_EXISTING
+        # resolution too, not just report/tolerate whatever value happened to come
+        # out. Without this, a future regression that silently made every successful
+        # doc fall back to CREATE_NEW (e.g. a reversion of issue #43's `pathIndex`
+        # fix, or of this run's own `resolve_topic_file_id`/`search_candidates`
+        # wiring) would still satisfy every assertion above and pass silently.
+        assert append_existing_count >= 1, (
+            "expected at least one successful doc to resolve APPEND_EXISTING "
+            "(issue #43's PutSegment pathIndex fix means later documents' "
+            "shortlist() should legitimately surface an earlier-created-in-this-run "
+            "topic) -- got 0, which would indicate a silent regression back to the "
+            "pre-#43 every-doc-CREATE_NEW behavior; "
+            f"create_new_count={create_new_count}, "
+            f"append_existing_count={append_existing_count}"
+        )
 
         # 4. Real, durable btree state post-run (issue #43's fix made concrete): since
         #    PutSegment's CREATE branch now indexes every new file's path into the same
