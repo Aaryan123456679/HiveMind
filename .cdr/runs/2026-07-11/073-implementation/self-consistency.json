@@ -1,0 +1,13 @@
+{
+  "subtask": "4.5.3.6",
+  "build": "go build ./engine/split/... -> BUILD_OK",
+  "vet": "go vet ./engine/split/... -> clean, no output",
+  "matrix_coverage": "all 5 validation-matrix.json entries covered",
+  "target_test_repeat_runs": [
+    {"cmd": "go test ./engine/split/... -race -run TestReaderDuringSplit -count=50", "result": "PASS 50/50", "duration": "20.531s"},
+    {"cmd": "go test ./engine/split/... -race -run TestReaderDuringSplit -count=100", "result": "PASS 100/100", "duration": "27.292s"}
+  ],
+  "package_scoped_full_suite": {"cmd": "go test ./engine/split/... -race", "result": "ok", "duration": "109.858s"},
+  "scope_check": "git status --short shows only engine/split/split_race_test.go modified by this agent (guard.go/guard_test.go/orchestrate.go/orchestrate_test.go modifications belong to other concurrent agents, not staged/committed by this run)",
+  "note": "This is internal sanity only, not independent verification (invariant I4) -- /cdr:verify is a separate step."
+}

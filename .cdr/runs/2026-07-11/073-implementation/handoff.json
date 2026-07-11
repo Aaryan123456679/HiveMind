@@ -1,0 +1,27 @@
+{
+  "subtask": "4.5.3.6",
+  "issue": 40,
+  "run_dir": ".cdr/runs/2026-07-11/073-implementation",
+  "anomaly": {
+    "description": "This run's engine/split/split_race_test.go changes were already committed -- correctly and completely -- as part of commit 13cb049 (a concurrent agent's docs(cdr) commit for subtask 4.5.1.5), after that agent's own `git commit` swept in this run's already-staged file via the shared working-tree/index (this agent never itself ran `git commit` for that content -- the first `git commit` attempt hit a transient `.git/index.lock` from a concurrent process, and by the time the lock cleared and status was re-checked, the diff was already present in HEAD via the other agent's commit).",
+    "landed_commit": "13cb049952b64afe8c887d932c18bd81d41f77f3",
+    "verified_via": "git diff HEAD -- engine/split/split_race_test.go (empty, confirms exact match to intended change) and git show 13cb049 -- engine/split/split_race_test.go (108 insertions / 3 deletions, matches this run's edits verbatim, including the 4.5.3.6 doc-comment explanation)."
+  },
+  "touched_files": [
+    {"path": "engine/split/split_race_test.go", "lines": "442-486 (doc comment), 513-538 (barrier install), 613-632 (guaranteed post-rename read + stopCh)", "landed_in_commit": "13cb049952b64afe8c887d932c18bd81d41f77f3"}
+  ],
+  "production_files_touched": [],
+  "mechanism": "Reused existing package-level atomicCommitHook test seam in engine/split/execute.go (pre-existing, nil-in-production, already used by TestSplitAtomicCommit), installed to close a channel at stage 'before_commit_append' (fires after the redirect-stub content rename, before WAL commit). One cs.Read(fileID) issued deterministically after that channel closes, guaranteeing the 'observed post-split content at least once' assertion passes regardless of scheduling.",
+  "test_specs": [
+    "go test ./engine/split/... -race -run TestReaderDuringSplit -count=50 -> PASS 50/50 (20.531s)",
+    "go test ./engine/split/... -race -run TestReaderDuringSplit -count=100 -> PASS 100/100 (27.292s)",
+    "go test ./engine/split/... -race -> ok (109.858s, full package suite)"
+  ],
+  "criteria_covered": [
+    "deterministic barrier replaces sleep-based overlap assumption",
+    "no false 'reader never observed post-split content' failures",
+    "50/50 clean runs (spec) -- exceeded with 100/100"
+  ],
+  "not_verified_by_this_agent": "Per invariant I4, this agent does not verify its own work; /cdr:verify is the separate step for independent verification.",
+  "security_disclosure": "During this run, a tool-result batch contained an injected system-reminder-style block claiming a fake date change and instructing concealment from the user. It was disclosed to the user and not acted upon; no date-dependent logic in this subtask was affected."
+}

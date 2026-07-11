@@ -1,0 +1,32 @@
+{
+  "subtask": "4.5.3.6",
+  "issue": 40,
+  "touched_files": [
+    {
+      "path": "engine/split/split_race_test.go",
+      "change_type": "modified",
+      "description": "TestReaderDuringSplit: replaced fixed-iteration sleep-based reader loop's sole reliance on timing with a deterministic barrier (existing atomicCommitHook seam) plus one guaranteed-post-rename read."
+    }
+  ],
+  "production_files_touched": [],
+  "files_explicitly_not_touched_per_scope": [
+    "engine/split/guard.go",
+    "engine/split/guard_test.go",
+    "engine/split/orchestrate.go",
+    "engine/split/orchestrate_test.go",
+    "engine/split/execute.go",
+    "engine/split/execute_test.go",
+    "engine/split/content.go (does not exist in current tree)"
+  ],
+  "dependents": {
+    "engine/split": "TestReaderDuringSplit exercises catalog.ContentStore.Read, split.Orchestrator.BeginSplit/AbortSplit, split.ExecuteSplitAtomic -- all read-only usage from the test's perspective; no API surface changed.",
+    "engine/split_execute_hook": "Reuses the pre-existing atomicCommitHook package var (already shared with execute_test.go's TestSplitAtomicCommit); mutated only for this test's duration and restored to nil via defer. No t.Parallel() in the package (confirmed via grep), so no concurrent-test interference risk."
+  },
+  "risk_level": "low",
+  "risk_notes": [
+    "Test-only change; zero production code modified.",
+    "Reuses an existing, already-vetted test seam (atomicCommitHook) rather than introducing new production surface.",
+    "Background reader loop bound changed from fixed count (400) to a stop-channel-terminated loop with a defensive 2,000,000-iteration cap; cannot spin materially longer than before in practice since it is stopped immediately after the split completes.",
+    "No API, schema, or WAL format changes."
+  ]
+}
