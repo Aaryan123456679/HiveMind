@@ -1,0 +1,20 @@
+{
+  "run": ".cdr/runs/2026-07-11/161-implementation",
+  "issue": 45,
+  "commit": "5340907eb3824d3bdc05dee16dd7e429d382c058",
+  "commit_status": "local only, NOT pushed",
+  "findings_addressed": ["F2", "F3", "F5", "F6"],
+  "findings_deferred": [],
+  "note_on_scope": "Issue #45's body has no numbered subtasks and explicitly states it is 'safe to batch into a single low-priority cleanup task', matching milestone #10's existing convention - implemented as ONE CDR run covering all four findings.",
+  "files_touched": [
+    {"path": "agents/ingestion/test_propose_split.py", "pointer": "new tests appended after existing test_out_of_order_start_marker_raises (F2: test_propose_split_resolves_byte_offsets_for_non_ascii_content; F3: test_propose_split_substring_marker_near_miss_produces_odd_but_valid_split)"},
+    {"path": "engine/rpc/server_test.go", "pointer": "TestPutEdgeAndEntityHandlers/PutEdge_WeightIncrement_ViaCompact subtest, ~line 692-728 (F5)"},
+    {"path": "agents/ingestion/wiring.py", "pointer": "SegmentWiringClient Protocol (~line 213), GrpcEntityEdgeClient.put_edge (~line 444-457), GrpcSegmentWiringClient.put_edge (~line 485-495), execute_segment call sites (~line 286, 310) (F6 rename)"},
+    {"path": "agents/ingestion/test_segment_fixtures.py", "pointer": "_FakeWiringClient.put_edge signature (~line 116-119) (F6 rename, propagated)"},
+    {"path": "agents/ingestion/test_segment_wiring.py", "pointer": "_FakeWiringClient.put_edge (~line 99-104) and call sites (~line 454, 467, 527) (F6 rename, propagated)"}
+  ],
+  "self_consistency_summary": "go test ./engine/rpc/... -run TestPutEdgeAndEntityHandlers: PASS (17 subtests). pytest agents/ingestion/test_propose_split.py agents/ingestion/test_segment_wiring.py agents/ingestion/test_segment_fixtures.py: 47 passed. Zero remaining weight_delta occurrences in source (grep-verified). See self-consistency.json for full detail.",
+  "not_verified_by_this_agent": true,
+  "verification_pending": "Per invariant I4, this implementation agent did not verify its own work. /cdr:verify should independently confirm: (1) the non-ASCII fixture in F2's test actually exercises multi-byte UTF-8 boundary crossing (not just happens to pass), (2) F3's near-miss fixture is a faithful reproduction of the documented finding, (3) F5's weight total (12) is genuinely unreachable by non-summing implementations (e.g. via mutation testing on graph.Compact/mergeEdges), (4) F6's rename has zero remaining weight_delta references anywhere in agents/ source or test code and no behavior change.",
+  "regression_index_update": "NOT performed by this implementation run - marking F2/F3/F5/F6 as resolved:true in .cdr/index/regression.jsonl is left to the verification agent, per the pattern observed in prior runs (e.g. issue #53 resolution was recorded by a verification run, not its implementation run)."
+}
