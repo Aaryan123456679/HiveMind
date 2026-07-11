@@ -33,20 +33,25 @@
 // strategy, per the decision recorded in docs/LLD/query-agent.md / docs/LLD/btree.md's
 // "Known risks" (subtask 4.5.9.1). rankCandidates itself is unchanged by this update.
 //
-// Fix-cycle update (issue #47, subtask 4.5.9.2, CHANGES_REQUESTED re-fix, this file's
-// .cdr/runs/2026-07-11/110-verification): independent verification found that
-// perTermPoolCap/mergedPoolCap (below) only bound candidatePool's *retained pool memory*,
-// not its scan *cost* -- btree.PrefixScan (engine/btree/scan.go) already completes its full
-// leaf-chain traversal and returns every matching entry before candidatePool ever gets to
-// truncate the result, and nothing previously bounded either the NUMBER of distinct terms
-// candidatePool's loop processes or de-duplicated repeated terms (so a query repeating one
-// term N times issued N redundant full PrefixScan calls). This update adds dedupTerms
-// (de-duplicates candidatePool's term list before the scan loop, so repeated terms are
-// scanned once) and maxQueryTerms/validateQueryTermCount (a hard cap on the number of
-// *distinct* terms a request may have, enforced in SearchCandidates, server.go, as request
-// validation before any PrefixScan call is issued) -- see maxQueryTerms' doc comment for the
-// chosen bound and rationale, and docs/LLD/query-agent.md / docs/LLD/btree.md's "Known
-// risks" for the corrected writeup.
+// Fix-cycle update (issue #47, subtask 4.5.9.2, CHANGES_REQUESTED re-fix, run
+// 2026-07-11/110-verification): the initial 4.5.9.2 implementation's perTermPoolCap/
+// mergedPoolCap bounded only RETAINED pool size, not scan COST -- btree.PrefixScan (see
+// engine/btree/scan.go) already runs its full leaf-chain traversal and returns every
+// matching entry before candidatePool ever gets to truncate the result, so those two caps
+// did nothing to bound the number/cost of PrefixScan calls candidatePool's loop issues.
+// Two changes close that gap:
+//   - candidatePool now deduplicates query terms (dedupTerms) BEFORE the scan loop, not
+//     just deduplicating the resulting entries after scanning -- a query repeating the
+//     same term N times (e.g. a copy-pasted/garbled query) previously triggered N
+//     redundant full-cost PrefixScan calls for the identical prefix, since mergedPoolCap's
+//     early-break only fires once merged has actually grown, which duplicate-only terms
+//     never do.
+//   - maxQueryTerms now bounds the number of DISTINCT terms candidatePool will process at
+//     all, checked in SearchCandidates (server.go) as request validation (mirroring
+//     max_results' existing InvalidArgument pattern) BEFORE any PrefixScan call is issued --
+//     this is what actually bounds worst-case scan COST (number of PrefixScan calls), as
+//     opposed to perTermPoolCap/mergedPoolCap, which remain useful as a second, independent
+//     bound on retained pool MEMORY once scanning has happened.
 package rpc
 
 import (
@@ -111,50 +116,19 @@ func tokenizeTerms(s string) []string {
 	return splitTerms(strings.ToLower(s))
 }
 
-// perTermPoolCap bounds how many btree.PrefixScan entries a single query term may
-// contribute to candidatePool's merged pool (task 4.5.9.2, issue #47). btree.PrefixScan
-// itself has no per-call result limit (engine/btree/scan.go returns every matching entry),
-// and candidatePool now issues one PrefixScan per query term instead of the pre-4.5.9.2
-// single first-token scan.
+// dedupTerms returns terms' distinct elements, preserving both first-seen order and each
+// term's exact original case (candidatePool needs case preserved when it hands a term to
+// btree.PrefixScan as a literal scan prefix -- see splitTerms' doc comment). This is a
+// case-sensitive dedup deliberately: "Graph" and "graph" are different literal PrefixScan
+// prefixes and are NOT collapsed here, even though they would collapse under
+// tokenizeTerms' case-insensitive scoring.
 //
-// Correction (CHANGES_REQUESTED re-fix, .cdr/runs/2026-07-11/110-verification): this
-// comment previously claimed this cap "caps worst-case fan-out cost for a pathological
-// multi-term query" -- that overstated what it does. btree.PrefixScan (engine/btree/scan.go)
-// already completes its full leaf-chain traversal and returns EVERY matching entry before
-// candidatePool ever gets to truncate the result to perTermPoolCap entries, so this cap
-// bounds only this term's *retained* contribution to the merged pool's memory footprint,
-// not the *cost* (I/O, traversal work) of the PrefixScan call that produced it. The actual
-// bound on worst-case scan cost is now dedupTerms (below), which de-duplicates
-// candidatePool's term list before the scan loop so a repeated term is scanned once, not
-// once per repetition, and maxQueryTerms/validateQueryTermCount (below), a hard cap on the
-// number of *distinct* terms a request may have, enforced in SearchCandidates (server.go)
-// before any PrefixScan call is issued at all.
-const perTermPoolCap = 500
-
-// mergedPoolCap bounds the total size of candidatePool's deduplicated, cross-term merged
-// pool before it is handed to rankCandidates (task 4.5.9.2, issue #47). Even with
-// perTermPoolCap limiting each individual term's contribution, a query with many distinct
-// terms could still merge into a pool of unbounded size; mergedPoolCap is a second,
-// coarser safety valve capping the merge's total growth. 2000 is chosen as a generous
-// multiple of perTermPoolCap (accommodating several dozen distinct query terms' worth of
-// non-overlapping matches before truncating).
-//
-// Correction (CHANGES_REQUESTED re-fix, .cdr/runs/2026-07-11/110-verification): same
-// caveat as perTermPoolCap above -- this bounds retained pool memory, not scan cost, since
-// every PrefixScan call it truncates the output of has already fully completed by the time
-// this cap is applied. See dedupTerms/maxQueryTerms below for what actually bounds scan
-// cost.
-const mergedPoolCap = 2000
-
-// dedupTerms returns terms with duplicate entries removed, preserving the first-seen order
-// and original casing of each distinct term (added CHANGES_REQUESTED re-fix,
-// .cdr/runs/2026-07-11/110-verification). candidatePool calls this before its scan loop
-// (below) so that a query repeating the same term N times (e.g. a pathological or
-// accidentally-repeated input) issues exactly one btree.PrefixScan for that term instead of
-// N redundant full-cost scans -- mergedPoolCap's early-break could not catch this case on
-// its own, since a duplicate term after the first contributes zero NEW entries to merged
-// (all of them are already deduplicated by FileID/Path), so merged's length never grows
-// from a repeat and the early-break above never fires for a duplicate-only tail.
+// Fix-cycle addition (issue #47, subtask 4.5.9.2, CHANGES_REQUESTED re-fix): before this,
+// candidatePool's loop issued one btree.PrefixScan per term OCCURRENCE in the split query,
+// not per distinct term -- a query repeating the same term N times (e.g. "graph graph
+// graph") triggered N redundant full-cost scans of the identical prefix. candidatePool now
+// calls dedupTerms on splitTerms' output before the scan loop, so each distinct term is
+// scanned at most once regardless of how many times it appears in the query.
 func dedupTerms(terms []string) []string {
 	seen := make(map[string]struct{}, len(terms))
 	deduped := make([]string, 0, len(terms))
@@ -168,40 +142,38 @@ func dedupTerms(terms []string) []string {
 	return deduped
 }
 
-// maxQueryTerms is a hard cap on the number of *distinct* terms (post-dedupTerms) a
-// SearchCandidates query may contain, enforced by validateQueryTermCount (below), called
-// from SearchCandidates (server.go) BEFORE candidatePool issues a single btree.PrefixScan
-// call (added CHANGES_REQUESTED re-fix, .cdr/runs/2026-07-11/110-verification). This is the
-// actual bound on candidatePool's worst-case scan *cost*: perTermPoolCap/mergedPoolCap
-// above only ever bound retained pool memory, since btree.PrefixScan always completes its
-// full traversal before either cap gets a chance to truncate anything -- so without this
-// cap, a query with an arbitrarily large number of distinct terms could still force an
-// arbitrarily large number of full-cost PrefixScan calls.
+// maxQueryTerms bounds the number of DISTINCT query terms (post-dedupTerms) candidatePool
+// will process at all -- checked as request validation in SearchCandidates (server.go),
+// BEFORE any btree.PrefixScan call is issued, mirroring that handler's existing
+// max_results InvalidArgument check.
 //
-// 32 is chosen generously above realistic natural-language query patterns: this package's
-// existing agents/ingestion callers and rankCandidates' term-overlap scoring are both built
-// around short, few-word queries (a handful up to perhaps a dozen or two distinct words for
-// an unusually long natural-language question), so 32 distinct terms comfortably covers
-// realistic usage while still rejecting a pathological query (e.g. hundreds or thousands of
-// distinct terms) outright, rather than silently truncating it to some arbitrary term
-// subset (which could produce a confusingly incomplete result set with no indication to the
-// caller that anything was dropped). Rejecting via codes.InvalidArgument (server.go) is
-// preferred over silent truncation for the same reason SearchCandidates already rejects
-// max_results < 0 rather than clamping it.
+// Fix-cycle addition (issue #47, subtask 4.5.9.2, CHANGES_REQUESTED re-fix): this is what
+// actually bounds candidatePool's worst-case SCAN cost (the number of PrefixScan calls the
+// loop below issues), which perTermPoolCap/mergedPoolCap never did on their own -- both of
+// those only truncate/cap RESULTS a call already returned, after PrefixScan has already
+// paid the full cost of its leaf-chain traversal (see engine/btree/scan.go). 32 is chosen
+// as generously above any realistic natural-language query's term count -- even a long,
+// verbose sentence-style query ("how do I configure the graph database replication
+// settings for a multi-region deployment") tokenizes to well under 20 distinct terms --
+// while still rejecting a pathological query (hundreds/thousands of distinct terms) before
+// it can multiply PrefixScan's per-call cost by an unbounded term count. A query exceeding
+// this is rejected outright (InvalidArgument), not silently truncated: silent truncation
+// would make ranking quietly ignore some of the caller's real query terms, which is a
+// worse failure mode for a search RPC than an explicit, actionable client error.
 const maxQueryTerms = 32
 
-// errTooManyQueryTerms is wrapped by validateQueryTermCount's returned error (added
-// CHANGES_REQUESTED re-fix, .cdr/runs/2026-07-11/110-verification) so callers (server.go)
-// can identify this specific validation failure via errors.Is if ever needed, mirroring the
-// wrapped-sentinel-error convention used elsewhere in this package.
+// errTooManyQueryTerms is candidatePool's sentinel error for a query exceeding
+// maxQueryTerms distinct terms; SearchCandidates (server.go) maps it to
+// codes.InvalidArgument via errors.Is, distinguishing it from candidatePool's other
+// (btree.PrefixScan I/O) errors, which map to codes.Internal.
 var errTooManyQueryTerms = errors.New("rpc: SearchCandidates: query exceeds max distinct term count")
 
-// validateQueryTermCount returns a non-nil error if query would produce more than
-// maxQueryTerms distinct terms once split and deduplicated exactly as candidatePool itself
-// splits and deduplicates its terms (splitTerms + dedupTerms) -- added CHANGES_REQUESTED
-// re-fix, .cdr/runs/2026-07-11/110-verification. Called from SearchCandidates (server.go)
-// before candidatePool is invoked at all, so a query that would exceed the cap never causes
-// candidatePool to issue a single btree.PrefixScan call.
+// validateQueryTermCount returns a non-nil error (wrapping errTooManyQueryTerms, checkable
+// via errors.Is) if query splits (via splitTerms) into more than maxQueryTerms DISTINCT
+// terms (post dedupTerms), else nil. Called by SearchCandidates (server.go) as request
+// validation -- mirroring that handler's existing max_results InvalidArgument check --
+// BEFORE candidatePool or any btree.PrefixScan call is ever reached, which is what actually
+// bounds candidatePool's worst-case number of scans; see maxQueryTerms' doc comment.
 func validateQueryTermCount(query string) error {
 	n := len(dedupTerms(splitTerms(query)))
 	if n > maxQueryTerms {
@@ -209,6 +181,37 @@ func validateQueryTermCount(query string) error {
 	}
 	return nil
 }
+
+// perTermPoolCap bounds how many btree.PrefixScan entries a single query term may
+// contribute to candidatePool's merged pool (task 4.5.9.2, issue #47).
+//
+// Fix-cycle correction (subtask 4.5.9.2, CHANGES_REQUESTED re-fix): this cap bounds only
+// RETAINED pool memory, NOT scan cost -- btree.PrefixScan (see engine/btree/scan.go's
+// leaf-chain-following implementation) already completes its full traversal and returns
+// every matching entry before candidatePool ever gets to slice the result down to
+// perTermPoolCap entries, so this constant does nothing to reduce the I/O/traversal cost a
+// pathological (very common, very short) prefix term can incur. What actually bounds
+// worst-case scan COST now is maxQueryTerms (checked in server.go before any PrefixScan
+// call) plus dedupTerms (collapsing repeated terms in the query to one scan each) --
+// perTermPoolCap remains a useful, independent second bound on how much of any one term's
+// (already-paid-for) result candidatePool retains afterward. 500 is a deliberately
+// conservative, cheap-to-compute value for that retained-memory purpose: real single-term
+// queries are expected to stay far under this in practice, so it should not visibly change
+// behavior for them.
+const perTermPoolCap = 500
+
+// mergedPoolCap bounds the total size of candidatePool's deduplicated, cross-term merged
+// pool before it is handed to rankCandidates (task 4.5.9.2, issue #47). Even with
+// perTermPoolCap limiting each individual term's contribution, a query with many distinct
+// terms could still merge into a pool of unbounded size; mergedPoolCap is a second,
+// coarser safety valve capping the merge's total RETAINED size (see perTermPoolCap's doc
+// comment above for why "retained", not "scanned" -- the same correction applies here:
+// this does not reduce how many PrefixScan calls are made or their individual cost, only
+// how much of their combined output candidatePool keeps). 2000 is chosen as a generous
+// multiple of perTermPoolCap, comfortably above maxQueryTerms (32) distinct terms' worth of
+// perTermPoolCap-sized contributions in the overlapping/typical case, while still bounding
+// worst-case retained memory for a pathological input.
+const mergedPoolCap = 2000
 
 // candidatePool assembles SearchCandidates' (server.go) candidate pool for query: it
 // splits query into terms (splitTerms, NOT tokenizeTerms -- see splitTerms' doc comment
@@ -240,10 +243,13 @@ func candidatePool(store *btree.NodeStore, rootNodeID uint64, query string) ([]b
 		// exact prior behavior, not just the query == "" case.
 		return btree.PrefixScan(store, rootNodeID, "")
 	}
-	// De-duplicate before the scan loop (added CHANGES_REQUESTED re-fix,
-	// .cdr/runs/2026-07-11/110-verification) so a query repeating the same term N times
-	// issues exactly one btree.PrefixScan for that term, not N -- see dedupTerms' doc
-	// comment above for why mergedPoolCap's early-break could not catch this on its own.
+
+	// dedupTerms collapses repeated terms (e.g. query "graph graph graph") to one scan
+	// each -- see dedupTerms' doc comment. maxQueryTerms is enforced by the caller
+	// (SearchCandidates, server.go) as request validation BEFORE this function is even
+	// called, so terms here is already guaranteed len(terms) <= maxQueryTerms; the
+	// invariant is not re-checked here to avoid a second, redundant validation path (see
+	// server.go's SearchCandidates doc comment).
 	terms = dedupTerms(terms)
 
 	seenFileID := make(map[uint64]struct{})

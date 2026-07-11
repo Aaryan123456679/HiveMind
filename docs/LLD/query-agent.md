@@ -133,45 +133,46 @@ query -> intent_refiner -> topic_selector (+ SearchCandidates / GraphNeighbors) 
       by the query's term count. `candidatePool` now applies two bounds, both documented
       inline in `search_candidates.go`: `perTermPoolCap` (500 entries, truncating any single
       term's own `PrefixScan` result before merging) and `mergedPoolCap` (2000 entries,
-      capping the total deduplicated merged pool). Both are deliberately conservative
-      constants chosen to be far above any realistic single-term or natural-language
-      multi-term query's expected result size, so they should not visibly change behavior
-      in the common case.
-      Neither cap applies to the pre-existing zero-term/empty-query case (`query=""`,
-      `agents/ingestion/shortlist.py`'s pool-retrieval usage), which still issues exactly
-      one uncapped `PrefixScan(store, rootNodeID, "")` call, byte-for-byte identical to the
-      pre-4.5.9.2 behavior.
+      capping the total deduplicated merged pool). Neither cap applies to the pre-existing
+      zero-term/empty-query case (`query=""`, `agents/ingestion/shortlist.py`'s
+      pool-retrieval usage), which still issues exactly one uncapped
+      `PrefixScan(store, rootNodeID, "")` call, byte-for-byte identical to the pre-4.5.9.2
+      behavior.
       - **Correction (issue #47, subtask 4.5.9.2, CHANGES_REQUESTED re-fix,
-        `.cdr/runs/2026-07-11/110-verification`)**: the text above previously claimed
-        `perTermPoolCap`/`mergedPoolCap` bound "worst-case fan-out cost for a pathological
-        query" — that overstated what they do. `btree.PrefixScan`
-        (`engine/btree/scan.go`'s leaf-chain-following scan) always completes its **full**
-        traversal and returns every matching entry before `candidatePool` ever gets to
-        truncate the result to either cap, so both caps bound only the merged pool's
-        *retained memory*, not the *cost* (I/O, traversal work) of the `PrefixScan` calls
-        that produced it. Two real gaps existed: (1) nothing de-duplicated repeated terms,
-        so a query repeating one term N times issued N redundant full-cost scans (the
-        `mergedPoolCap` early-break could not catch this, since a repeat contributes zero
-        *new* entries to the deduplicated merge, so `merged`'s length never grows from a
-        repeat); (2) nothing bounded the *number* of distinct terms `candidatePool`'s loop
-        processes, so a query with an arbitrarily large distinct-term count could still
-        force an arbitrarily large number of full-cost `PrefixScan` calls. Both are now
-        fixed in `search_candidates.go`: `dedupTerms` de-duplicates `candidatePool`'s term
-        list before the scan loop (a repeated term is scanned once, not N times), and
-        `maxQueryTerms` (32) is a hard cap on the number of *distinct* terms a request may
-        have, enforced via `validateQueryTermCount` in `SearchCandidates` (`server.go`,
-        `codes.InvalidArgument`) **before** `candidatePool` issues a single `PrefixScan`
-        call — this pair, not `perTermPoolCap`/`mergedPoolCap`, is what actually bounds
-        worst-case scan cost now. 32 was chosen as generously above realistic
-        natural-language query term counts (a handful up to a couple dozen words even for
-        an unusually long query) while still rejecting a pathological query outright rather
-        than silently truncating it (consistent with `max_results < 0` already being
-        rejected rather than clamped). See `docs/LLD/btree.md`'s "Known risks" for the
-        cross-referenced correction.
+        `.cdr/runs/2026-07-11/110-verification`)**: the paragraph above, as originally
+        written, overstated what `perTermPoolCap`/`mergedPoolCap` actually bound. Both caps
+        only bound *retained* pool memory, not scan *cost*: `btree.PrefixScan` (see
+        [btree.md](btree.md)'s `scan.go` walkthrough) already completes its full
+        leaf-chain traversal and returns every matching entry before `candidatePool` ever
+        gets to truncate that result down to `perTermPoolCap`/`mergedPoolCap` entries, so
+        neither constant reduces the number of `PrefixScan` calls issued or any single
+        call's I/O/traversal cost — they do not "bound worst-case fan-out cost for a
+        pathological query" the way this paragraph originally claimed. Two changes close
+        that gap, without touching `perTermPoolCap`/`mergedPoolCap` (both remain useful,
+        independent bounds on retained memory):
+        - `candidatePool` now deduplicates the query's split terms (`dedupTerms`) *before*
+          the scan loop, not just deduplicating the resulting entries after scanning: a
+          query repeating the same term N times previously triggered N redundant
+          full-cost `PrefixScan` calls for the identical prefix (the old entry-level
+          `seenFileID`/`seenPath` dedup only ever suppressed *duplicate results*, not
+          *duplicate scans* — and `mergedPoolCap`'s early-break never fired for a
+          duplicate-only query, since `merged` never actually grows past the first
+          occurrence).
+        - `maxQueryTerms` (32) now bounds the number of *distinct* terms `candidatePool`
+          will process at all — enforced in `SearchCandidates` (`server.go`) as request
+          validation, rejecting a query with more than 32 distinct terms with
+          `codes.InvalidArgument` *before* a single `PrefixScan` call is issued. This is
+          what actually bounds `candidatePool`'s worst-case scan cost (the number of
+          `PrefixScan` calls it can issue for one request); 32 is chosen generously above
+          any realistic natural-language query's term count (even a long, verbose
+          sentence-style query tokenizes to well under 20 distinct terms) while still
+          rejecting a pathological (hundreds/thousands-of-terms) query outright, rather
+          than silently truncating it (silent truncation would quietly drop some of the
+          caller's real query terms from ranking, a worse failure mode for a search RPC
+          than an explicit client error).
     - **Confirmed**: `engine/btree/scan.go` required no change — `PrefixScan`'s existing
       exported signature (`store, rootNodeID, prefix`) is reused as-is, called once per
-      distinct query term from the new caller-side loop in
-      `engine/rpc/search_candidates.go`.
+      distinct query term from the new caller-side loop in `engine/rpc/search_candidates.go`.
     - **Residual limitation, still accepted** (unchanged from 4.5.9.1's decision): if
       *none* of the query's terms is itself a leading path-segment token, the merged pool
       is still empty. Closing that would require a genuinely non-prefix index primitive
@@ -181,14 +182,14 @@ query -> intent_refiner -> topic_selector (+ SearchCandidates / GraphNeighbors) 
       natural-language query ("how do I configure the graph database") returns a
       non-empty, correctly-ranked result set including a path found only via a
       non-first-token scan term — proving the pre-4.5.9.2 first-token-only pool selection
-      would have returned zero results for this exact query. Added for this correction:
-      `TestDedupTermsCollapsesRepeatedTerms` (unit test on `dedupTerms` itself),
-      `TestSearchCandidatesRepeatedTermScansOnce` (a query repeating one term far more times
-      than `maxQueryTerms` allows distinct terms still succeeds, proving dedup happens
-      before the distinct-term-count check), and
+      would have returned zero results for this exact query. Two further regression tests
+      (fix-cycle addition, same subtask, `.cdr/runs/2026-07-11/110-verification`) cover the
+      scan-cost bound directly: `TestSearchCandidatesRepeatedTermScansOnce` (a query
+      repeating one term far more than `maxQueryTerms` times is accepted, proving dedup
+      happens before the distinct-term-count check) and
       `TestSearchCandidatesRejectsTooManyDistinctQueryTerms` (a query with
-      `maxQueryTerms + 1` distinct terms is rejected with `codes.InvalidArgument`; exactly
-      `maxQueryTerms` distinct terms is accepted).
+      `maxQueryTerms + 1` distinct terms is rejected with `codes.InvalidArgument`, and a
+      query at exactly `maxQueryTerms` is still accepted).
 
 ## Cross-references
 

@@ -7,12 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/Aaryan123456679/HiveMind/engine/btree"
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 	hivemindv1 "github.com/Aaryan123456679/HiveMind/engine/rpc/gen"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // rankingFixture is a minimal, self-contained analogue of server_test.go's newFixture,
@@ -335,32 +336,51 @@ func TestSearchCandidatesMultiWordQuery(t *testing.T) {
 	}
 }
 
+// TestDedupTermsCollapsesRepeatedTerms is a direct, white-box unit test of dedupTerms
+// (fix-cycle addition, issue #47, subtask 4.5.9.2, CHANGES_REQUESTED re-fix,
+// .cdr/runs/2026-07-11/110-verification): candidatePool's scan loop now ranges over
+// dedupTerms(splitTerms(query)), not the raw split terms, so a query repeating the same
+// term N times must scan it exactly once, not N times. This test asserts dedupTerms itself
+// collapses repeats while preserving first-seen order and exact case -- the property
+// candidatePool's loop then relies on to avoid redundant btree.PrefixScan calls.
 func TestDedupTermsCollapsesRepeatedTerms(t *testing.T) {
 	got := dedupTerms([]string{"graph", "graph", "database", "graph", "Graph", "database"})
 	want := []string{"graph", "database", "Graph"}
 	if len(got) != len(want) {
-		t.Fatalf("dedupTerms(...) = %v, want %v", got, want)
+		t.Fatalf("dedupTerms: got %v (len %d), want %v (len %d)", got, len(got), want, len(want))
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("dedupTerms(...) = %v, want %v", got, want)
+			t.Fatalf("dedupTerms: got %v, want %v (order/case must be preserved)", got, want)
 		}
 	}
 }
 
-// TestSearchCandidatesRepeatedTermScansOnce is a regression test for the CHANGES_REQUESTED
-// re-fix recorded in .cdr/runs/2026-07-11/110-verification: a query repeating the same term
-// far more times than maxQueryTerms allows distinct terms must still succeed (proving
-// candidatePool dedupes terms BEFORE counting/scanning them, rather than treating each
-// repetition as a distinct term subject to maxQueryTerms).
+// TestSearchCandidatesRepeatedTermScansOnce is an end-to-end regression test proving
+// candidatePool's scan loop treats a query's repeated term as a SINGLE distinct term, not
+// one occurrence per repetition (fix-cycle addition, issue #47, subtask 4.5.9.2,
+// CHANGES_REQUESTED re-fix). Before dedupTerms was added, candidatePool's loop ranged over
+// splitTerms' raw (non-deduplicated) output, so a query repeating one term
+// maxQueryTerms+1 times would previously have been processed as maxQueryTerms+1
+// occurrences (maxQueryTerms+1 redundant, full-cost PrefixScan calls for the identical
+// prefix). This test issues a query with the same term repeated far more than
+// maxQueryTerms times: since candidatePool now deduplicates by DISTINCT term before both
+// the maxQueryTerms request-validation check (server.go's validateQueryTermCount) and the
+// scan loop itself, this single-distinct-term query must be accepted (not rejected as
+// exceeding maxQueryTerms) and must still return the expected match.
 func TestSearchCandidatesRepeatedTermScansOnce(t *testing.T) {
 	f := newRankingFixture(t, []string{"graph-database/handbook", "unrelated/other"})
 
-	repeated := strings.Repeat("graph ", maxQueryTerms*3)
-	resp, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{Query: repeated})
+	repeated := strings.Repeat("graph ", maxQueryTerms*3) // one distinct term, repeated
+	// far more times than maxQueryTerms -- would be rejected by validateQueryTermCount if
+	// dedup were not applied before the distinct-term-count check.
+	resp, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{
+		Query: repeated,
+	})
 	if err != nil {
-		t.Fatalf("SearchCandidates(%d-times-repeated single term) unexpected error: %v", maxQueryTerms*3, err)
+		t.Fatalf("SearchCandidates: %v (a repeated single term must be deduplicated to one distinct term before maxQueryTerms is checked, not rejected as too many terms)", err)
 	}
+
 	paths := candidatePaths(resp.GetCandidates())
 	found := false
 	for _, p := range paths {
@@ -369,35 +389,44 @@ func TestSearchCandidatesRepeatedTermScansOnce(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("SearchCandidates(repeated term): candidates %v missing expected path %q", paths, "graph-database/handbook")
+		t.Fatalf("SearchCandidates: candidates %v missing %q for repeated-term query", paths, "graph-database/handbook")
 	}
 }
 
-// TestSearchCandidatesRejectsTooManyDistinctQueryTerms is a regression test for the
-// CHANGES_REQUESTED re-fix recorded in .cdr/runs/2026-07-11/110-verification:
-// maxQueryTerms/validateQueryTermCount must reject a query with more than maxQueryTerms
-// distinct terms with codes.InvalidArgument, and must accept one with exactly maxQueryTerms
-// distinct terms.
+// TestSearchCandidatesRejectsTooManyDistinctQueryTerms is the regression test for
+// maxQueryTerms/validateQueryTermCount (fix-cycle addition, issue #47, subtask 4.5.9.2,
+// CHANGES_REQUESTED re-fix, .cdr/runs/2026-07-11/110-verification): a query with more than
+// maxQueryTerms DISTINCT terms is rejected with InvalidArgument BEFORE candidatePool issues
+// a single btree.PrefixScan call -- this is what actually bounds SearchCandidates' worst-
+// case scan cost for a query with a pathological number of distinct terms (as opposed to
+// perTermPoolCap/mergedPoolCap, which only bound retained pool memory after scanning has
+// already happened).
 func TestSearchCandidatesRejectsTooManyDistinctQueryTerms(t *testing.T) {
 	f := newRankingFixture(t, []string{"graph-database/handbook"})
 
-	tooMany := make([]string, maxQueryTerms+1)
-	for i := range tooMany {
-		tooMany[i] = "term" + strconv.Itoa(i)
+	terms := make([]string, maxQueryTerms+1)
+	for i := range terms {
+		// Distinct terms: term0, term1, ... termN -- guarantees exactly maxQueryTerms+1
+		// DISTINCT terms after dedupTerms, not just maxQueryTerms+1 occurrences.
+		terms[i] = "term" + strconv.Itoa(i)
 	}
-	_, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{Query: strings.Join(tooMany, " ")})
+	query := strings.Join(terms, " ")
+
+	_, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{
+		Query: query,
+	})
 	if err == nil {
-		t.Fatalf("SearchCandidates(%d distinct terms): want error, got nil", maxQueryTerms+1)
+		t.Fatalf("SearchCandidates: got nil error for a query with %d distinct terms (max %d), want InvalidArgument", len(terms), maxQueryTerms)
 	}
 	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("SearchCandidates(%d distinct terms): status code = %v, want %v", maxQueryTerms+1, status.Code(err), codes.InvalidArgument)
+		t.Fatalf("SearchCandidates: got error code %v, want %v (err=%v)", status.Code(err), codes.InvalidArgument, err)
 	}
 
-	exactly := make([]string, maxQueryTerms)
-	for i := range exactly {
-		exactly[i] = "term" + strconv.Itoa(i)
-	}
-	if _, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{Query: strings.Join(exactly, " ")}); err != nil {
-		t.Fatalf("SearchCandidates(%d distinct terms): unexpected error: %v", maxQueryTerms, err)
+	// A query at exactly maxQueryTerms distinct terms must still be accepted.
+	okQuery := strings.Join(terms[:maxQueryTerms], " ")
+	if _, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{
+		Query: okQuery,
+	}); err != nil {
+		t.Fatalf("SearchCandidates: query with exactly maxQueryTerms (%d) distinct terms unexpectedly rejected: %v", maxQueryTerms, err)
 	}
 }
