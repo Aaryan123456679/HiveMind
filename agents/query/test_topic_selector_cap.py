@@ -188,3 +188,36 @@ def test_combine_and_cap_duplicate_file_id_within_selected_counts_once() -> None
     result = combine_and_cap(selected, [], k=3)
 
     assert result == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# Parametrized: the k + 2k cap formula itself, across several k values (not just
+# k=3/default). Per issue #55 subtask 4.5.17.4 -- this was "manually verified correct
+# during CDR verification" but never committed as a test until now.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("k", [0, 1, 2, 5, 10])
+def test_combine_and_cap_parametrized_k_matches_k_plus_2k_formula(k: int) -> None:
+    # Always build an oversized (or exactly-at-cap) pool of distinct file_ids: 3 directly
+    # selected topics plus enough distinct expansion neighbors that the total available count
+    # is always >= k + 2*k, so the cap is the binding constraint (or matched exactly).
+    cap = k + 2 * k
+    num_neighbors = max(cap, 12)  # keep pools comfortably oversized even for k=10 (cap=30)
+
+    selected = [_topic(1), _topic(2), _topic(3)]
+    expansions = [
+        ExpansionResult(
+            topic=selected[0],
+            neighbors=[_neighbor(fid) for fid in range(1000, 1000 + num_neighbors)],
+        ),
+    ]
+
+    available = len({t.file_id for t in selected} | {n.file_id for e in expansions for n in e.neighbors})
+    assert available >= cap  # sanity: pool is never smaller than the cap being tested
+
+    result = combine_and_cap(selected, expansions, k=k)
+
+    assert len(result) == cap
+    assert len(result) == min(available, cap)
+    assert len(set(result)) == len(result)  # no duplicates at any k
