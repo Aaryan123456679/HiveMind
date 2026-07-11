@@ -80,8 +80,9 @@ parser slices exactly `k` characters rather than scanning the payload for a clos
 delimiter. No parser for this format exists yet -- nothing downstream consumes ticket
 blobs today (that lands with `agents/ingestion/dispatch.py`, issue 3.3.4) -- but the
 length prefix is embedded at render time regardless, so the checked-in format itself
-is unambiguous and safe to build a parser against later, rather than deferring
-correctness to a not-yet-written parser.
+is designed to be unambiguous, so that a parser written against it later should not
+need to guess at section boundaries -- but this has not been proven by an actual
+round-trip parser, since none consumes ticket blobs yet.
 """
 
 from __future__ import annotations
@@ -242,8 +243,9 @@ def _comment_block(index: int, comment: TicketComment) -> str:
     instead of scanning the payload for a closing delimiter. No parser for this format
     exists yet (nothing downstream consumes ticket blobs today -- see module
     docstring), but the length prefix is embedded now, at render time, so the format
-    itself is unambiguous and future-proof rather than deferring correctness to a
-    not-yet-written parser.
+    itself is designed to be unambiguous and future-proof -- though, as noted in the
+    module docstring, that design intent has not yet been proven by an actual
+    round-trip parser, since none consumes ticket blobs yet.
     """
     payload = f"AUTHOR: {comment.author}\nBODY:\n{comment.body}\n"
     return (
