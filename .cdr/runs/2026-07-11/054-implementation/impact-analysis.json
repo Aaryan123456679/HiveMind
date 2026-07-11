@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.5.2.1",
+  "issue": 39,
+  "finding": "already_resolved_stale_issue",
+  "resolved_by_commit": "acc760129ececc8eb83938123c05f9a94af8eccc",
+  "resolved_by_commit_short": "acc7601",
+  "re_verified_in": ".cdr/runs/2026-07-05/003-verification/verification.json",
+  "re_verification_verdict": "PASS_WITH_COMMENTS",
+  "current_head": "545e827b18ff9169c2b9e0ddc7891c79395cc7fa",
+  "files_examined": [
+    "engine/mvcc/read.go",
+    "engine/mvcc/gc.go",
+    "engine/mvcc/gc_test.go"
+  ],
+  "planned_source_changes": [],
+  "reason_no_source_changes": "NewSnapshot in read.go already calls em.AcquireCurrentEpoch() before cat.Get(); the race-note comment is already corrected; TestNewSnapshotClosesEpochAcquireVersionReadRace already exists in gc_test.go and passes under -race. All three acceptance-criteria items are already satisfied on main.",
+  "blast_radius": "none (no source touched)",
+  "risk_of_no_action": "none observed; risk of taking redundant action (re-touching already-verified concurrency-sensitive code) is higher than risk of leaving it alone",
+  "out_of_scope_findings": []
+}
