@@ -1,11 +1,15 @@
 ---
-last_synced_commit: 699105baec69c1feff075a58e5ab8d2b054db317
+last_synced_commit: 68c3c5c4e504c2be7502959d78d0a3105b8cfeb5
 ---
 
 # LLD: `agents/query/`
 
-Status: scaffold only (`agents/query/__init__.py` empty). See [HLD.md](../HLD.md) for system
-context.
+Status: implemented (issues #22, #23, #24, #25, #56). `intent_refiner.py`,
+`topic_selector.py`, and `synthesizer.py` are real, `pipeline.py` wires them into a single
+`run_query_pipeline()` entry point, and `wiring.py` + `server.py` provide the real gRPC
+surface (both outbound calls to the Go engine and an inbound `RunQuery` server) connecting
+the Go `api/` gateway's `/query` route to this pipeline end-to-end. See [HLD.md](../HLD.md)
+for system context.
 
 ## Purpose
 
@@ -40,12 +44,46 @@ with inline file-path citations.
 query -> intent_refiner -> topic_selector (+ SearchCandidates / GraphNeighbors) -> synthesizer -> answer
 ```
 
+## Pipeline wiring & real gRPC surface
+
+- **`pipeline.py`** (`run_query_pipeline()`, issue #25 subtask 4.6.1) is the single entry
+  point chaining `refine_intent -> select_top_k -> expand_insufficient_topics ->
+  combine_and_cap -> synthesize_answer` in order. It takes `search_candidates` /
+  `graph_neighbors` / `get_file` as plain injected callables, keeping the pipeline itself
+  transport-agnostic.
+- **`wiring.py`** (issue #56 subtask 4.6.3.1/4.6.3.2) supplies the real, gRPC-backed
+  implementations of those three callables — `GrpcSearchCandidatesClient`,
+  `GrpcGraphNeighborsClient`, `GrpcGetFileClient` — each wrapping
+  `hivemind_pb2_grpc.HiveMindStub` over a caller-supplied `grpc.Channel`, mirroring
+  `agents/ingestion/shortlist.py`'s `GrpcSearchCandidatesClient` precedent.
+  `GrpcGetFileClient` returns `(path, content)`, matching `GetFileResponse{content,
+  version, path}` exactly, so `pipeline.py`'s `_build_selected_markdown` can resolve
+  file paths for citations even for files reached only via `GraphNeighbors` expansion.
+- **`server.py`** (issue #56 subtask 4.6.3.2) is the inbound side: a real `grpc.Server`
+  implementing `hivemind_pb2_grpc.HiveMindServicer.RunQuery`, replacing the Go `api/`
+  gateway's previous `notImplementedPipeline` stub for `/query`
+  (`api/routes/query.go` -> `api/queryclient.GRPCQueryPipeline`). On startup it dials the
+  engine via `ENGINE_GRPC_ADDR` (default `localhost:50051`) and resolves an `LLMClient`
+  via `llm.factory.create_llm_client()` (config-driven, `LLM_PROVIDER` env var), then
+  passes both plus the three `wiring.py` clients into `run_query_pipeline()` on every
+  `RunQuery` call it serves. It binds on `QUERY_SERVER_PORT` (default `50052`).
+
+Together these close issue #25's originally-disclosed forward finding F-4.6.1-1 ("no real
+gRPC client exists anywhere connecting the Go `api/` gateway to the Python `agents/query/`
+pipeline"): the `/query` HTTP route now has a real, network-connected path all the way
+through to `synthesize_answer`'s cited answer.
+
 ## Interactions with other modules
 
-- `engine/rpc/` — `SearchCandidates` (candidate generation) and `GraphNeighbors` (graph
-  expansion) are both engine RPCs consumed here.
+- `engine/rpc/` — `SearchCandidates` (candidate generation), `GraphNeighbors` (graph
+  expansion), and `GetFile` (path/content lookup for citations) are all engine RPCs
+  consumed here, via `wiring.py`'s real gRPC clients.
 - `engine/graph/` — traversal semantics and edge-type filtering used by `GraphNeighbors`.
-- `agents/llm/` — provider abstraction for all three hosted-model calls in this pipeline.
+- `agents/llm/` — provider abstraction (`create_llm_client()` factory) for all three
+  hosted-model calls in this pipeline.
+- `api/` — the Go gateway's `/query` route (`api/routes/query.go`,
+  `api/queryclient.GRPCQueryPipeline`) is the real caller of `server.py`'s `RunQuery`
+  gRPC server.
 - `agents/eval/` — the query pipeline is one of the arms benchmarked (HiveMind arm vs. vector-RAG
   vs. GraphRAG-style baseline).
 

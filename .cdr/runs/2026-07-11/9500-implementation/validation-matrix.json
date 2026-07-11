@@ -1,0 +1,40 @@
+{
+  "subtask": "4.5.19.2",
+  "rows": [
+    {
+      "criterion": "Regenerate only drifted sections; preserve accurate existing content",
+      "check": "diff docs/LLD/{ingestion,query}-agent.md pre/post; assert untouched-section list from impact-analysis.json matches byte-for-byte",
+      "status": "planned"
+    },
+    {
+      "criterion": "Sync grounded in actual current source, not just commit messages",
+      "check": "cite specific source files read: agents/ingestion/{rawdoc,dispatch,segment,shortlist,propose_split,wiring}.py, agents/query/{intent_refiner,topic_selector,pipeline,wiring,server}.py, agents/llm/factory.py",
+      "status": "planned"
+    },
+    {
+      "criterion": "last_synced_commit stamped with current HEAD SHA in both docs",
+      "check": "grep last_synced_commit docs/LLD/{ingestion,query}-agent.md == git rev-parse HEAD (post-sync, pre-commit HEAD)",
+      "status": "planned"
+    },
+    {
+      "criterion": "Indexes updated",
+      "check": ".cdr/index/file.jsonl last_change_run bumped for both rows; .cdr/index/feature.jsonl has new sync record",
+      "status": "planned"
+    },
+    {
+      "criterion": "No conflict with sibling subtask 4.5.19.4",
+      "check": "query-agent.md 'Known risks' SearchCandidates section byte-identical to post-68c3c5c state",
+      "status": "planned"
+    },
+    {
+      "criterion": "Drift report shows zero remaining drift",
+      "check": "drift-report.json 'remaining_drift' arrays empty for both files",
+      "status": "planned"
+    },
+    {
+      "criterion": "No production code changes",
+      "check": "git diff --stat only touches docs/LLD/*.md and .cdr/index/*.jsonl and .cdr/runs/**",
+      "status": "planned"
+    }
+  ]
+}

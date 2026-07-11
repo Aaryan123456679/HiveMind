@@ -1,11 +1,15 @@
 ---
-last_synced_commit: 699105baec69c1feff075a58e5ab8d2b054db317
+last_synced_commit: 68c3c5c4e504c2be7502959d78d0a3105b8cfeb5
 ---
 
 # LLD: `agents/ingestion/`
 
-Status: scaffold only (`agents/ingestion/__init__.py` empty). See [HLD.md](../HLD.md) for system
-context.
+Status: implemented (issues #17, #18, #19, #43, plus the user-authorized
+`task-3.4.4-engine-edge-rpc` scope addition). Normalization (`rawdoc.py`, `dispatch.py`,
+`normalize_pdf.py`, `normalize_email.py`, `normalize_ticket.py`), shortlisting
+(`shortlist.py`), segmentation (`segment.py`), segment execution/wiring (`wiring.py`), and
+`ProposeSplit` (`propose_split.py`) are all real, covered by unit and end-to-end smoke
+tests (`test_e2e_smoke.py`). See [HLD.md](../HLD.md) for system context.
 
 ## Purpose
 
@@ -27,9 +31,13 @@ RawDocument{ id, sourceType, text, structuredFields, timestamp }
 
 ## Segmentation agent
 
-Runs once per document (or per bounded sub-chunk for long documents), using a **local Ollama
-model** (cost reasons — high call volume at ingestion time; see [llm-provider.md](llm-provider.md)
-for the provider abstraction).
+Runs once per document (or per bounded sub-chunk for long documents). The LLM client is
+obtained via `agents/llm/factory.py`'s `create_llm_client()` — a config-driven factory
+(`LLM_PROVIDER` env var, values `"ollama"`/`"openrouter"`/`"gemini"`) — rather than a
+hardcoded provider, so `segment.py` itself has no direct dependency on any one provider.
+**Local Ollama remains the recommended default** for cost reasons (high call volume at
+ingestion time), but is now a config choice, not a code-level constraint; see
+[llm-provider.md](llm-provider.md) for the provider abstraction.
 
 Input: document text + a *shortlisted* candidate topic list. The shortlist comes from a cheap
 embedding/BM25 pre-filter against the existing catalog (via a local embedding model, e.g.
@@ -52,10 +60,26 @@ Output: structured JSON per segment:
 
 ## What the Go engine does with each segment
 
-- Executes the append/create via [`engine/rpc/`](rpc.md)'s `PutSegment`.
-- `entities` feed `entity.idx` and increment `ENTITY_COOCCUR` edge weights in
-  [`engine/graph/`](graph.md).
-- `related_topics` become `LLM_ASSERTED` edges in the same graph.
+`agents/ingestion/wiring.py`'s `execute_segment()` is the real orchestrator that drives
+this (a Python-side caller of the RPCs below, not implicit Go-side behavior):
+
+- Resolves `APPEND_EXISTING`'s `target_topic` to a real fileID via a caller-supplied
+  resolver, failing fast (`TopicNotFoundError`) *before* any RPC if it can't be resolved.
+- Executes the append/create via [`engine/rpc/`](rpc.md)'s `PutSegment` — now including the
+  segment's real topic path (`PutSegmentRequest.path`, closing issue #43), so newly created
+  files are discoverable via `SearchCandidates` immediately, not just addressable by fileID.
+- `entities` feed a dedicated `entity.idx` B+Tree (via the additive `LookupEntity`/
+  `PutEntity` RPCs) and increment `ENTITY_COOCCUR` edge weights in [`engine/graph/`](graph.md)
+  via `PutEdge`, tracking cross-file entity co-occurrence.
+- `related_topics` become `LLM_ASSERTED` edges in the same graph, also via `PutEdge`.
+- Error handling is fail-fast through the `PutSegment` call (nothing yet committed) and
+  best-effort-with-error-collection afterward (each entity/edge operation attempted
+  independently; failures collected in `SegmentExecutionResult.errors` rather than rolling
+  back the already-durable content write).
+
+`PutEdge`, `PutEntity`, and `LookupEntity` are additive RPCs beyond the original six-RPC
+proto surface, added by the user-authorized `task-3.4.4-engine-edge-rpc` scope to give
+`entity.idx`/edge-write operations a real backing RPC (see `.cdr/commits/task-3.4.4.md`).
 
 ## `ProposeSplit`
 
@@ -69,12 +93,13 @@ catalog updates, graph edges — see [split.md](split.md) for the full sequence)
 
 ## Interactions with other modules
 
-- `engine/rpc/` — `PutSegment` execution target; `ProposeSplit` is exposed to the engine as a
-  callee.
-- `engine/graph/` — entity co-occurrence and LLM-asserted edges.
-- `agents/llm/` — provider abstraction for the Ollama call.
-- `engine/btree/` — source of the shortlisted candidate topic list (via a prefix scan /
-  `SearchCandidates`-style lookup).
+- `engine/rpc/` — `PutSegment`, `PutEdge`, `PutEntity`, `LookupEntity` execution targets;
+  `ProposeSplit` is exposed to the engine as a callee.
+- `engine/graph/` — entity co-occurrence and LLM-asserted edges (written via `PutEdge`).
+- `agents/llm/` — provider abstraction (`create_llm_client()` factory) for the segmentation
+  and split-proposal LLM calls.
+- `engine/btree/` — source of the shortlisted candidate topic list, via `shortlist.py`'s
+  `GrpcSearchCandidatesClient` wrapping the real `SearchCandidates` RPC.
 
 ## Known risks
 

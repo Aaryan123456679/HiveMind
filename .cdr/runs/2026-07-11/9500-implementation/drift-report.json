@@ -1,0 +1,49 @@
+{
+  "subtask": "4.5.19.2",
+  "issue": 58,
+  "compared_against_commit": "699105baec69c1feff075a58e5ab8d2b054db317",
+  "current_head_at_sync": "68c3c5c4e504c2be7502959d78d0a3105b8cfeb5",
+  "files": [
+    {
+      "path": "docs/LLD/ingestion-agent.md",
+      "commits_since_last_sync": 26,
+      "pre_sync_drift": [
+        "front-matter last_synced_commit stale (699105b, 2026-07-03 bootstrap)",
+        "'Status: scaffold only' false -- module fully implemented",
+        "Segmentation-agent section hardcodes 'local Ollama model' -- actually config-driven via llm.factory.create_llm_client() (ollama/openrouter/gemini)",
+        "'What the Go engine does with each segment' omits real orchestrator (agents/ingestion/wiring.py execute_segment()), real PutSegment.path field (issue #43), and the additive PutEdge/PutEntity/LookupEntity RPCs (task-3.4.4-engine-edge-rpc)",
+        "Interactions-with-other-modules section omits PutEdge/PutEntity/LookupEntity and shortlist.py's real GrpcSearchCandidatesClient"
+      ],
+      "post_sync_remaining_drift": [],
+      "sections_preserved_unchanged": ["Purpose", "Per-doc-type normalization", "ProposeSplit", "Known risks", "Cross-references"]
+    },
+    {
+      "path": "docs/LLD/query-agent.md",
+      "commits_since_last_sync": 18,
+      "pre_sync_drift": [
+        "front-matter last_synced_commit stale (699105b, 2026-07-03 bootstrap)",
+        "'Status: scaffold only' false -- intent_refiner.py/topic_selector.py/synthesizer.py fully implemented",
+        "pipeline.py (run_query_pipeline, issue #25 4.6.1) entirely undocumented",
+        "wiring.py (real outbound GrpcSearchCandidatesClient/GrpcGraphNeighborsClient/GrpcGetFileClient, issue #56 4.6.3.1/4.6.3.2) entirely undocumented",
+        "server.py (real inbound RunQuery gRPC server backing api/'s /query route, issue #56 4.6.3.2) entirely undocumented",
+        "Interactions-with-other-modules section omits GetFile RPC and api/ gateway caller relationship"
+      ],
+      "post_sync_remaining_drift": [],
+      "sections_preserved_unchanged": [
+        "Purpose",
+        "intent_refiner.py",
+        "topic_selector.py",
+        "synthesizer.py",
+        "Pipeline order",
+        "Known risks (owned by sibling subtask 4.5.19.4, commit 68c3c5c -- verified byte-identical pre/post this sync)",
+        "Cross-references"
+      ]
+    }
+  ],
+  "sibling_conflict_check": {
+    "sibling_subtask": "4.5.19.4",
+    "sibling_commit": "68c3c5c4e504c2be7502959d78d0a3105b8cfeb5",
+    "result": "no conflict -- query-agent.md 'Known risks' section verified byte-identical before and after this sync"
+  },
+  "result": "zero remaining drift in both files as of last_synced_commit=68c3c5c4e504c2be7502959d78d0a3105b8cfeb5"
+}
