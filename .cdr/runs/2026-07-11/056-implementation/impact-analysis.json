@@ -1,0 +1,18 @@
+{
+  "subtask": "4.5.2.2",
+  "issue": 39,
+  "regression": "2a.2.3",
+  "impacted_modules": ["engine/mvcc/gc_test.go"],
+  "finding": "already_resolved",
+  "resolving_commit": "a1f220d89220515b17b4c4e69126e489d750a581",
+  "resolving_commit_subject": "fix(mvcc): correct scope claim and widen reader overlap in GC stress test (2a.2.3 fix)",
+  "verified_via": [
+    "read TestGCUnderConcurrency doc comment lines ~515-540 in current gc_test.go: already states NOT a substitute for / equivalent to TestNewSnapshotClosesEpochAcquireVersionReadRace, framed as complementary broad stress test",
+    "read reader goroutine loop lines ~639-710: already loops on shared stop channel (no fixed round count), with readerActive span tracking and minAcceptableOverlapFraction=0.5 assertion",
+    "git log -S 'This is NOT a substitute' -- engine/mvcc/gc_test.go -> single hit a1f220d",
+    "git log -S 'readerActive' -- engine/mvcc/gc_test.go -> single hit a1f220d"
+  ],
+  "planned_change": "none (source already satisfies both required and optional acceptance criteria)",
+  "risk_of_change": "editing already-correct wording risks introducing drift from the accurate, empirically-justified account already in the doc comment and commit a1f220d's message",
+  "action": "no-op confirmation, docs-only CDR artifacts, no production or test code touched"
+}

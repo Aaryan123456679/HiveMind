@@ -1,0 +1,31 @@
+{
+  "subtask": "4.5.2.2",
+  "criteria": [
+    {
+      "id": "doc-comment-no-equivalence-claim",
+      "description": "TestGCUnderConcurrency doc comment no longer claims equivalence to TestNewSnapshotClosesEpochAcquireVersionReadRace's specific TOCTOU",
+      "status": "already_satisfied",
+      "evidence": "gc_test.go lines ~522-540 (current): 'This is NOT a substitute for, nor equivalent to, ... TestNewSnapshotClosesEpochAcquireVersionReadRace ... COMPLEMENTS the deterministic regression test above but does not replace it' — introduced by commit a1f220d"
+    },
+    {
+      "id": "doc-comment-complementary-framing",
+      "description": "Doc comment reworded to state it is a complementary broad-stress test for general premature-reclaim bugs",
+      "status": "already_satisfied",
+      "evidence": "gc_test.go: 'a broad, general-purpose concurrency stress test ... intended to catch gross premature-reclaim bugs (e.g. an epoch never being acquired at all, refcounting corruption under load, off-by-one epoch comparisons)'"
+    },
+    {
+      "id": "optional-stop-channel-widening",
+      "description": "Reader-goroutine overlap widened to loop on shared stop channel instead of fixed round count",
+      "status": "already_satisfied_optional",
+      "evidence": "gc_test.go reader loop (~lines 651-710): unbounded for{select{case <-stop: ...}} loop, readerActive span tracking, minAcceptableOverlapFraction=0.5 assertion at end of test"
+    },
+    {
+      "id": "test-still-passes",
+      "description": "go test ./engine/mvcc/... -race -run TestGCUnderConcurrency passes",
+      "status": "verified",
+      "evidence": "go test ./engine/mvcc/... -race -v -count=2 -> PASS for TestGCUnderConcurrency both iterations (1.83s, 1.77s), full package PASS in 79.024s"
+    }
+  ],
+  "overall_status": "all_criteria_already_satisfied_by_prior_commit_a1f220d",
+  "action_taken": "no source change; docs-only confirmation"
+}
