@@ -232,6 +232,216 @@ func TestLoadRootTruncatedSidecar(t *testing.T) {
 	})
 }
 
+// TestPersistReloadAfterStaleSaveRoot is subtask 4.5.12.6's (issue #50)
+// required test spec: the complement of TestPersistReload above. It exercises
+// the SaveRoot-absent case: SaveRoot is called once, and then MANY more keys
+// are inserted afterward via the raw, package-level Insert function (the same
+// entry point insertN uses, NOT Tree.Insert) with no further intervening
+// SaveRoot call, before the index file is closed and reopened.
+//
+// This is deliberately distinct from TestCrashBetweenInsertAndSaveRootRecovers
+// (subtask 4.5.4.1, issue #41): that test uses Tree.Insert, which -- per its
+// own doc comment -- now automatically calls SaveRoot itself whenever it
+// installs a brand-new root (bootstrap or root split), closing that
+// crash-window gap at the Tree level. The raw, package-level Insert function
+// used here has no such auto-checkpointing (see persist.go's SaveRoot doc
+// comment: SaveRoot is deliberately NOT called from inside Insert or Delete;
+// callers own deciding when a newRootNodeID is durably committed), so this
+// test pins down the still-real consequence of that design at this lower
+// level: LoadRoot after reopen recovers the STALE, last-SaveRoot'd root, not
+// the newer (never-saved) root that resulted from the post-checkpoint
+// inserts.
+//
+// What "documented (not silently-corrupting)" actually means here was
+// established empirically against this package's real descent/recovery
+// behavior (see lookup.go's leaf-level NextLeaf move-right recovery, also
+// noted in .cdr/index/regression.jsonl's 4.5.12.3 verification entry as an
+// asymmetric, right-only self-healing property), not assumed up front:
+//
+//   - Every checkpointed key (inserted before the last SaveRoot call) remains
+//     100% intact and correctly resolvable via direct Lookup through the
+//     stale recovered root -- committed data is never lost or altered.
+//   - A stale root ID is, in general, a strict ancestor's-worth-smaller
+//     window into the live on-disk structure once the tree has grown a new
+//     top level above it; some un-checkpointed keys (inserted after the last
+//     SaveRoot call) consequently become unreachable via a direct point
+//     Lookup through the stale root. This is real, expected data
+//     inaccessibility for the un-checkpointed portion -- but never silent
+//     corruption: no un-checkpointed key ever resolves to a WRONG fileID, and
+//     none of it panics or errors.
+//   - Critically, PrefixScan through the very same stale root recovers EVERY
+//     key -- checkpointed and un-checkpointed alike -- correctly and in
+//     sorted order, because its leaf-chain traversal is unaffected by which
+//     stale internal entry point it started from. This is the concrete,
+//     positive demonstration that an absent SaveRoot leaves the tree
+//     genuinely intact on disk, not corrupted: the "loss" from a stale root
+//     is confined to point-lookup reachability, not to the underlying data.
+func TestPersistReloadAfterStaleSaveRoot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "name.idx")
+
+	f, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile: %v", err)
+	}
+	store := NewNodeStore(f)
+	alloc, err := NewNodeAllocator(store)
+	if err != nil {
+		t.Fatalf("NewNodeAllocator: %v", err)
+	}
+
+	// --- Phase 1: build a multi-level tree via insertN (same helper/pattern
+	// TestPersistReload uses), then SaveRoot. checkpointRootID is the last
+	// durably-committed root pointer for the rest of this test. ---
+	const checkpointed = 400
+	checkpointRootID, checkpointedKeys := insertN(t, store, alloc, checkpointed)
+
+	if err := SaveRoot(store, checkpointRootID); err != nil {
+		t.Fatalf("SaveRoot: %v", err)
+	}
+
+	// --- Phase 2: insert MORE keys after the last SaveRoot call, with no
+	// intervening SaveRoot -- these are the "un-checkpointed inserts". Enough
+	// of them (same count as phase 1) to force further leaf/internal splits
+	// and guarantee a genuinely different root node ID than
+	// checkpointRootID, so recovering the stale checkpointRootID is a
+	// meaningfully distinct tree state and not incidentally identical. ---
+	rootID := checkpointRootID
+	const totalAfterCheckpoint = 20000
+	staleKeys := make(map[string]uint64, totalAfterCheckpoint-checkpointed)
+	for i := checkpointed; i < totalAfterCheckpoint; i++ {
+		key := genKey(i)
+		fileID := uint64(i + 1)
+		rootID, err = Insert(store, alloc, rootID, key, fileID)
+		if err != nil {
+			t.Fatalf("Insert(%q) (post-checkpoint, un-saved): unexpected error: %v", key, err)
+		}
+		staleKeys[key] = fileID
+	}
+	if rootID == checkpointRootID {
+		t.Fatalf("test setup error: post-checkpoint inserts did not change the root node ID (%d) -- the un-checkpointed-inserts scenario this test targets requires a genuinely different root", rootID)
+	}
+
+	// Deliberately do NOT call SaveRoot again here -- this is the crux of the
+	// scenario: rootID (the true current root, reflecting staleKeys) is never
+	// durably committed anywhere on disk.
+
+	if err := alloc.Close(); err != nil {
+		t.Fatalf("closing allocator sidecar file: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing index file: %v", err)
+	}
+
+	// --- "after restart": reopen the same on-disk file completely fresh,
+	// with no in-memory state carried over, exactly like TestPersistReload. ---
+	f2, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile (reopen): %v", err)
+	}
+	t.Cleanup(func() { f2.Close() })
+	store2 := NewNodeStore(f2)
+
+	recoveredRootID, err := LoadRoot(store2)
+	if err != nil {
+		t.Fatalf("LoadRoot: %v", err)
+	}
+
+	// Documented behavior #1: LoadRoot recovers the STALE, last-SaveRoot'd
+	// root, not the newer (never-saved) root reflecting the post-checkpoint
+	// inserts.
+	if recoveredRootID != checkpointRootID {
+		t.Fatalf("LoadRoot after reopen (no intervening SaveRoot) = %d, want the stale last-SaveRoot'd root %d", recoveredRootID, checkpointRootID)
+	}
+
+	// Documented behavior #2 (not silently-corrupting): every key that WAS
+	// checkpointed (inserted before the last SaveRoot call) remains fully
+	// intact and correctly lookupable via the recovered root -- the stale
+	// snapshot is self-consistent, not garbage.
+	for k, wantFileID := range checkpointedKeys {
+		gotFileID, found, err := Lookup(store2, recoveredRootID, k)
+		if err != nil {
+			t.Fatalf("Lookup(%q) (checkpointed key) after reopen: unexpected error: %v", k, err)
+		}
+		if !found {
+			t.Fatalf("Lookup(%q) (checkpointed key) after reopen: not found, want fileID %d -- stale-root reload must not lose already-checkpointed data", k, wantFileID)
+		}
+		if gotFileID != wantFileID {
+			t.Fatalf("Lookup(%q) (checkpointed key) after reopen = %d, want %d", k, gotFileID, wantFileID)
+		}
+	}
+
+	// Documented behavior #3 (not silently-corrupting): a stale root is a
+	// strictly smaller window into the live on-disk structure once the tree
+	// has grown a new top level above checkpointRootID -- so some
+	// un-checkpointed keys (inserted after the last SaveRoot call) are
+	// genuinely unreachable via a direct point Lookup through the stale
+	// root. That is real, expected data inaccessibility for the
+	// un-checkpointed portion, but it must never manifest as corruption: for
+	// every un-checkpointed key, Lookup must either correctly report
+	// found=false, or -- if it happens to still be reachable -- return
+	// exactly the fileID it was inserted with. It must never return a WRONG
+	// fileID, and it must never error or panic. This test also asserts that
+	// at least one un-checkpointed key is actually unreachable this way
+	// (i.e. that this scenario is non-trivially exercised, not vacuous).
+	unreachableCount := 0
+	for k, wantFileID := range staleKeys {
+		gotFileID, found, err := Lookup(store2, recoveredRootID, k)
+		if err != nil {
+			t.Fatalf("Lookup(%q) (un-checkpointed key) after reopen: unexpected error: %v", k, err)
+		}
+		if !found {
+			unreachableCount++
+			continue
+		}
+		if gotFileID != wantFileID {
+			t.Fatalf("Lookup(%q) (un-checkpointed key) after reopen = %d, want %d (found a WRONG fileID via the stale root -- this would be silent corruption, not documented staleness)", k, gotFileID, wantFileID)
+		}
+	}
+	if unreachableCount == 0 {
+		t.Fatalf("test setup error: every un-checkpointed key was still reachable via direct Lookup through the stale recovered root -- this scenario needs at least one genuinely unreachable un-checkpointed key to be a meaningful regression test for stale-root point-lookup behavior")
+	}
+	t.Logf("%d/%d un-checkpointed keys were unreachable via direct Lookup through the stale root (expected, documented staleness -- not corruption)", unreachableCount, len(staleKeys))
+
+	// Documented behavior #4 (the key "not silently-corrupting" proof):
+	// PrefixScan through the very same stale recovered root nonetheless
+	// recovers EVERY key -- checkpointed AND un-checkpointed alike --
+	// correctly and in sorted order. PrefixScan's leaf-chain traversal
+	// (scan.go's descendToLeaf + NextLeaf walk) is not confined to whatever
+	// subtree the stale root's internal structure happens to still point
+	// at, so this demonstrates concretely that the underlying data is fully
+	// intact on disk even though a stale root limits direct point-lookup
+	// reachability: an absent SaveRoot causes reduced point-lookup
+	// visibility, never data corruption or loss.
+	wantAll := make(map[string]uint64, len(checkpointedKeys)+len(staleKeys))
+	for k, v := range checkpointedKeys {
+		wantAll[k] = v
+	}
+	for k, v := range staleKeys {
+		wantAll[k] = v
+	}
+
+	got, err := PrefixScan(store2, recoveredRootID, "topic")
+	if err != nil {
+		t.Fatalf("PrefixScan(%q) after reopen: unexpected error: %v", "topic", err)
+	}
+	if len(got) != len(wantAll) {
+		t.Fatalf("PrefixScan(%q) after reopen returned %d entries, want %d (every checkpointed AND un-checkpointed key, via leaf-chain traversal from the stale root)", "topic", len(got), len(wantAll))
+	}
+	for _, e := range got {
+		wantFileID, ok := wantAll[e.Path]
+		if !ok {
+			t.Fatalf("PrefixScan(%q) after reopen returned unexpected entry %q (fileID %d) -- not one of the inserted keys", "topic", e.Path, e.FileID)
+		}
+		if e.FileID != wantFileID {
+			t.Fatalf("PrefixScan(%q) after reopen entry %q has fileID %d, want %d", "topic", e.Path, e.FileID, wantFileID)
+		}
+	}
+	if !sort.SliceIsSorted(got, func(i, j int) bool { return got[i].Path < got[j].Path }) {
+		t.Fatalf("PrefixScan(%q) after reopen is not sorted: %+v", "topic", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // task-2a.4.5: full concurrent mixed insert/delete/lookup workload.
 //
