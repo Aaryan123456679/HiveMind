@@ -40,20 +40,38 @@ Real (non-fixture) dataset provenance
   `hivemind-issue19-3.5.2-need-real-enron-sample` in `.cdr/memory/pending.md`) for this
   smoke run's purposes specifically, per that finding's own recommendation.
 
-F4 (`PutSegment` CREATE path never sets `catalog.CatalogRecord.PathHash`) -- observed,
-not fixed here
+F4 (`PutSegment` CREATE path never sets `catalog.CatalogRecord.PathHash`) -- since
+fixed by issue #43; this file's assertions updated accordingly (issue #57, 4.5.18.1)
 -------------------------------------------------------------------------------------------
-This run does NOT fix F4 (see this run's handoff.json for why: it requires a
-proto/wire-contract change, `PutSegmentRequest` has no `path` field at all to hash,
-out of scope for a straightforward field-population fix). Its real, observable
-consequence is asserted directly below (`test_full_pipeline_smoke`'s
-"F4's observable consequence" section): every document this run processes gets
-`topic_action == "CREATE_NEW"` (never `APPEND_EXISTING` against a *newly created* file),
-because newly created files are never discoverable by path via `SearchCandidates` --
-`resolve_topic_file_id` below can only resolve paths this run's own in-memory bookkeeping
-already knows about, exactly matching production reality (a fresh Python worker process
-restarting mid-corpus would lose that bookkeeping and CREATE a duplicate topic for
-content that should have appended to an existing one).
+This test module was originally authored (commit `9794fd8`) when F4 was still open:
+`PutSegmentRequest` had no `path` field at all, so a newly created file was never
+discoverable by path via `SearchCandidates`, and this test's own assertions
+hard-coded that gap as expected behavior (every document always `CREATE_NEW`,
+`append_existing_count == 0`, post-run `SearchCandidates` returning only the
+smokeserver bootstrap placeholder).
+
+Issue #43 (3 commits, landed after this file) fixed F4 for real: `PutSegmentRequest`
+now carries a `path` field, and `engine/rpc/server.go`'s `PutSegment` CREATE branch
+computes `catalog.CatalogRecord.PathHash` and inserts the new file's path into
+`pathIndex` -- the exact same B+Tree `SearchCandidates` reads from (see
+`ingestion.wiring`'s own module docstring, "`new_topic_path` discoverability --
+resolved by issue #43"). That means a topic created earlier in the same run is now
+genuinely discoverable via a real `SearchCandidates` call, so `APPEND_EXISTING`
+against it is a legitimate, expected outcome again -- not a bug.
+
+Investigating issue #57's 4.5.18.1 (a defect report filed against this test's own
+post-#44 A/B live-smoke failures) found that `wiring.py`'s `execute_segment` itself
+has no defect: an unresolvable `related_topic` was already tolerated correctly
+(best-effort, collected into `errors`, no raise, no silent drop -- see
+`ingestion.wiring`'s own "Error-handling strategy" section, and
+`test_segment_wiring.py::test_unresolvable_related_topic_collected_not_raised`,
+which already unit-tests exactly this branch). The real defect was this test
+module's own assertions still asserting the *pre-#43* reality against a fixed
+engine, causing the reported "fewer CREATE_NEW results than successful docs"
+observation to look like a regression when it was actually issue #43's fix working
+as intended. The three affected assertions below (`created_file_ids`/duplicate
+check, the create/append-count partition, and the post-run `SearchCandidates`
+check) were rewritten to assert the corrected, post-#43 reality instead.
 """
 
 from __future__ import annotations
@@ -269,16 +287,18 @@ def test_full_pipeline_smoke(running_engine: str) -> None:
             if segment_result.topic_action == "CREATE_NEW":
                 create_new_count += 1
                 created_file_ids.append(result.file_id)
-                # Real, disclosed F4-adjacent consequence: with no real catalog/path
-                # signal to check against (F4), two independently-segmented documents
-                # can pick the exact same `new_topic_path` (observed live in this run:
-                # multiple Bitext order-cancellation tickets both chose
-                # `/Customer_Support/Order_Cancellation`) -- each still gets its own
-                # distinct real fileID via PutSegment (asserted below via
-                # `created_file_ids`), but this dict intentionally keeps only the
-                # latest fileID per colliding path, exactly mirroring what a resource-
-                # constrained real caller's own bookkeeping would do without a real
-                # path index to fall back on.
+                # Two independently-segmented documents can still pick the exact same
+                # `new_topic_path` (the LLM's own topic-boundary nondeterminism, not a
+                # PutSegment/pathIndex bug) -- each still gets its own distinct real
+                # fileID via PutSegment (asserted below via `created_file_ids`), but
+                # this dict intentionally keeps only the latest fileID per colliding
+                # path, exactly mirroring what a real caller's own local bookkeeping
+                # would do. Since issue #43, this is no longer the only path-resolution
+                # signal available -- `search_candidates` above now also sees these
+                # real created paths via the engine's own `pathIndex` -- but this run's
+                # `resolve_topic_file_id` deliberately stays scoped to this dict (not a
+                # fresh SearchCandidates call) to mirror a resource-constrained real
+                # caller's own bookkeeping, per this module's `TopicResolverFn` usage.
                 path_to_file_id[segment_result.new_topic_path] = result.file_id
             else:
                 append_existing_count += 1
@@ -308,45 +328,56 @@ def test_full_pipeline_smoke(running_engine: str) -> None:
         #    a fresh engine should produce none.
         assert all_errors == [], f"unexpected best-effort wiring errors: {all_errors}"
 
-        # 2. Non-zero, plausible file count: every document that made it past `segment()`
-        #    produced its own distinct real fileID via PutSegment (all CREATE_NEW, per
-        #    F4's consequence below) -- catalog/btree/graph state genuinely changed as a
-        #    result of this run, not a no-op. (`path_to_file_id` may have fewer entries
-        #    than `created_file_ids` if two documents happened to pick the same
-        #    `new_topic_path` -- see the F4-adjacent collision comment above; that does
-        #    NOT mean fewer real files were created.)
+        # 2. Non-zero, plausible file count: every CREATE_NEW segment produced its own
+        #    distinct real fileID via PutSegment -- catalog/btree/graph state genuinely
+        #    changed as a result of this run, not a no-op. (This is scoped to
+        #    `create_new_count`, not `successful_docs`, because since issue #43's
+        #    PutSegment path-indexing fix, some successful docs may legitimately
+        #    resolve APPEND_EXISTING instead -- see assertion 3 below and the module
+        #    docstring's "F4 ... since fixed by issue #43" section.)
         successful_docs = len(docs) - len(segment_parse_failures)
         assert successful_docs >= 1
-        assert len(created_file_ids) == successful_docs > 0
-        assert len(set(created_file_ids)) == successful_docs, (
+        assert len(created_file_ids) == create_new_count > 0, (
+            "expected at least one CREATE_NEW segment this run (the catalog starts "
+            "empty aside from smokeserver's own bootstrap placeholder, which is "
+            f"filtered out of every search_candidates() call above); got {create_new_count}"
+        )
+        assert len(set(created_file_ids)) == create_new_count, (
             "expected every CREATE_NEW PutSegment call to allocate its own distinct "
             f"fileID, got duplicates: {created_file_ids}"
         )
 
-        # 3. F4's observable consequence (see module docstring): with no path ever
-        #    wired into the btree by PutSegment, every document that reached
-        #    `execute_segment` in this run resolves to CREATE_NEW -- there is no
-        #    live-catalog signal `segment()`'s shortlist could ever have used to justify
-        #    APPEND_EXISTING against a file this run itself created moments earlier.
-        assert create_new_count == successful_docs
-        assert append_existing_count == 0
+        # 3. Since issue #43 fixed PutSegment to index new files' paths into the same
+        #    `pathIndex` B+Tree `SearchCandidates` reads from, a later document's
+        #    shortlist() can now legitimately surface an earlier-created-in-this-run
+        #    topic as a real candidate, and the LLM can legitimately choose
+        #    APPEND_EXISTING against it -- that is issue #43's fix working as intended,
+        #    not a regression (see module docstring's corrected "F4" section; this
+        #    replaces the old, now-stale "every doc is CREATE_NEW" assertion that
+        #    predated issue #43). What must still hold: every successful doc resolves
+        #    to exactly one of the two outcomes, and (since the catalog starts empty)
+        #    at least the first-processed doc(s) must CREATE_NEW.
+        assert create_new_count + append_existing_count == successful_docs
+        assert create_new_count >= 1
 
-        # 4. No orphaned btree entries (the issue's own test-spec language): the ONLY
-        #    btree entry that should exist post-run is smokeserver's own bootstrap
-        #    placeholder (seeded directly, not via any RPC, purely to work around a
-        #    distinct pre-existing btree limitation -- see engine/cmd/smokeserver's
-        #    module doc comment). PutSegment itself never writes ANY btree entry (F4),
-        #    so none of this run's real PutSegment-created files show up here. This
-        #    is the gap made concrete, not a passing assertion that happens to look
-        #    healthy by accident.
+        # 4. Real, durable btree state post-run (issue #43's fix made concrete): since
+        #    PutSegment's CREATE branch now indexes every new file's path into the same
+        #    `pathIndex` B+Tree `SearchCandidates` reads from, the smokeserver's own
+        #    bootstrap placeholder AND every unique real path this run created via
+        #    CREATE_NEW must both be discoverable post-run -- directly exercising the
+        #    fix, not (as this assertion used to, pre-issue-#43) asserting against the
+        #    gap it closed. `path_to_file_id`'s keys are exactly this run's unique
+        #    CREATE_NEW paths (see the collision comment above).
         post_run_candidates = raw_search_candidates("", 100)
-        post_run_paths = [c.path for c in post_run_candidates]
-        assert post_run_paths == ["_smokeserver/bootstrap"], (
-            "expected SearchCandidates to return only smokeserver's own bootstrap "
-            f"placeholder post-run, got {post_run_paths!r} -- (F4: PutSegment never "
-            "indexes new files by path) if this ever contains any of this run's real "
-            "created files without F4 having been fixed, something else changed "
-            "underneath this assertion and it needs re-examination"
+        post_run_paths = {c.path for c in post_run_candidates}
+        assert "_smokeserver/bootstrap" in post_run_paths, (
+            f"expected smokeserver's own bootstrap placeholder to still be present "
+            f"post-run, got {post_run_paths!r}"
+        )
+        assert set(path_to_file_id) <= post_run_paths, (
+            "expected every unique CREATE_NEW path from this run to be discoverable "
+            "via SearchCandidates post-run (issue #43's PutSegment pathIndex fix) -- "
+            f"missing: {set(path_to_file_id) - post_run_paths!r}"
         )
     finally:
         channel.close()
