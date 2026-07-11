@@ -53,6 +53,14 @@ type CheckpointPointer struct {
 // partially-written manifest.json on disk, even if the process crashes
 // mid-write — a corrupt manifest would otherwise be able to break 1.3.4's
 // recovery.
+//
+// This temp-file+Sync+os.Rename idiom is new to this codebase, not a
+// pattern followed from an existing precedent: engine/btree/persist.go's
+// SaveRoot durably persists its root node ID via a different, weaker
+// technique — an in-place f.WriteAt followed by f.Sync, with no temp file
+// and no rename. The two are structurally different atomic-write
+// strategies; this file's use of temp-file+rename should not be read as
+// mirroring SaveRoot's.
 func Checkpoint(dir string, segmentNumber uint64, offsetInSegment int64) error {
 	ptr := CheckpointPointer{
 		SegmentNumber:   segmentNumber,
