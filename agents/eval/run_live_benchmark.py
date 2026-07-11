@@ -442,8 +442,9 @@ class LiveHivemindRetriever:
         self._current_signature = frozenset(corpus.keys())
 
     def __call__(self, query_label: QueryLabel, corpus: Mapping[str, str]) -> list[str]:
+        from query.intent_refiner import IntentRefinerError
         from query.pipeline import PipelineError, run_query_pipeline
-        from query.synthesizer import SynthesizerParseError
+        from query.synthesizer import SynthesizerError
 
         signature = frozenset(corpus.keys())
         if signature != self._current_signature:
@@ -463,10 +464,14 @@ class LiveHivemindRetriever:
             # instead of returning an empty result -- map it to [] here, matching
             # vector_rag/graphrag_lite's own natural empty-result behavior on a cold miss.
             return []
-        except SynthesizerParseError:
-            # The local retrieval-side LLM can still emit non-bare-JSON after
-            # ResilientLLMClient's retries are exhausted -- treat as a retrieval
-            # miss rather than crashing the whole live run over one bad query.
+        except (SynthesizerError, IntentRefinerError):
+            # The local retrieval-side LLM can still emit non-bare-JSON, or
+            # semantically-invalid-but-JSON-valid output (e.g. an entity given
+            # as a dict instead of a string), even after ResilientLLMClient's
+            # retries are exhausted -- treat any such strict-parser failure
+            # anywhere in the pipeline (intent refinement or synthesis) as a
+            # retrieval miss rather than crashing the whole live run over one
+            # bad query.
             return []
 
         return [
