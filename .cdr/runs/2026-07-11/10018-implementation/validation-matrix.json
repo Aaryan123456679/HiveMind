@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "subtask": "5.2.4",
+  "rows": [
+    {
+      "requirement": "vector-RAG arm's final answer goes through the shared function",
+      "test": "test_all_three_arms_call_the_same_generate_final_answer_function",
+      "mechanism": "patches eval.pipeline.generate_final_answer, runs run_vector_rag_arm, asserts called exactly once"
+    },
+    {
+      "requirement": "GraphRAG-lite arm's final answer goes through the shared function",
+      "test": "test_all_three_arms_call_the_same_generate_final_answer_function",
+      "mechanism": "same patch target, run_graphrag_lite_arm, asserts called exactly once"
+    },
+    {
+      "requirement": "HiveMind arm's final answer goes through the shared function",
+      "test": "test_all_three_arms_call_the_same_generate_final_answer_function",
+      "mechanism": "same patch target, run_hivemind_arm, asserts called exactly once"
+    },
+    {
+      "requirement": "identical LLMClient.complete() call signature/model config across arms",
+      "test": "test_final_answer_call_signature_identical_across_arms",
+      "mechanism": "spy LLMClient records all calls; last call per arm compared for model/temperature/max_tokens/timeout equality"
+    },
+    {
+      "requirement": "identical prompt template/synthesizer function reused, not a parallel implementation",
+      "test": "test_synthesize_answer_invoked_identically_across_arms",
+      "mechanism": "mock.patch eval.pipeline.synthesize_answer (wraps=real fn); asserts call_count==3 and query_type/entities args identical literal values across all 3 calls"
+    },
+    {
+      "requirement": "generate_final_answer builds selected_markdown with ## File: headers synthesizer.py expects",
+      "test": "test_build_selected_markdown_produces_expected_file_headers",
+      "mechanism": "pure-unit, no LLM: asserts header format + doc order + missing-id skip behavior"
+    },
+    {
+      "requirement": "no new dependency / Ollama-only / no .env",
+      "test": "manual (self-consistency.json) + grep for import openrouter/gemini/dotenv/os.environ in new files",
+      "mechanism": "grep-based self-consistency check, no test needed since absence is the assertion"
+    },
+    {
+      "requirement": "existing baseline/synthesizer/llm modules unmodified",
+      "test": "git diff --stat (self-consistency.json)",
+      "mechanism": "diff shows additions only"
+    }
+  ]
+}

@@ -51,3 +51,5 @@
 {"path": "agents/query/pipeline.py", "module": "agents/query", "features": ["query-pipeline-orchestration", "getfilefn-proto-shape-fix", "path-by-id-sourcing", "run-query-pipeline"], "last_change_run": "2026-07-11-097-implementation"}
 {"path": ".cdr/tools/reserve-run-dir.sh", "module": ".cdr/tools", "features": ["atomic-run-dir-reservation", "mkdir-eexist-retry-loop", "cdr-tooling"], "last_change_run": "2026-07-11-6300-implementation"}
 {"path": ".cdr/tools/test-reserve-run-dir.sh", "module": ".cdr/tools", "features": ["concurrency-collision-test", "cdr-tooling", "test"], "last_change_run": "2026-07-11-6300-implementation"}
+{"path": "agents/eval/pipeline.py", "module": "agents/eval", "features": ["shared-final-answer-llm-call", "generate-final-answer", "run-hivemind-arm", "run-vector-rag-arm", "run-graphrag-lite-arm", "reuses-query-synthesizer"], "last_change_run": "2026-07-11-10018-implementation"}
+{"path": "agents/eval/test_shared_final_llm.py", "module": "agents/eval", "features": ["identical-call-path-enforcement-test", "spy-llmclient", "test"], "last_change_run": "2026-07-11-10018-implementation"}

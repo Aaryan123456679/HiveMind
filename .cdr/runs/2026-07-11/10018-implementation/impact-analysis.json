@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "subtask": "5.2.4",
+  "issue": 27,
+  "milestone": 7,
+  "new_files": [
+    "agents/eval/pipeline.py",
+    "agents/eval/test_shared_final_llm.py"
+  ],
+  "modified_files": [],
+  "unmodified_but_read": [
+    "agents/query/synthesizer.py",
+    "agents/llm/client.py",
+    "agents/llm/ollama_client.py",
+    "agents/eval/baselines/vector_rag.py",
+    "agents/eval/baselines/vector_rag_rerank.py",
+    "agents/eval/baselines/graphrag_lite.py",
+    "agents/query/conftest.py",
+    "agents/eval/test_graphrag_baseline.py",
+    "docs/HLD.md",
+    "docs/LLD/eval.md",
+    "docs/LLD/llm-provider.md",
+    "docs/LLD/query-agent.md"
+  ],
+  "downstream_consumers_of_new_module": [
+    "none yet -- agents/eval/pipeline.py is a new leaf module; no other module imports it yet. Future real-corpus benchmark-run subtask (e.g. 5.3.x) is the expected caller."
+  ],
+  "risk_of_reuse": {
+    "query.synthesizer.synthesize_answer": "Read-only reuse; not modified. Its existing behavior (prompt-then-parse-JSON, LLMError propagation, SynthesizerParseError on malformed output) is inherited as-is by all three eval arms. This is intentional: any future change to the production synthesizer automatically and identically affects all three benchmark arms, preserving the fairness guarantee this subtask exists to create."
+  },
+  "no_new_dependency": true,
+  "pyproject_touched": false,
+  "ollama_only": true,
+  "env_file_created_or_read": false,
+  "docs_requiring_update_after_implementation": [
+    "docs/LLD/eval.md (impacted-module/status note for pipeline.py's existence)"
+  ],
+  "issue_closable_after_this_subtask": true
+}

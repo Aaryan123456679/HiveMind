@@ -36,7 +36,14 @@ Ground-truth topic/query labels are attached to this dataset for recall/precisio
 3. **Simplified GraphRAG-style** — entity-graph retrieval baseline.
 
 All three arms share an identical final-answer LLM (via [llm-provider.md](llm-provider.md)) so that
-only the retrieval step varies between arms.
+only the retrieval step varies between arms. This is enforced in code, not just documented here:
+`agents/eval/pipeline.py` (issue #27, subtask 5.2.4) exposes a single shared
+`generate_final_answer()` function that every arm's runner (`run_hivemind_arm`,
+`run_vector_rag_arm`, `run_graphrag_lite_arm`) calls for its final-answer step -- itself a thin
+reuse of the real, already-implemented production call path,
+[`query.synthesizer.synthesize_answer`](query-agent.md#synthesizerpy), not a second parallel
+implementation. See `agents/eval/test_shared_final_llm.py` for the call-signature-identity
+proof.
 
 ### Metrics
 
