@@ -466,7 +466,15 @@ func (w *Writer) Close() error {
 // silently treat genuine corruption as if it were just a torn tail.
 func ReadSegment(path string) ([][]byte, error) {
 	records, _, err := readSegmentFrom(path, 0)
-	return records, err
+	if err != nil {
+		// Preserve ReadSegment's original nil-records-on-error contract: unlike
+		// readSegmentFrom (whose partial records are needed by Replay's
+		// apply-then-surface-error logic), ReadSegment is a standalone public
+		// entry point with no caller that inspects records after a non-nil
+		// error, so it always returns nil records here.
+		return nil, err
+	}
+	return records, nil
 }
 
 // parseSegmentRecords parses records from data starting at byte offset

@@ -219,8 +219,14 @@ This distinction is applied consistently in three places:
    already known to be corrupt.
 2. **`ReadSegment`/`readSegmentFrom`.** Both report a torn tail via
    `tornTail=true` with a nil error and return every record parsed strictly
-   before the torn bytes; a CRC mismatch is returned as a hard `err`,
-   alongside the records parsed strictly before the corrupt one.
+   before the torn bytes. Their CRC-mismatch contracts differ, however:
+   `readSegmentFrom` returns a hard `err` alongside the records parsed
+   strictly before the corrupt one, because `Replay` needs those partial
+   records to apply everything durable before surfacing the error to its
+   caller. `ReadSegment`, by contrast, is a standalone public entry point
+   with no caller that inspects records after a non-nil error, so on a CRC
+   mismatch it always returns `(nil, err)` — it does not propagate
+   `readSegmentFrom`'s partial records.
 3. **`Replay`'s last-segment rule.** A torn tail can only legitimately arise
    in the segment a crashed process was actively writing to at the moment
    of the crash — necessarily the highest-numbered (last) segment. If

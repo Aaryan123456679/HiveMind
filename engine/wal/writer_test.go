@@ -450,3 +450,73 @@ func TestOpenWriterResumeTornTailDiscardsAndTruncates(t *testing.T) {
 		}
 	})
 }
+
+// TestReadSegmentCRCCorruption exercises ReadSegment's own CRC-corruption
+// error path directly (fix-cycle for subtask 4.5.14.4 / verification run
+// 150-verification, findings 1 and 2). Unlike TestReplayCRCCorruption
+// (recovery_test.go), which drives the same corrupted segment through
+// Replay/readSegmentFrom, this test calls ReadSegment(path) itself, since
+// the 4.5.14.4 refactor (commit 3c7ad8f) made ReadSegment delegate to
+// readSegmentFrom and no existing test exercised ReadSegment's own call site
+// against a CRC-corrupted (non-torn) record. It also locks in ReadSegment's
+// nil-records-on-error contract: readSegmentFrom returns the partial
+// records parsed before the corrupt one (needed by Replay), but ReadSegment
+// must normalize that to nil records alongside the error, matching its
+// pre-refactor (3c7ad8f^) behavior.
+func TestReadSegmentCRCCorruption(t *testing.T) {
+	dir := t.TempDir()
+
+	const maxSegmentBytes = 4096
+	w, err := OpenWriter(dir, maxSegmentBytes)
+	if err != nil {
+		t.Fatalf("OpenWriter: %v", err)
+	}
+
+	var offsets []int64
+	const numRecords = 8
+	for i := 0; i < numRecords; i++ {
+		rec := NewCatalogPutRecord(uint64(i), []byte(fmt.Sprintf("value-%03d", i)))
+		offset, err := w.Append(rec.Encode())
+		if err != nil {
+			t.Fatalf("Append(%d): %v", i, err)
+		}
+		offsets = append(offsets, offset)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Corrupt one payload byte in a record that is NOT the last one, so the
+	// failure is unambiguously a CRC mismatch rather than a torn tail (see
+	// TestReplayCRCCorruption for the same corruption-injection technique).
+	const corruptIdx = 4
+	path := segmentPath(dir, 0)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	payloadStart := offsets[corruptIdx] + recordHeaderSize
+	original := data[payloadStart]
+	data[payloadStart] ^= 0xFF
+	if data[payloadStart] == original {
+		t.Fatalf("test setup failed to actually change the byte at offset %d", payloadStart)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile (corrupted): %v", err)
+	}
+
+	// Sanity: confirm the flipped byte actually breaks this record's CRC as
+	// parsed by the package's own parser, so the assertion below exercises a
+	// genuine CRC failure rather than an unrelated one.
+	if _, _, _, perr := parseSegmentRecords(data, int(offsets[corruptIdx])); perr == nil {
+		t.Fatalf("test setup: corrupting one payload byte at offset %d did not trigger a CRC mismatch as expected", payloadStart)
+	}
+
+	records, err := ReadSegment(path)
+	if err == nil {
+		t.Fatalf("ReadSegment: got nil error, want a hard CRC error for the corrupted record at index %d", corruptIdx)
+	}
+	if records != nil {
+		t.Fatalf("ReadSegment: got records = %v alongside a non-nil error, want nil records (ReadSegment must not propagate readSegmentFrom's partial records)", records)
+	}
+}
