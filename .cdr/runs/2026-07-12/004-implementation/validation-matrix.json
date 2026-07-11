@@ -1,0 +1,40 @@
+{
+  "subtask": "5.4.1",
+  "rows": [
+    {
+      "requirement": "Explicit comparison of precision with vs. without graph-traversal expansion",
+      "covered_by": "compare_traversal_precision() runs retrieve_documents at expanded_max_hops and at max_hops=0, scores both via eval.metrics.score_arm",
+      "test": "test_traversal_precision_check.py::test_expansion_low_relevance_neighbor_flags_precision_decrease"
+    },
+    {
+      "requirement": "Correctly flags a precision decrease when expansion adds a low-relevance neighbor (fixture scenario, per test spec verbatim)",
+      "covered_by": "TraversalPrecisionComparison.expansion_ever_hurt_precision / .decreased_queries",
+      "test": "test_traversal_precision_check.py::test_expansion_low_relevance_neighbor_flags_precision_decrease"
+    },
+    {
+      "requirement": "Does not always report a decrease (no false positive when expansion adds nothing / adds only relevant docs)",
+      "covered_by": "compare_traversal_precision() same-arm comparison logic",
+      "test": "test_traversal_precision_check.py::test_no_decrease_when_expansion_adds_nothing_extra"
+    },
+    {
+      "requirement": "Reports any checkpoint (of potentially several) where expansion decreases precision",
+      "covered_by": "compare_precision_across_checkpoints() + checkpoints_with_precision_decrease()",
+      "test": "test_traversal_precision_check.py::test_checkpoints_with_precision_decrease_filters_correctly"
+    },
+    {
+      "requirement": "QueryPrecisionDelta correctness (delta sign, decrease flag)",
+      "covered_by": "QueryPrecisionDelta.delta / .expansion_decreased_precision properties",
+      "test": "test_traversal_precision_check.py::test_query_precision_delta_properties"
+    },
+    {
+      "requirement": "Ollama-only / offline-testable -- zero live API calls",
+      "covered_by": "_StubLLMClient (in-file, deterministic, no network) used for all entity extraction in every test",
+      "test": "all tests in test_traversal_precision_check.py (no OllamaClient import, no httpx import)"
+    },
+    {
+      "requirement": "Reuse existing recall/precision + graph-traversal infra, no duplication",
+      "covered_by": "traversal_precision.py imports score_arm/ArmScore/QueryScore from eval.metrics and EntityGraph/retrieve_documents/DEFAULT_MAX_HOPS from eval.baselines.graphrag_lite; zero reimplementation",
+      "test": "manual code review (import statements) + no regression in eval/test_metrics_recall_precision.py or eval/test_graphrag_baseline.py"
+    }
+  ]
+}

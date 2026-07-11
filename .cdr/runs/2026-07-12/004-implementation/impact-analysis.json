@@ -1,0 +1,31 @@
+{
+  "subtask": "5.4.1",
+  "issue": 29,
+  "new_files": [
+    "agents/eval/traversal_precision.py",
+    "agents/eval/test_traversal_precision_check.py"
+  ],
+  "modified_files": [],
+  "modules_touched": ["agents/eval/"],
+  "downstream_consumers": {
+    "agents/eval/metrics.py": "read-only reuse (score_arm, ArmScore, QueryScore) -- not modified, no risk to its existing passing tests",
+    "agents/eval/baselines/graphrag_lite.py": "read-only reuse (EntityGraph, retrieve_documents, DEFAULT_MAX_HOPS) -- not modified, no risk to its existing passing tests",
+    "agents/eval/ground_truth.py": "read-only reuse (QueryLabel, RelevantDoc) -- not modified"
+  },
+  "risks": [
+    {
+      "risk": "Duplicating recall/precision or graph-traversal logic instead of reusing eval.metrics / eval.baselines.graphrag_lite",
+      "mitigation": "New module imports both directly; no reimplementation."
+    },
+    {
+      "risk": "Test suite accidentally making a live network/Ollama call, violating offline-only scope constraint",
+      "mitigation": "New test file uses a deterministic in-file _StubLLMClient (no network), mirroring test_graphrag_baseline.py's established stub pattern; no OllamaClient import in the new test file."
+    },
+    {
+      "risk": "Over-scoping into real corpus-growth-checkpoint wiring (subtask 5.3.4 territory, gated to live benchmark run)",
+      "mitigation": "Checkpoint concept is modeled generically (an arbitrary label + arbitrary EntityGraph/doc set) so the comparison primitive is checkpoint-agnostic; no real corpus/datasets.py wiring is added, matching 5.2.3's own disclosed fixture-only scope boundary."
+    }
+  ],
+  "backward_compatibility": "No existing file is modified; purely additive. Zero risk to already-merged/passing tests.",
+  "test_impact": "New pytest file agents/eval/test_traversal_precision_check.py only; no changes to existing test files."
+}

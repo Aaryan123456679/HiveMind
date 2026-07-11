@@ -1,0 +1,35 @@
+{
+  "subtask": "5.4.1",
+  "issue": 29,
+  "status": "implemented_unverified",
+  "commit_hash": "PENDING",
+  "pointers": {
+    "new_module": "agents/eval/traversal_precision.py",
+    "new_test_file": "agents/eval/test_traversal_precision_check.py",
+    "key_symbols": [
+      "traversal_precision.compare_traversal_precision",
+      "traversal_precision.compare_precision_across_checkpoints",
+      "traversal_precision.checkpoints_with_precision_decrease",
+      "traversal_precision.TraversalPrecisionComparison",
+      "traversal_precision.QueryPrecisionDelta",
+      "traversal_precision.CorpusGrowthCheckpoint",
+      "traversal_precision.NO_EXPANSION_MAX_HOPS"
+    ],
+    "reused_from": {
+      "eval/metrics.py": ["score_arm", "ArmScore", "QueryScore"],
+      "eval/baselines/graphrag_lite.py": ["EntityGraph", "retrieve_documents", "DEFAULT_MAX_HOPS"],
+      "eval/ground_truth.py": ["QueryLabel", "RelevantDoc"]
+    },
+    "cdr_docs": {
+      "requirement": ".cdr/runs/2026-07-12/004-implementation/requirement.md",
+      "architecture_discovery": ".cdr/runs/2026-07-12/004-implementation/architecture-discovery.md",
+      "impact_analysis": ".cdr/runs/2026-07-12/004-implementation/impact-analysis.json",
+      "plan": ".cdr/runs/2026-07-12/004-implementation/plan.md",
+      "validation_matrix": ".cdr/runs/2026-07-12/004-implementation/validation-matrix.json",
+      "self_consistency": ".cdr/runs/2026-07-12/004-implementation/self-consistency.json"
+    }
+  },
+  "test_results": "pytest agents/eval/test_traversal_precision_check.py -v -> 4 passed; pytest agents/eval/ -v -> 149 passed, 0 failed",
+  "live_api_calls_made": 0,
+  "next_step": "Dispatch /cdr:verify for subtask 5.4.1 -- this agent does not self-verify (invariant I4)."
+}
