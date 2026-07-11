@@ -293,5 +293,14 @@ def test_complete_raises_on_connection_error() -> None:
         client.complete("hi")
 
 
+def test_complete_raises_on_timeout() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("request timed out", request=request)
+
+    client = _client_with_handler(handler)
+    with pytest.raises(OpenRouterClientError):
+        client.complete("hi")
+
+
 def test_openrouter_client_error_is_llm_error() -> None:
     assert issubclass(OpenRouterClientError, LLMError)
