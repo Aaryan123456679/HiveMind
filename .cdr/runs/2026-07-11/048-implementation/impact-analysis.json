@@ -1,0 +1,37 @@
+{
+  "subtask": "4.5.3.2",
+  "issue": 40,
+  "files_to_change": [
+    {
+      "path": "engine/split/guard.go",
+      "change": "Add refs int field to fileSplitState; replace non-refcounted stateFor accessor with acquireGuard/releaseGuard (refcounted, mirroring btree/latch.go's acquireLatch/releaseLatch) plus a plain-lookup helper for Release's no-op-on-miss contract; rewire TryAcquire/Release/InProgress on top of the new accessors; add guardRegistrySize() test-only helper; update doc comments (struct-level growth-characteristic note, method-level ordering rationale)."
+    },
+    {
+      "path": "engine/split/guard_test.go",
+      "change": "Add TestFileGuardRegistryBounded (guard a large number of distinct fileIDs, acquire+release each, assert registry size stays bounded); no changes to existing tests (they must keep passing against the new implementation unchanged)."
+    }
+  ],
+  "files_explicitly_not_touched": [
+    "engine/catalog/content.go (4.5.3.1, deferred to a later run per launch instructions)",
+    "engine/split/trigger.go",
+    "engine/split/orchestrate.go",
+    "engine/split/execute.go",
+    "engine/split/split_race_test.go",
+    "engine/mvcc/*",
+    "engine/wal/*",
+    "engine/catalog/* (other than the explicit exclusion above)",
+    "engine/btree/* (read-only precedent, not modified)",
+    "docs/LLD/split.md"
+  ],
+  "callers_of_FileGuard_checked": {
+    "method": "grep for FileGuard, TryAcquire, Release(, InProgress( usages outside guard.go/guard_test.go",
+    "result": "no other production call sites yet in this tree (orchestrate.go wiring is 4.5.3.3's/later scope); public API signatures (NewFileGuard, TryAcquire(fileID uint64) bool, Release(fileID uint64), InProgress(fileID uint64) bool) are preserved unchanged, so no caller-side changes are needed regardless."
+  },
+  "risk_level": "medium — concurrency-sensitive change to a locking/CAS primitive, but no external callers yet in this tree reduces blast radius",
+  "concurrency_invariants_to_preserve": [
+    "Exactly one TryAcquire winner per fileID at any given time (no double-acquisition), including across an eviction+recreation cycle.",
+    "No refcount leaks on the TryAcquire-failure (losing) path.",
+    "Release must store false before releasing/evicting the ref, not after (see architecture-discovery.md for the double-winner hazard this prevents).",
+    "Release remains a documented no-op (no panic) when called on a fileID that was never acquired or already fully released/evicted."
+  ]
+}

@@ -129,6 +129,77 @@ func TestReleaseWithoutHoldingIsNoOp(t *testing.T) {
 	}
 }
 
+// TestFileGuardRegistryBounded is the acceptance-criteria test named in
+// subtask 4.5.3.2's test spec (issue #40). It guards a large number of
+// distinct fileIDs, each following the real TryAcquire-then-Release winner
+// lifecycle, and asserts the registry does not grow linearly with the total
+// number of distinct fileIDs ever guarded -- mirroring
+// engine/btree/latch_test.go's TestNodeLatchRegistryBounded for
+// NodeStore.latches.
+func TestFileGuardRegistryBounded(t *testing.T) {
+	g := NewFileGuard()
+	const totalFileIDs = 50_000
+
+	for fileID := uint64(0); fileID < totalFileIDs; fileID++ {
+		if !g.TryAcquire(fileID) {
+			t.Fatalf("expected fresh fileID %d to win TryAcquire", fileID)
+		}
+		// Interleave a losing TryAcquire (exercising the failure/no-refcount-
+		// leak path) and an InProgress probe before releasing.
+		if g.TryAcquire(fileID) {
+			t.Fatalf("expected second TryAcquire for still-held fileID %d to fail", fileID)
+		}
+		if !g.InProgress(fileID) {
+			t.Fatalf("expected fileID %d to be observed in progress before Release", fileID)
+		}
+		g.Release(fileID)
+	}
+
+	// Every fileID above was fully released, so none should still be
+	// pinned by an in-progress flag or an outstanding reference: the
+	// registry should have shrunk back down to (near) empty, not grown to
+	// totalFileIDs entries.
+	const bound = 100
+	if size := g.guardRegistrySize(); size > bound {
+		t.Fatalf("expected FileGuard registry to stay bounded (<= %d entries) after releasing all %d distinct fileIDs, got %d entries -- registry is growing unboundedly", bound, totalFileIDs, size)
+	}
+}
+
+// TestFileGuardRegistryRetainsInProgressEntries verifies the eviction gate
+// directly: a fileID left in-progress (TryAcquire won, Release never
+// called) must NOT be evicted, even while many OTHER fileIDs are guarded
+// and released around it. This is the FileGuard analogue of
+// engine/btree/latch.go's version==0 gate check -- here the gate is
+// !inProgress, and an entry with inProgress==true must survive.
+func TestFileGuardRegistryRetainsInProgressEntries(t *testing.T) {
+	g := NewFileGuard()
+	const heldFileID = uint64(999_999)
+
+	if !g.TryAcquire(heldFileID) {
+		t.Fatalf("expected TryAcquire for heldFileID to succeed")
+	}
+
+	const churnFileIDs = 10_000
+	for fileID := uint64(0); fileID < churnFileIDs; fileID++ {
+		if !g.TryAcquire(fileID) {
+			t.Fatalf("expected fresh fileID %d to win TryAcquire", fileID)
+		}
+		g.Release(fileID)
+	}
+
+	if !g.InProgress(heldFileID) {
+		t.Fatalf("expected heldFileID to still be recorded in progress after unrelated churn")
+	}
+	if g.TryAcquire(heldFileID) {
+		t.Fatalf("expected heldFileID's guard to still be held (TryAcquire should fail), meaning its entry was not evicted while inProgress==true")
+	}
+
+	g.Release(heldFileID)
+	if !g.TryAcquire(heldFileID) {
+		t.Fatalf("expected heldFileID to be acquirable again after its own Release")
+	}
+}
+
 // TestInProgressObservability verifies InProgress reflects the current
 // state without mutating it.
 func TestInProgressObservability(t *testing.T) {

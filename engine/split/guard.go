@@ -11,8 +11,21 @@ import (
 //
 // The zero value (inProgress == false) is the correct initial state: no
 // file starts out with a split already in progress.
+//
+// Update (subtask 4.5.3.2): fileSplitState now also carries refs, mirroring
+// engine/btree/latch.go's nodeLatch.refs -- see acquireGuard/releaseGuard
+// below and FileGuard's doc comment for the reference-counted eviction
+// policy this adds.
 type fileSplitState struct {
 	inProgress atomic.Bool
+
+	// refs is the number of FileGuard-level calls (acquireGuard/releaseGuard
+	// pairs -- see below) currently holding an outstanding reference to this
+	// object, i.e. that have called acquireGuard but not yet called the
+	// matching releaseGuard. It is guarded entirely by FileGuard.mu, never
+	// atomically: every read or write of refs happens inside a mu critical
+	// section, by construction (see acquireGuard/releaseGuard).
+	refs int
 }
 
 // FileGuard is a per-file registry of split-in-progress flags, keyed by
@@ -45,12 +58,32 @@ type fileSplitState struct {
 // never blocks callers operating on a different fileID once each fileID's
 // state has been created).
 //
-// Growth characteristic: like NodeStore.latches, the guards map here is
-// never evicted -- entries accumulate for every distinct fileID ever
-// guarded, for the lifetime of the FileGuard. This is a deliberate,
-// deferred limitation matching that existing precedent (see
-// .cdr/memory/pending.md); this subtask does not add eviction/bounding, and
-// should not be over-engineered to do so.
+// Growth characteristic (update, subtask 4.5.3.2): the guards map is now
+// bounded, not an ever-growing map keyed by every distinct fileID ever
+// guarded -- see acquireGuard/releaseGuard below, mirroring the
+// reference-counted eviction policy engine/btree/latch.go's NodeStore.latches
+// adopted in subtask 4.5.1.3 (commit 545e827), per .cdr/memory/pending.md's
+// "revisit together" note.
+//
+// The eviction gate here is refs == 0 AND !inProgress.Load() -- simpler than
+// NodeStore.latches' refs == 0 AND version == 0 gate, because fileSplitState
+// carries no version-like accumulating history for a future reader to lose:
+// inProgress is a pure current-state flag, not a monotonically increasing
+// counter. There is nothing for a freshly re-created entry to "lose" by
+// starting over at the zero value (inProgress == false), UNLESS eviction is
+// allowed to happen while a split is still recorded in progress for that
+// fileID -- which the gate explicitly forbids. If it were allowed, a second,
+// unrelated TryAcquire call for the same fileID could create a fresh
+// replacement entry (inProgress defaulting back to false) and immediately
+// "win" it, while the original winner still believes it holds exclusive
+// rights: a genuine double-acquisition / mutual-exclusion violation, the
+// FileGuard analogue of NodeStore.latches' lost-update concern. Requiring
+// !inProgress at eviction time closes that: an entry can only ever be
+// reclaimed once no goroutine holds an outstanding acquireGuard reference on
+// it AND the flag has been explicitly cleared back to false by a Release
+// call, i.e. once "no split is in flight and nobody is mid-call" -- exactly
+// the set of fileIDs that were merely probed (TryAcquire losers, InProgress
+// checks) rather than ones with a currently-active, unreleased split.
 type FileGuard struct {
 	mu     sync.Mutex
 	guards map[uint64]*fileSplitState
@@ -65,19 +98,59 @@ func NewFileGuard() *FileGuard {
 	}
 }
 
-// stateFor returns the fileSplitState associated with fileID, lazily
-// creating it on first access. Safe for concurrent use; the same
-// *fileSplitState is always returned for a given fileID on a given
-// FileGuard (mirrors NodeStore.latchFor's idiom in engine/btree/latch.go).
-func (g *FileGuard) stateFor(fileID uint64) *fileSplitState {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+// getOrCreateLocked returns the fileSplitState for fileID, creating it if
+// absent. Callers MUST already hold g.mu. Never touches refs -- mirrors
+// engine/btree/latch.go's NodeStore.getOrCreateLocked.
+func (g *FileGuard) getOrCreateLocked(fileID uint64) *fileSplitState {
+	if g.guards == nil {
+		g.guards = make(map[uint64]*fileSplitState)
+	}
 	s, ok := g.guards[fileID]
 	if !ok {
 		s = &fileSplitState{}
 		g.guards[fileID] = s
 	}
 	return s
+}
+
+// acquireGuard returns the fileSplitState for fileID (creating it if
+// necessary) and increments its refs count by one, atomically with the
+// lookup/creation under mu. Every call MUST be paired with exactly one later
+// call to releaseGuard(fileID, s) once the caller is completely done using
+// the returned pointer -- see TryAcquire/Release/InProgress below for the
+// exact pairing in each case. Mirrors engine/btree/latch.go's acquireLatch.
+func (g *FileGuard) acquireGuard(fileID uint64) *fileSplitState {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s := g.getOrCreateLocked(fileID)
+	s.refs++
+	return s
+}
+
+// releaseGuard balances a prior acquireGuard(fileID) call for the SAME s it
+// returned: it decrements s.refs and, only if that drops refs to exactly
+// zero AND s.inProgress.Load() == false, removes fileID's entry from the
+// registry -- bounding FileGuard.guards' size to (roughly) the number of
+// fileIDs currently in flight (an outstanding acquireGuard reference and/or
+// an active, unreleased split) rather than every distinct fileID ever passed
+// to TryAcquire/Release/InProgress across the FileGuard's entire lifetime.
+// See FileGuard's doc comment for why gating on !inProgress (rather than
+// evicting unconditionally once refs hits zero) is load-bearing, not an
+// optimization. Mirrors engine/btree/latch.go's releaseLatch.
+func (g *FileGuard) releaseGuard(fileID uint64, s *fileSplitState) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	s.refs--
+	if s.refs == 0 && !s.inProgress.Load() {
+		// Defense in depth: only delete if the registry still points at this
+		// exact object -- always true given the invariant that an entry is
+		// never deleted while any acquireGuard reference on it remains
+		// outstanding (refs > 0), but costs nothing to check explicitly.
+		if cur, ok := g.guards[fileID]; ok && cur == s {
+			delete(g.guards, fileID)
+		}
+	}
 }
 
 // TryAcquire attempts to win the right to perform a split for fileID,
@@ -106,8 +179,21 @@ func (g *FileGuard) stateFor(fileID uint64) *fileSplitState {
 // for the same fileID can win the guard again. TryAcquire itself does not
 // know whether the winner ever completed; that lifecycle is out of this
 // subtask's scope.
+//
+// TryAcquire's acquireGuard reference on fileID is deliberately kept open
+// (not released) on the winning path -- released only by the winner's later
+// Release(fileID) call, which is what pins fileID's registry entry
+// (preventing eviction) for the winner's entire "split in progress" window.
+// On a losing CAS (someone else already holds the flag), the just-acquired
+// reference is released immediately, mirroring engine/btree/latch.go's
+// TryLock failure path.
 func (g *FileGuard) TryAcquire(fileID uint64) bool {
-	return g.stateFor(fileID).inProgress.CompareAndSwap(false, true)
+	s := g.acquireGuard(fileID)
+	if s.inProgress.CompareAndSwap(false, true) {
+		return true
+	}
+	g.releaseGuard(fileID, s)
+	return false
 }
 
 // Release clears fileID's split-in-progress flag, allowing a future
@@ -118,16 +204,44 @@ func (g *FileGuard) TryAcquire(fileID uint64) bool {
 // when a split has "finished"; that is 2b.1.3's job.
 //
 // Calling Release for a fileID whose flag is not currently set (either
-// because it was never acquired, or because it was already released) is a
-// documented no-op: it unconditionally stores false and does not panic or
-// return an error. This is a deliberate design choice, not an oversight --
-// unlike engine/btree/latch.go's nodeLatch.mu (a real sync.Mutex, which
-// itself defines double-unlock as caller error), FileGuard has no notion
-// of "owner" to attribute a wrongful-release to, so there is no
-// well-defined error to raise; treating a redundant Release as a no-op
-// keeps the primitive simple and matches its narrow scope.
+// because it was never acquired, or because it was already released and its
+// entry possibly evicted -- see the update note below) is a documented
+// no-op: it does not panic or return an error. This is a deliberate design
+// choice, not an oversight -- unlike engine/btree/latch.go's nodeLatch.mu (a
+// real sync.Mutex, which itself defines double-unlock as caller error),
+// FileGuard has no notion of "owner" to attribute a wrongful-release to, so
+// there is no well-defined error to raise; treating a redundant Release as a
+// no-op keeps the primitive simple and matches its narrow scope.
+//
+// Update (subtask 4.5.3.2): Release now looks fileID up with a plain,
+// non-panicking map read (deliberately NOT engine/btree/latch.go's
+// peekLatch idiom, which panics on a missing entry -- that would break the
+// no-op-on-miss contract above, which this subtask preserves unchanged). If
+// no entry exists, Release simply returns: there is nothing to clear and
+// nothing to release. If an entry exists, Release stores false FIRST and
+// only THEN calls releaseGuard to decrement/possibly evict -- this ordering
+// is load-bearing, not arbitrary. If eviction could happen (or a racing
+// TryAcquire could observe a fresh replacement entry) before inProgress is
+// actually stored false, a second TryAcquire call for the same fileID could
+// create a brand-new fileSplitState (defaulting to inProgress == false) and
+// immediately "win" it via CompareAndSwap, while the original winner's own
+// Release call hasn't yet logically cleared its flag -- two goroutines both
+// believing they hold the winning guard for the same fileID at once, a
+// mutual-exclusion violation. Storing false before releasing the ref makes
+// this impossible: by the time eviction becomes possible, the flag this
+// call is responsible for has already been durably cleared, so any fresh
+// entry a racing TryAcquire creates or reuses reflects the same state either
+// way (behaviorally identical to engine/btree/latch.go's Unlock unlocking
+// its mutex before releasing its own reference, for the analogous reason).
 func (g *FileGuard) Release(fileID uint64) {
-	g.stateFor(fileID).inProgress.Store(false)
+	g.mu.Lock()
+	s, ok := g.guards[fileID]
+	g.mu.Unlock()
+	if !ok {
+		return
+	}
+	s.inProgress.Store(false)
+	g.releaseGuard(fileID, s)
 }
 
 // InProgress reports whether a split is currently recorded as in progress
@@ -136,6 +250,31 @@ func (g *FileGuard) Release(fileID uint64) {
 // callers deciding whether to attempt a split must use TryAcquire, not
 // InProgress-then-TryAcquire, since the latter reintroduces exactly the
 // TOCTOU race TryAcquire's atomic CompareAndSwap is designed to avoid.
+//
+// InProgress brackets its single atomic load in a brief acquireGuard/
+// releaseGuard pair purely to participate correctly in the registry's
+// refcounted eviction bookkeeping (mirrors engine/btree/latch.go's Version).
+// Because inProgress is false for a freshly created entry and this call
+// only ever transiently pins it, a probe for a fileID with no split
+// currently in progress leaves no permanent trace in the registry -- the
+// entry it may have just created is immediately eligible for eviction again
+// once this call's own releaseGuard runs (assuming no other concurrent
+// caller is also pinning it).
 func (g *FileGuard) InProgress(fileID uint64) bool {
-	return g.stateFor(fileID).inProgress.Load()
+	s := g.acquireGuard(fileID)
+	v := s.inProgress.Load()
+	g.releaseGuard(fileID, s)
+	return v
+}
+
+// guardRegistrySize returns the current number of entries in
+// FileGuard.guards. Test-only observability for this subtask's acceptance
+// criterion (the registry must stay bounded rather than growing linearly
+// with distinct fileIDs ever guarded) -- see guard_test.go's
+// TestFileGuardRegistryBounded. Mirrors engine/btree/latch.go's
+// latchRegistrySize.
+func (g *FileGuard) guardRegistrySize() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.guards)
 }
