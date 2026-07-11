@@ -48,7 +48,7 @@ import os
 
 import httpx
 
-from llm.client import LLMClient, LLMError
+from llm.client import CompletionResult, LLMClient, LLMError, TokenUsage
 
 #: OpenRouter's OpenAI-compatible API base URL.
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
@@ -161,8 +161,60 @@ class OpenRouterClient(LLMClient):
         timeout: float | None = None,
     ) -> str:
         """See `LLMClient.complete`. Calls OpenRouter's `/chat/completions`."""
+        return self._do_complete(
+            prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        ).text
+
+    def complete_with_usage(
+        self,
+        prompt: str,
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> CompletionResult:
+        """See `LLMClient.complete_with_usage`.
+
+        Added for subtask 4.5.19.1 (issue #59): OpenRouter's OpenAI-compatible response already
+        includes a top-level `usage: {prompt_tokens, completion_tokens, total_tokens}` object,
+        a sibling of `choices` in the same response body -- previously parsed out of the JSON
+        response and then discarded entirely by `complete()`. This method surfaces it via
+        `TokenUsage` for `agents/llm/interceptor.py`'s cost computation, without changing
+        `complete()`'s own return type or behavior at all (both methods share the same
+        underlying `_do_complete()` implementation below).
+        """
+        return self._do_complete(
+            prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
+    def _do_complete(
+        self,
+        prompt: str,
+        *,
+        model: str | None,
+        temperature: float,
+        max_tokens: int | None,
+        timeout: float | None,
+    ) -> CompletionResult:
+        """Shared implementation backing both `complete()` and `complete_with_usage()`.
+
+        Extracted for subtask 4.5.19.1 (issue #59) so token-usage parsing (added below) lives in
+        exactly one place rather than being duplicated across two near-identical methods.
+        Request/response handling, error types, and exception points are unchanged from the
+        original `complete()` body this was extracted from.
+        """
+        resolved_model = model or self._model
         payload: dict[str, object] = {
-            "model": model or self._model,
+            "model": resolved_model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
         }
@@ -212,4 +264,28 @@ class OpenRouterClient(LLMClient):
                 f"'choices[0].message.content' string: {data!r}"
             )
 
-        return completion
+        return CompletionResult(
+            text=completion,
+            model=resolved_model,
+            usage=_parse_usage(data.get("usage")),
+        )
+
+
+def _parse_usage(usage: object) -> TokenUsage | None:
+    """Best-effort parse of OpenRouter's OpenAI-compatible `usage` object.
+
+    Added for subtask 4.5.19.1 (issue #59). Unlike `completion` text parsing above (which raises
+    `OpenRouterClientError` on any malformed shape, since a completion with no text is useless),
+    a missing or malformed `usage` object degrades gracefully to `None` -- `usage` is a bonus
+    field for cost accounting, not part of `complete()`'s original contract, so a provider
+    response that omits or malforms it should not break completion itself. Callers needing usage
+    (`agents/llm/interceptor.py`) are responsible for handling a `None` result (e.g. refusing to
+    price a paid-provider call with no usage data).
+    """
+    if not isinstance(usage, dict):
+        return None
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
+        return None
+    return TokenUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
