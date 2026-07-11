@@ -1,0 +1,13 @@
+{
+  "subtask": "4.5.3.5",
+  "note": "Internal sanity only per invariant I4 -- this is NOT verification. /cdr:verify performs independent verification separately.",
+  "checks": [
+    {"check": "go vet ./engine/split/...", "result": "PASS"},
+    {"check": "go build ./engine/split/...", "result": "PASS"},
+    {"check": "go test ./engine/split/... -race -run TestSplitAtomicCommit -v", "result": "PASS (8/8 subtests)"},
+    {"check": "go test ./engine/split/... -race", "result": "PASS (full package suite, ~55s)"},
+    {"check": "gofmt -l engine/split/execute_test.go engine/split/execute.go", "result": "no output (already formatted)"},
+    {"check": "validation-matrix.json coverage", "result": "all 4 rows covered by an actual executed check above"}
+  ],
+  "overall": "green"
+}

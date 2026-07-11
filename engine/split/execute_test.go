@@ -3,6 +3,7 @@ package split
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -416,18 +417,47 @@ func uint64SlicesEqual(a, b []uint64) bool {
 // matching the convention engine/btree's own tests use for a brand-new tree.
 func newTestBtree(t *testing.T) *btree.Tree {
 	t.Helper()
+	tree, _ := newTestBtreeWithPath(t)
+	return tree
+}
+
+// newTestBtreeWithPath is newTestBtree, additionally returning the on-disk
+// index file path it opened -- needed by TestSplitAtomicCommit's
+// crash-injection subtests (4.5.3.5), which must reopen the SAME underlying
+// index file via a brand-new NodeStore/NodeAllocator/Tree to faithfully
+// simulate a real process restart, rather than reusing the same in-memory
+// *btree.Tree ExecuteSplitAtomic already partially mutated.
+func newTestBtreeWithPath(t *testing.T) (*btree.Tree, string) {
+	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "test.idx")
+	tree, err := openTestBtreeAt(t, path, 0)
+	if err != nil {
+		t.Fatalf("openTestBtreeAt: %v", err)
+	}
+	return tree, path
+}
+
+// openTestBtreeAt opens (creating if necessary) a *btree.Tree backed by the
+// index file at path, rooted at rootNodeID. Passing the SAME path but a fresh
+// *os.File/*btree.NodeStore/*btree.NodeAllocator (as reopenFreshSplitDeps
+// does) reconstructs a tree that holds no in-memory state whatsoever from
+// whichever earlier *btree.Tree object last wrote to that file -- only
+// rootNodeID (the one piece of Tree state RecoverSplitCommits' own doc
+// comment says it does NOT reconstruct) must be supplied by the caller.
+func openTestBtreeAt(t *testing.T, path string, rootNodeID uint64) (*btree.Tree, error) {
+	t.Helper()
+
 	f, err := btree.OpenIndexFile(path)
 	if err != nil {
-		t.Fatalf("btree.OpenIndexFile: %v", err)
+		return nil, fmt.Errorf("btree.OpenIndexFile: %w", err)
 	}
 	t.Cleanup(func() { f.Close() })
 
 	store := btree.NewNodeStore(f)
 	alloc, err := btree.NewNodeAllocator(store)
 	if err != nil {
-		t.Fatalf("btree.NewNodeAllocator: %v", err)
+		return nil, fmt.Errorf("btree.NewNodeAllocator: %w", err)
 	}
 	t.Cleanup(func() {
 		if err := alloc.Close(); err != nil {
@@ -435,7 +465,7 @@ func newTestBtree(t *testing.T) *btree.Tree {
 		}
 	})
 
-	return btree.NewTree(store, alloc, 0)
+	return btree.NewTree(store, alloc, rootNodeID), nil
 }
 
 func TestSplitBtreeRepoint(t *testing.T) {
@@ -829,20 +859,39 @@ func TestSplitGraphEdges(t *testing.T) {
 	})
 }
 
-// putSplittingRecord seeds a CatalogRecord for fileID directly via cat.Put
-// with Status = catalog.StatusSplitting, simulating the state a preceding,
-// successful Orchestrator.BeginSplit(fileID) call (2b.1.3) would have left
-// behind before ExecuteSplitAtomic (2b.3.6) is ever called -- deliberately
-// StatusSplitting, not StatusSplit (contrast putSplitRecord above): see
-// ExecuteSplitAtomic's doc comment for why this subtask's precondition is
-// StatusSplitting, not StatusSplit.
-func putSplittingRecord(t *testing.T, cat *catalog.Catalog, fileID uint64, sizeBytes uint64) {
+// putSplittingRecord seeds a CatalogRecord for fileID via a WAL-covered
+// cat.Put with Status = catalog.StatusSplitting, simulating the state a
+// preceding, successful Orchestrator.BeginSplit(fileID) call (2b.1.3) would
+// have left behind before ExecuteSplitAtomic (2b.3.6) is ever called --
+// deliberately StatusSplitting, not StatusSplit (contrast putSplitRecord
+// above): see ExecuteSplitAtomic's doc comment for why this subtask's
+// precondition is StatusSplitting, not StatusSplit.
+//
+// Routed through wal.NewCatalogPutRecord + wal.AppendAndApply (the same
+// WAL-before-apply idiom transitionStatus uses in production, see
+// orchestrate.go) rather than a bare cat.Put: TestSplitAtomicCommit's
+// crash-injection subtests (4.5.3.5) reconstruct a brand-new *catalog.Catalog
+// via catalog.RecoverFromWAL to simulate a real process restart, which can
+// only recover this seed record if it was actually logged to the WAL --
+// exactly as a real BeginSplit-produced StatusSplitting record would have
+// been.
+func putSplittingRecord(t *testing.T, w *wal.Writer, cat *catalog.Catalog, fileID uint64, sizeBytes uint64) {
 	t.Helper()
-	if err := cat.Put(catalog.CatalogRecord{
+
+	rec := catalog.CatalogRecord{
 		FileID:         fileID,
 		CurrentVersion: 0,
 		SizeBytes:      sizeBytes,
 		Status:         catalog.StatusSplitting,
+	}
+	encoded, err := rec.Encode()
+	if err != nil {
+		t.Fatalf("encoding StatusSplitting record for fileID %d: %v", fileID, err)
+	}
+
+	walRec := wal.NewCatalogPutRecord(fileID, encoded)
+	if _, err := wal.AppendAndApply(w, walRec, func() error {
+		return cat.Put(rec)
 	}); err != nil {
 		t.Fatalf("seeding StatusSplitting record for fileID %d: %v", fileID, err)
 	}
@@ -860,6 +909,83 @@ type atomicCommitTestDeps struct {
 	tree     *btree.Tree
 	appender *graph.EdgeAppender
 	guard    *FileGuard
+
+	// catalogPath, treeIndexPath, and edgesDir are the on-disk locations
+	// backing cat, tree, and appender respectively. TestSplitAtomicCommit's
+	// crash-injection subtests (4.5.3.5) use these to reopen brand-new
+	// *catalog.Catalog/*btree.Tree/*graph.EdgeAppender objects rooted at the
+	// SAME locations before calling RecoverSplitCommits, so recovery is
+	// exercised against objects that hold no in-memory state carried over
+	// from before the simulated crash -- a faithful simulation of a real
+	// process restart, rather than reusing the same in-memory objects
+	// ExecuteSplitAtomic partially mutated.
+	catalogPath   string
+	treeIndexPath string
+	edgesDir      string
+}
+
+// reopenFreshSplitDeps reopens brand-new *catalog.Catalog, *btree.Tree, and
+// *graph.EdgeAppender objects rooted at the same on-disk locations deps
+// already uses, simulating a real process restart for TestSplitAtomicCommit's
+// crash-injection subtests (4.5.3.5):
+//
+//   - cat is a fresh catalog.NewCatalog wrapping a freshly-opened
+//     *catalog.FileManager, with its (process-lifetime-scoped, see
+//     catalog.Catalog's own doc comment) in-memory fileID->location index
+//     rebuilt from scratch via catalog.RecoverFromWAL -- exactly the
+//     replay-on-restart step docs/LLD/wal.md's "Recovery" section describes.
+//   - tree is a fresh *btree.Tree backed by a brand-new NodeStore/
+//     NodeAllocator over the same index file, rooted at preRecoveryRoot: the
+//     one piece of Tree state RecoverSplitCommits' own doc comment says it
+//     does NOT reconstruct, so the caller must supply whatever root node ID
+//     was last known-good immediately before the simulated crash (deps.tree
+//     is still safe to read for this immediately after ExecuteSplitAtomic
+//     returns, since no other goroutine touches it).
+//   - appender is a fresh graph.OpenEdgeAppender over the same edges
+//     directory; unlike cat, it needs no explicit replay step, since
+//     EdgeAppender re-derives all durability-relevant state (via ReadAll) from
+//     the directory's contents on every AppendEdgeIfAbsent call.
+//
+// None of deps' own idAlloc/cs/cat/tree/appender/guard are closed or
+// otherwise touched by this call: deps keeps referencing whatever it already
+// held, and callers should route every RecoverSplitCommits call plus every
+// subsequent assertion for a given crash-point subtest through the returned
+// objects instead.
+func reopenFreshSplitDeps(t *testing.T, deps atomicCommitTestDeps, preRecoveryRoot uint64) (*catalog.Catalog, *btree.Tree, *graph.EdgeAppender) {
+	t.Helper()
+
+	fm, err := catalog.Open(deps.catalogPath)
+	if err != nil {
+		t.Fatalf("catalog.Open (fresh reconstruction): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := fm.Close(); err != nil {
+			t.Errorf("fresh FileManager.Close: %v", err)
+		}
+	})
+	freshCat := catalog.NewCatalog(fm)
+	if err := catalog.RecoverFromWAL(freshCat, deps.walDir); err != nil {
+		t.Fatalf("catalog.RecoverFromWAL (fresh reconstruction): %v", err)
+	}
+
+	freshTree, err := openTestBtreeAt(t, deps.treeIndexPath, preRecoveryRoot)
+	if err != nil {
+		t.Fatalf("openTestBtreeAt (fresh reconstruction): %v", err)
+	}
+
+	freshAppender, err := graph.OpenEdgeAppender(deps.edgesDir)
+	if err != nil {
+		t.Fatalf("graph.OpenEdgeAppender (fresh reconstruction): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := freshAppender.Close(); err != nil {
+			t.Errorf("fresh EdgeAppender.Close: %v", err)
+		}
+	})
+	appenderDirs[freshAppender] = deps.edgesDir
+	t.Cleanup(func() { delete(appenderDirs, freshAppender) })
+
+	return freshCat, freshTree, freshAppender
 }
 
 // setAtomicCommitHook installs hook as atomicCommitHook for the duration of
@@ -1018,6 +1144,13 @@ func TestSplitAtomicCommit(t *testing.T) {
 		// parent directory is therefore "<root>/content", so walDir must
 		// walk up one more level before appending "wal".
 		walDir := filepath.Join(filepath.Dir(filepath.Dir(cs.ContentPath(0))), "wal")
+		// catalogPath mirrors newTestContentStoreDepsWithWAL's own
+		// catalog.Open(filepath.Join(root, "catalog.dat")) call: root is the
+		// same parent directory walDir's own computation above derives from
+		// cs.ContentPath(0). Needed by the crash-injection subtests below to
+		// reopen a brand-new *catalog.Catalog against the SAME on-disk file
+		// (see reopenFreshSplitDeps).
+		catalogPath := filepath.Join(filepath.Dir(filepath.Dir(cs.ContentPath(0))), "catalog.dat")
 
 		// Burn idAlloc's cursor up to (and including) originalFileID's
 		// hardcoded constant, so ExecuteSplitAtomic's own idAlloc.Next()
@@ -1042,26 +1175,33 @@ func TestSplitAtomicCommit(t *testing.T) {
 			}
 		}
 
-		tree := newTestBtree(t)
+		tree, treeIndexPath := newTestBtreeWithPath(t)
 		if err := tree.Insert(oldPath, originalFileID); err != nil {
 			t.Fatalf("seeding oldPath in tree: %v", err)
 		}
 
 		appender := newTestEdgeAppenderTracked(t)
+		edgesDir, ok := appenderDirs[appender]
+		if !ok {
+			t.Fatalf("newTestEdgeAppenderTracked did not register appenderDirs entry")
+		}
 		guard := NewFileGuard()
 		guard.TryAcquire(originalFileID)
 
-		putSplittingRecord(t, cat, originalFileID, uint64(len(FixtureFileContent)))
+		putSplittingRecord(t, w, cat, originalFileID, uint64(len(FixtureFileContent)))
 
 		return atomicCommitTestDeps{
-			idAlloc:  idAlloc,
-			cs:       cs,
-			cat:      cat,
-			w:        w,
-			walDir:   walDir,
-			tree:     tree,
-			appender: appender,
-			guard:    guard,
+			idAlloc:       idAlloc,
+			cs:            cs,
+			cat:           cat,
+			w:             w,
+			walDir:        walDir,
+			tree:          tree,
+			appender:      appender,
+			guard:         guard,
+			catalogPath:   catalogPath,
+			treeIndexPath: treeIndexPath,
+			edgesDir:      edgesDir,
 		}
 	}
 
@@ -1181,28 +1321,49 @@ func TestSplitAtomicCommit(t *testing.T) {
 				t.Error("guard.InProgress(originalFileID) = false after an incomplete commit, want true (guard must not be released early)")
 			}
 
+			// Reconstruct brand-new catalog/tree/appender objects rooted at
+			// the SAME on-disk locations deps used, before ever calling
+			// RecoverSplitCommits (4.5.3.5): this makes the simulation
+			// faithful to a real process restart, where recovery necessarily
+			// runs against freshly-opened objects holding no in-memory state
+			// from before the crash, rather than against the very objects
+			// ExecuteSplitAtomic's partially-applied call just mutated
+			// in-process. preRecoveryRoot is read from deps.tree here, i.e.
+			// immediately after the (simulated-crash) ExecuteSplitAtomic call
+			// above returned and before any reconstruction happens, capturing
+			// exactly the root node ID a real system would need to have
+			// durably recorded (e.g. in a superblock) at the moment of the
+			// crash -- RecoverSplitCommits' own doc comment is explicit that
+			// it does not reconstruct this itself.
+			preRecoveryRoot := deps.tree.Root()
+			freshCat, freshTree, freshAppender := reopenFreshSplitDeps(t, deps, preRecoveryRoot)
+			freshDeps := deps
+			freshDeps.cat = freshCat
+			freshDeps.tree = freshTree
+			freshDeps.appender = freshAppender
+
 			// Recovery must converge on the fully-applied state regardless
 			// of exactly where the simulated crash landed, EXCEPT for the
 			// one stage before the commit record was ever appended, where
 			// there is nothing to recover and the pre-split state must
 			// remain fully, exactly intact.
-			if err := RecoverSplitCommits(deps.walDir, deps.cat, deps.tree, deps.appender); err != nil {
+			if err := RecoverSplitCommits(freshDeps.walDir, freshDeps.cat, freshDeps.tree, freshDeps.appender); err != nil {
 				t.Fatalf("RecoverSplitCommits: %v", err)
 			}
 
 			if hookStage == "before_commit_append" {
-				rec, err := deps.cat.Get(originalFileID)
+				rec, err := freshDeps.cat.Get(originalFileID)
 				if err != nil {
 					t.Fatalf("cat.Get(originalFileID) post-recovery: %v", err)
 				}
 				if rec.Status != catalog.StatusSplitting {
 					t.Errorf("post-recovery (no-op expected) rec.Status = %v, want catalog.StatusSplitting", rec.Status)
 				}
-				gotOldFileID, found, err := deps.tree.Lookup(oldPath)
+				gotOldFileID, found, err := freshDeps.tree.Lookup(oldPath)
 				if err != nil || !found || gotOldFileID != originalFileID {
 					t.Errorf("tree.Lookup(oldPath) post-recovery (no-op expected) = (%d, %v, %v), want (%d, true, nil)", gotOldFileID, found, err, originalFileID)
 				}
-				edges := readAppenderEdges(t, deps.appender)
+				edges := readAppenderEdges(t, freshDeps.appender)
 				if len(edges) != 0 {
 					t.Errorf("post-recovery (no-op expected) edges = %v, want none", edges)
 				}
@@ -1211,7 +1372,7 @@ func TestSplitAtomicCommit(t *testing.T) {
 
 			// Every other stage: recovery must have completed the full
 			// split.
-			rec, err = deps.cat.Get(originalFileID)
+			rec, err = freshDeps.cat.Get(originalFileID)
 			if err != nil {
 				t.Fatalf("cat.Get(originalFileID) post-recovery: %v", err)
 			}
@@ -1222,17 +1383,20 @@ func TestSplitAtomicCommit(t *testing.T) {
 				}
 				newFileIDsByPath[proposal.NewPath] = rec.RedirectTargetIDs[i]
 			}
-			assertFullSplitApplied(t, deps, oldPath, originalFileID, newFileIDsByPath)
+			assertFullSplitApplied(t, freshDeps, oldPath, originalFileID, newFileIDsByPath)
 
-			// Idempotency: running recovery again must not duplicate
-			// anything (extra btree inserts are naturally upserts; graph
-			// edges specifically rely on AppendEdgeIfAbsent).
-			if err := RecoverSplitCommits(deps.walDir, deps.cat, deps.tree, deps.appender); err != nil {
+			// Idempotency: running recovery again (against the SAME fresh
+			// objects -- this second run simulates the process staying up
+			// and RecoverSplitCommits simply being invoked twice, not a
+			// second restart) must not duplicate anything (extra btree
+			// inserts are naturally upserts; graph edges specifically rely on
+			// AppendEdgeIfAbsent).
+			if err := RecoverSplitCommits(freshDeps.walDir, freshDeps.cat, freshDeps.tree, freshDeps.appender); err != nil {
 				t.Fatalf("second RecoverSplitCommits: %v", err)
 			}
 			for newPath, id := range newFileIDsByPath {
 				_ = newPath
-				if n := edgeCount(t, deps.appender, graph.Edge{Source: rec.FileID, Target: id, Type: graph.EdgeRedirect}); n != 1 {
+				if n := edgeCount(t, freshDeps.appender, graph.Edge{Source: rec.FileID, Target: id, Type: graph.EdgeRedirect}); n != 1 {
 					t.Errorf("REDIRECT edge %d->%d appears %d times after two recoveries, want exactly 1", rec.FileID, id, n)
 				}
 			}

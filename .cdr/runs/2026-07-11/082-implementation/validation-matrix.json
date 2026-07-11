@@ -1,0 +1,31 @@
+{
+  "subtask": "4.5.3.5",
+  "criteria": [
+    {
+      "criterion": "The 4 crash-point subtests in TestSplitAtomicCommit call RecoverSplitCommits against freshly reconstructed catalog/tree/appender objects (e.g. via catalog.RecoverFromWAL re-application onto brand-new, freshly-opened objects) instead of the same in-memory objects ExecuteSplitAtomic partially mutated.",
+      "planned_check": "crashPointTest now calls reopenFreshSplitDeps (opens new *catalog.FileManager/*catalog.Catalog + catalog.RecoverFromWAL, new *btree.Tree via openTestBtreeAt, new *graph.EdgeAppender via graph.OpenEdgeAppender) before every RecoverSplitCommits call; both RecoverSplitCommits invocations and all post-recovery assertions route through the fresh objects (freshDeps), not deps.cat/deps.tree/deps.appender.",
+      "test_spec": "go test ./engine/split/... -race -run TestSplitAtomicCommit",
+      "result": "PASS (all 8 subtests, including all 4 crash-point subtests: crash_before_commit_append_no_visible_effect, crash_after_commit_before_catalog_put_recovers_fully, crash_after_catalog_put_before_btree_recovers_fully, crash_after_btree_before_graph_recovers_fully)"
+    },
+    {
+      "criterion": "Simulation is faithful to a real process restart (implicit acceptance criterion from subtask wording).",
+      "planned_check": "Fresh *catalog.Catalog starts with an empty in-memory index (per catalog.NewCatalog's documented behavior) and is rebuilt solely via catalog.RecoverFromWAL replaying WAL records -- no reliance on any in-process index state surviving the simulated crash. Fresh *btree.Tree is backed by a brand-new NodeStore/NodeAllocator (new *os.File handle) over the same index file. Fresh *graph.EdgeAppender is a brand-new OpenEdgeAppender call. Verified by code review of reopenFreshSplitDeps plus passing test run.",
+      "test_spec": "go test ./engine/split/... -race -run TestSplitAtomicCommit -v (manual inspection of PASS output for each crash-point subtest)",
+      "result": "PASS"
+    },
+    {
+      "criterion": "No regression in the rest of engine/split's test suite.",
+      "planned_check": "Full package-scoped test run.",
+      "test_spec": "go test ./engine/split/... -race",
+      "result": "PASS (ok, ~55s)"
+    },
+    {
+      "criterion": "go vet clean.",
+      "planned_check": "go vet on the touched package.",
+      "test_spec": "go vet ./engine/split/...",
+      "result": "PASS (no output)"
+    }
+  ],
+  "self_consistency_only": true,
+  "note": "This validation matrix and its results are internal self-consistency checks performed by the implementation agent per invariant I4 (no self-verification). Independent verification is deferred to /cdr:verify."
+}
