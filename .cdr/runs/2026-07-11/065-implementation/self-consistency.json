@@ -1,0 +1,13 @@
+{
+  "build_green": true,
+  "build_command": "go build ./engine/wal/...",
+  "test_command": "go test ./engine/wal/... -race -count=1",
+  "test_result": "ok (unaffected, docs-only change, run as sanity check per instructions)",
+  "matrix_covered": true,
+  "matrix_ref": "validation-matrix.json — all 6 criteria covered",
+  "scope_check": {
+    "files_staged_planned": ["docs/LLD/wal.md", ".cdr/runs/2026-07-11/065-implementation/**"],
+    "no_other_module_touched": true
+  },
+  "note": "This is internal sanity only, not verification (invariant I4) — /cdr:verify is responsible for independent verification."
+}

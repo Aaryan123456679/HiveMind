@@ -1,0 +1,43 @@
+{
+  "subtask": "4.5.4.5",
+  "criteria": [
+    {
+      "id": "record-format",
+      "description": "8-byte CRC32 record header format documented",
+      "source_of_truth": "engine/wal/writer.go recordHeaderSize, offRecordLength, offRecordCRC, Append",
+      "covered": true
+    },
+    {
+      "id": "segment-naming-rotation",
+      "description": "wal-<N>.log naming/rotation documented",
+      "source_of_truth": "engine/wal/writer.go segmentFilePrefix/segmentFileSuffix, segmentPath, rotateLocked, Append rotate-before-write",
+      "covered": true
+    },
+    {
+      "id": "recordtype-vocabulary",
+      "description": "RecordType vocabulary + payload encodings + RecordTypeInvalid/out-of-range guard (4c60202)",
+      "source_of_truth": "engine/wal/record.go RecordType consts, DecodeTypedRecord",
+      "covered": true
+    },
+    {
+      "id": "checkpoint-manifest",
+      "description": "manifest.json schema + ArchivableSegments boundary semantics + corrected SaveRoot lineage doc comment (ab5e962)",
+      "source_of_truth": "engine/wal/checkpoint.go CheckpointPointer, Checkpoint, ArchivableSegments",
+      "covered": true
+    },
+    {
+      "id": "replay-contract",
+      "description": "Replay contract: OffsetInSegment inclusive-start convention, RecordType validation gate",
+      "source_of_truth": "engine/wal/recovery.go Replay, isValidRecordType",
+      "covered": true
+    },
+    {
+      "id": "torn-tail-discipline",
+      "description": "torn-tail-validation/crash-recovery discipline (task-1.3.5)",
+      "source_of_truth": "engine/wal/writer.go parseSegmentRecords/repairTornTail, engine/wal/recovery.go torn-tail-only-in-last-segment rule",
+      "covered": true
+    }
+  ],
+  "scope_check": "only docs/LLD/wal.md modified; no other file staged",
+  "test_run": "not required (docs-only); optionally go test ./engine/wal/... -race as a no-op sanity check, no source touched"
+}
