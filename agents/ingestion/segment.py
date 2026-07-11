@@ -87,6 +87,23 @@ that helper into the shared `ingestion._json_fences.strip_code_fences` (both mod
 now import it, rather than segment.py re-deriving the same regex independently or
 propose_split.py's copy silently drifting out of sync), and calling it here before
 `json.loads`, mirroring `propose_split.py`'s existing, already-proven pattern.
+
+Control-character / triple-quote tolerance -- F7 closed (issue #44)
+--------------------------------------------------------------------
+A *distinct* real-model reliability gap from F1 was surfaced by issue #19 subtask
+3.5.2's real end-to-end smoke run against a live local `llama3.1:8b` model:
+~7/11 real documents produced completions that still failed `json.loads` even after
+`strip_code_fences` ran cleanly, because the model embedded raw control characters
+or a stray `\"\"\"` triple-quote artifact directly inside a JSON string value (see
+`ingestion._json_fences`'s module docstring for the exact failure shapes/error
+messages). That subtask deliberately left `_parse_segment_json` unmodified (out of
+scope); issue #44 closes F7 by retrying once, only after the first `json.loads`
+attempt has already failed, through the shared
+`ingestion._json_fences.sanitize_control_chars_and_triple_quotes` helper before
+raising `SegmentParseError`. Gating the retry behind the first failure (rather than
+always sanitizing) means the already-working happy path is untouched -- it can only
+turn some previously-failing malformed completions into successfully-parsed ones,
+never change behavior for already-valid JSON.
 """
 
 from __future__ import annotations
@@ -95,7 +112,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Sequence
 
-from ingestion._json_fences import strip_code_fences
+from ingestion._json_fences import sanitize_control_chars_and_triple_quotes, strip_code_fences
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
@@ -223,10 +240,18 @@ def _parse_segment_json(raw: str) -> SegmentResult:
     stripped = strip_code_fences(raw)
     try:
         payload = json.loads(stripped)
-    except json.JSONDecodeError as exc:
-        raise SegmentParseError(
-            f"segment: LLM response is not valid JSON: {exc}"
-        ) from exc
+    except json.JSONDecodeError:
+        # Fallback only -- see module docstring's "Control-character / triple-quote
+        # tolerance -- F7 closed (issue #44)" section. Never runs on the
+        # already-working happy path (first json.loads already succeeded above);
+        # only attempted once the raw completion has already failed to parse.
+        sanitized = sanitize_control_chars_and_triple_quotes(stripped)
+        try:
+            payload = json.loads(sanitized)
+        except json.JSONDecodeError as exc:
+            raise SegmentParseError(
+                f"segment: LLM response is not valid JSON: {exc}"
+            ) from exc
 
     if not isinstance(payload, dict):
         raise SegmentParseError(

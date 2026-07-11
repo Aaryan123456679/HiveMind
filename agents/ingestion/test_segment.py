@@ -294,3 +294,120 @@ def test_plain_code_fence_wrapped_json_is_parsed() -> None:
 
     assert result.topic_action == "CREATE_NEW"
     assert result.new_topic_path == "billing/DuplicateCharges"
+
+
+# ---------------------------------------------------------------------------
+# Control-character / triple-quote artifact tolerance (closes forwarded finding F7,
+# issue #44). Failure shapes per `.cdr/index/regression.jsonl`'s
+# `hivemind-issue19-3.5.2-F7-llm-json-control-chars` and
+# `.cdr/runs/2026-07-10/040-implementation/` -- the exact raw bytes captured from
+# the live `llama3.1:8b` smoke run were not persisted anywhere in the repo (see
+# this subtask's requirement.md), so these fixtures are constructed to reproduce
+# the two *described* failure shapes/error classes rather than replaying literal
+# captured bytes.
+# ---------------------------------------------------------------------------
+
+
+def test_raw_control_character_in_string_value_is_sanitized() -> None:
+    """A real `llama3.1:8b` completion observed to embed a raw, unescaped control
+    character (e.g. a literal newline byte, not the two-character `\\n` escape)
+    directly inside the `content_markdown` string value. Pre-fix, `json.loads`
+    raised `json.JSONDecodeError: Invalid control character at: ...` and
+    `_parse_segment_json` surfaced this as `SegmentParseError`. Post-fix, the
+    fallback `sanitize_control_chars_and_triple_quotes` pass escapes the raw
+    control byte and `segment()` succeeds.
+    """
+    # A plain json.dumps() would already escape this -- build the raw string by
+    # hand so the completion actually contains a literal 0x0A byte where a real
+    # model was observed to leave one, exactly reproducing the "Invalid control
+    # character" json.loads failure this fix targets.
+    raw_completion = (
+        '{"topic_action": "APPEND_EXISTING", "target_topic": "billing/InvoiceDisputes", '
+        '"new_topic_path": "", "content_markdown": "## Invoice 4521\n\nCustomer reports '
+        'a billing discrepancy.", "entities": ["invoice-4521"], '
+        '"related_topics": ["billing/RefundRequests"]}'
+    )
+    # Sanity: confirm this fixture genuinely reproduces the pre-fix failure mode
+    # before asserting the post-fix behavior below.
+    with pytest.raises(json.JSONDecodeError, match="Invalid control character"):
+        json.loads(raw_completion)
+
+    client = _FakeLLMClient(response=raw_completion)
+
+    result = segment(_make_doc(), _make_shortlist(), client)
+
+    assert result.topic_action == "APPEND_EXISTING"
+    assert result.content_markdown == "## Invoice 4521\n\nCustomer reports a billing discrepancy."
+
+
+def test_triple_quote_wrapped_string_value_is_sanitized() -> None:
+    """A real `llama3.1:8b` completion observed to wrap a string value in a
+    Python-docstring-style `\"\"\"..\"\"\"` artifact instead of a plain JSON
+    `\"...\"` string. Pre-fix, `json.loads` raised
+    `json.JSONDecodeError: Expecting ',' delimiter: ...` (the first two of the
+    three quote characters parse as an empty string, leaving the rest as
+    unexpected trailing content) and `_parse_segment_json` surfaced this as
+    `SegmentParseError`. Post-fix, the fallback sanitization pass normalizes the
+    triple-quoted span into a single well-formed JSON string and `segment()`
+    succeeds.
+    """
+    raw_completion = (
+        '{"topic_action": "CREATE_NEW", "target_topic": "", '
+        '"new_topic_path": "billing/DuplicateCharges", '
+        '"content_markdown": """## Duplicate charge\n\nCustomer reports a duplicate charge.""", '
+        '"entities": [], "related_topics": []}'
+    )
+    with pytest.raises(json.JSONDecodeError, match="Expecting ',' delimiter"):
+        json.loads(raw_completion)
+
+    client = _FakeLLMClient(response=raw_completion)
+
+    result = segment(_make_doc(), _make_shortlist(), client)
+
+    assert result.topic_action == "CREATE_NEW"
+    assert result.new_topic_path == "billing/DuplicateCharges"
+    assert (
+        result.content_markdown
+        == "## Duplicate charge\n\nCustomer reports a duplicate charge."
+    )
+
+
+def test_combined_control_char_and_triple_quote_artifacts_is_sanitized() -> None:
+    """Both artifact shapes in the same completion (observed as a real possibility
+    since either can occur independently per-field): a raw control character in
+    one string field and a triple-quote-wrapped value in another. Both
+    sanitization steps must compose correctly.
+    """
+    raw_completion = (
+        '{"topic_action": "APPEND_EXISTING", '
+        '"target_topic": "billing/InvoiceDisputes", '
+        '"new_topic_path": "", '
+        '"content_markdown": """## Invoice 4521\n\nCustomer reports a billing discrepancy.""", '
+        '"entities": ["invoice-4521"], '
+        '"related_topics": ["billing/RefundRequests"]}'
+    )
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw_completion)
+
+    client = _FakeLLMClient(response=raw_completion)
+
+    result = segment(_make_doc(), _make_shortlist(), client)
+
+    assert result.topic_action == "APPEND_EXISTING"
+    assert (
+        result.content_markdown
+        == "## Invoice 4521\n\nCustomer reports a billing discrepancy."
+    )
+
+
+def test_unparseable_json_still_raises_after_sanitization_fallback() -> None:
+    """Regression guard: genuinely invalid JSON unrelated to either F7 artifact
+    (e.g. a truncated/missing closing brace) must still raise `SegmentParseError`
+    -- the sanitization fallback must not mask real errors by, say, catching and
+    swallowing exceptions it can't actually fix.
+    """
+    truncated = '{"topic_action": "APPEND_EXISTING", "target_topic": "billing/InvoiceDisputes"'
+    client = _FakeLLMClient(response=truncated)
+
+    with pytest.raises(SegmentParseError, match="not valid JSON"):
+        segment(_make_doc(), _make_shortlist(), client)
