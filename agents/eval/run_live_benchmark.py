@@ -443,6 +443,7 @@ class LiveHivemindRetriever:
 
     def __call__(self, query_label: QueryLabel, corpus: Mapping[str, str]) -> list[str]:
         from query.pipeline import PipelineError, run_query_pipeline
+        from query.synthesizer import SynthesizerParseError
 
         signature = frozenset(corpus.keys())
         if signature != self._current_signature:
@@ -461,6 +462,11 @@ class LiveHivemindRetriever:
             # Constraint (b): a cold miss (zero candidates surfaced) raises PipelineError
             # instead of returning an empty result -- map it to [] here, matching
             # vector_rag/graphrag_lite's own natural empty-result behavior on a cold miss.
+            return []
+        except SynthesizerParseError:
+            # The local retrieval-side LLM can still emit non-bare-JSON after
+            # ResilientLLMClient's retries are exhausted -- treat as a retrieval
+            # miss rather than crashing the whole live run over one bad query.
             return []
 
         return [
