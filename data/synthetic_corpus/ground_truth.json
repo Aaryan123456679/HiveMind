@@ -1,0 +1,1159 @@
+{
+  "source_manifest": "/Users/aaryanmahajan/Main/Projects/HiveMind/data/synthetic_corpus/generated/manifest.json",
+  "topics": [
+    {
+      "topic_id": "data-retention",
+      "title": "Data Retention Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-retention",
+          "label": "primary"
+        },
+        {
+          "doc_id": "doc-mobile-device-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-supplier-diversity",
+          "label": "cross_reference"
+        }
+      ]
+    },
+    {
+      "topic_id": "expense-reimbursement",
+      "title": "Expense Reimbursement Procedure",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-retention",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-expense-reimbursement",
+          "label": "primary"
+        },
+        {
+          "doc_id": "doc-supplier-diversity",
+          "label": "cross_reference"
+        }
+      ]
+    },
+    {
+      "topic_id": "remote-work-eligibility",
+      "title": "Remote Work Eligibility Guidelines",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-retention",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-expense-reimbursement",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-remote-work-eligibility",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "incident-response",
+      "title": "Security Incident Response Plan",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-expense-reimbursement",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-remote-work-eligibility",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-incident-response",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "vendor-onboarding",
+      "title": "Vendor Onboarding Checklist",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-remote-work-eligibility",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-incident-response",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-vendor-onboarding",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "pto-accrual",
+      "title": "Paid Time Off Accrual Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-incident-response",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-vendor-onboarding",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-pto-accrual",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "equipment-provisioning",
+      "title": "Employee Equipment Provisioning Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-vendor-onboarding",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-pto-accrual",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-equipment-provisioning",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "travel-authorization",
+      "title": "Business Travel Authorization Procedure",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-pto-accrual",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-equipment-provisioning",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-travel-authorization",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "whistleblower-protection",
+      "title": "Whistleblower Protection Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-equipment-provisioning",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-travel-authorization",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-whistleblower-protection",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "change-management",
+      "title": "IT Change Management Procedure",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-travel-authorization",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-whistleblower-protection",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-change-management",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "acceptable-use",
+      "title": "Acceptable Use of Company Technology Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-whistleblower-protection",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-change-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-acceptable-use",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "password-management",
+      "title": "Password and Credential Management Standard",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-change-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-acceptable-use",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-password-management",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "data-classification",
+      "title": "Data Classification and Handling Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-acceptable-use",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-password-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-classification",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "conflict-of-interest",
+      "title": "Conflict of Interest Disclosure Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-password-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-conflict-of-interest",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "anti-harassment",
+      "title": "Anti-Harassment and Workplace Conduct Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-conflict-of-interest",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-anti-harassment",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "performance-review-cycle",
+      "title": "Employee Performance Review Cycle Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-conflict-of-interest",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-anti-harassment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-performance-review-cycle",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "procurement-approval",
+      "title": "Procurement and Purchase Approval Procedure",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-anti-harassment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-performance-review-cycle",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-procurement-approval",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "business-continuity",
+      "title": "Business Continuity and Disaster Recovery Plan",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-performance-review-cycle",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-procurement-approval",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-business-continuity",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "physical-access-control",
+      "title": "Physical Facility Access Control Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-procurement-approval",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-business-continuity",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-physical-access-control",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "intellectual-property",
+      "title": "Intellectual Property Assignment Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-business-continuity",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-physical-access-control",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-intellectual-property",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "social-media-conduct",
+      "title": "Employee Social Media Conduct Guidelines",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-physical-access-control",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-intellectual-property",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-social-media-conduct",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "diversity-inclusion",
+      "title": "Diversity, Equity, and Inclusion Commitment Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-intellectual-property",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-social-media-conduct",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-diversity-inclusion",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "third-party-audit",
+      "title": "Third-Party Security Audit Procedure",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-social-media-conduct",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-diversity-inclusion",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-third-party-audit",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "data-subject-rights",
+      "title": "Data Subject Access Request Handling Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-diversity-inclusion",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-third-party-audit",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-subject-rights",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "on-call-rotation",
+      "title": "Engineering On-Call Rotation Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-third-party-audit",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-subject-rights",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-on-call-rotation",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "gift-and-entertainment",
+      "title": "Gift and Entertainment Acceptance Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-subject-rights",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-on-call-rotation",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-gift-and-entertainment",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "contractor-classification",
+      "title": "Independent Contractor Classification Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-on-call-rotation",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-gift-and-entertainment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-contractor-classification",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "software-license-compliance",
+      "title": "Software License Compliance Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-gift-and-entertainment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-contractor-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-software-license-compliance",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "workplace-safety",
+      "title": "Workplace Health and Safety Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-contractor-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-software-license-compliance",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-workplace-safety",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "records-retention-litigation-hold",
+      "title": "Litigation Hold and Records Preservation Procedure",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-software-license-compliance",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-workplace-safety",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-records-retention-litigation-hold",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "mobile-device-management",
+      "title": "Mobile Device Management and BYOD Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-workplace-safety",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-records-retention-litigation-hold",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-mobile-device-management",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "topic_id": "supplier-diversity",
+      "title": "Supplier Diversity and Ethical Sourcing Policy",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-records-retention-litigation-hold",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-mobile-device-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-supplier-diversity",
+          "label": "primary"
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "query": "What is the policy on Data Retention Policy?",
+      "topic_id": "data-retention",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-retention",
+          "label": "primary"
+        },
+        {
+          "doc_id": "doc-mobile-device-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-supplier-diversity",
+          "label": "cross_reference"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Expense Reimbursement Procedure?",
+      "topic_id": "expense-reimbursement",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-retention",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-expense-reimbursement",
+          "label": "primary"
+        },
+        {
+          "doc_id": "doc-supplier-diversity",
+          "label": "cross_reference"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Remote Work Eligibility Guidelines?",
+      "topic_id": "remote-work-eligibility",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-retention",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-expense-reimbursement",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-remote-work-eligibility",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Security Incident Response Plan?",
+      "topic_id": "incident-response",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-expense-reimbursement",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-remote-work-eligibility",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-incident-response",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Vendor Onboarding Checklist?",
+      "topic_id": "vendor-onboarding",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-remote-work-eligibility",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-incident-response",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-vendor-onboarding",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Paid Time Off Accrual Policy?",
+      "topic_id": "pto-accrual",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-incident-response",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-vendor-onboarding",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-pto-accrual",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Employee Equipment Provisioning Policy?",
+      "topic_id": "equipment-provisioning",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-vendor-onboarding",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-pto-accrual",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-equipment-provisioning",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Business Travel Authorization Procedure?",
+      "topic_id": "travel-authorization",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-pto-accrual",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-equipment-provisioning",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-travel-authorization",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Whistleblower Protection Policy?",
+      "topic_id": "whistleblower-protection",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-equipment-provisioning",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-travel-authorization",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-whistleblower-protection",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on IT Change Management Procedure?",
+      "topic_id": "change-management",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-travel-authorization",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-whistleblower-protection",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-change-management",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Acceptable Use of Company Technology Policy?",
+      "topic_id": "acceptable-use",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-whistleblower-protection",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-change-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-acceptable-use",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Password and Credential Management Standard?",
+      "topic_id": "password-management",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-change-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-acceptable-use",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-password-management",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Data Classification and Handling Policy?",
+      "topic_id": "data-classification",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-acceptable-use",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-password-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-classification",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Conflict of Interest Disclosure Policy?",
+      "topic_id": "conflict-of-interest",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-password-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-conflict-of-interest",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Anti-Harassment and Workplace Conduct Policy?",
+      "topic_id": "anti-harassment",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-conflict-of-interest",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-anti-harassment",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Employee Performance Review Cycle Policy?",
+      "topic_id": "performance-review-cycle",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-conflict-of-interest",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-anti-harassment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-performance-review-cycle",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Procurement and Purchase Approval Procedure?",
+      "topic_id": "procurement-approval",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-anti-harassment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-performance-review-cycle",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-procurement-approval",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Business Continuity and Disaster Recovery Plan?",
+      "topic_id": "business-continuity",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-performance-review-cycle",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-procurement-approval",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-business-continuity",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Physical Facility Access Control Policy?",
+      "topic_id": "physical-access-control",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-procurement-approval",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-business-continuity",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-physical-access-control",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Intellectual Property Assignment Policy?",
+      "topic_id": "intellectual-property",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-business-continuity",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-physical-access-control",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-intellectual-property",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Employee Social Media Conduct Guidelines?",
+      "topic_id": "social-media-conduct",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-physical-access-control",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-intellectual-property",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-social-media-conduct",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Diversity, Equity, and Inclusion Commitment Policy?",
+      "topic_id": "diversity-inclusion",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-intellectual-property",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-social-media-conduct",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-diversity-inclusion",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Third-Party Security Audit Procedure?",
+      "topic_id": "third-party-audit",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-social-media-conduct",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-diversity-inclusion",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-third-party-audit",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Data Subject Access Request Handling Policy?",
+      "topic_id": "data-subject-rights",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-diversity-inclusion",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-third-party-audit",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-subject-rights",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Engineering On-Call Rotation Policy?",
+      "topic_id": "on-call-rotation",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-third-party-audit",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-data-subject-rights",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-on-call-rotation",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Gift and Entertainment Acceptance Policy?",
+      "topic_id": "gift-and-entertainment",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-data-subject-rights",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-on-call-rotation",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-gift-and-entertainment",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Independent Contractor Classification Policy?",
+      "topic_id": "contractor-classification",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-on-call-rotation",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-gift-and-entertainment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-contractor-classification",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Software License Compliance Policy?",
+      "topic_id": "software-license-compliance",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-gift-and-entertainment",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-contractor-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-software-license-compliance",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Workplace Health and Safety Policy?",
+      "topic_id": "workplace-safety",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-contractor-classification",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-software-license-compliance",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-workplace-safety",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Litigation Hold and Records Preservation Procedure?",
+      "topic_id": "records-retention-litigation-hold",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-software-license-compliance",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-workplace-safety",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-records-retention-litigation-hold",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Mobile Device Management and BYOD Policy?",
+      "topic_id": "mobile-device-management",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-workplace-safety",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-records-retention-litigation-hold",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-mobile-device-management",
+          "label": "primary"
+        }
+      ]
+    },
+    {
+      "query": "What is the policy on Supplier Diversity and Ethical Sourcing Policy?",
+      "topic_id": "supplier-diversity",
+      "relevant_docs": [
+        {
+          "doc_id": "doc-records-retention-litigation-hold",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-mobile-device-management",
+          "label": "cross_reference"
+        },
+        {
+          "doc_id": "doc-supplier-diversity",
+          "label": "primary"
+        }
+      ]
+    }
+  ]
+}

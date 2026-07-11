@@ -1,0 +1,584 @@
+{
+  "generated_at": "2026-07-11T15:28:08.692157+00:00",
+  "provider": "ollama",
+  "model": "llama3.2:latest",
+  "topics_path": "/Users/aaryanmahajan/Main/Projects/HiveMind/data/synthetic_corpus/topics.yaml",
+  "documents": [
+    {
+      "doc_id": "doc-data-retention",
+      "filename": "doc-data-retention.pdf",
+      "primary_topic": {
+        "id": "data-retention",
+        "title": "Data Retention Policy"
+      },
+      "cross_references": [
+        {
+          "id": "expense-reimbursement",
+          "title": "Expense Reimbursement Procedure"
+        },
+        {
+          "id": "remote-work-eligibility",
+          "title": "Remote Work Eligibility Guidelines"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-expense-reimbursement",
+      "filename": "doc-expense-reimbursement.pdf",
+      "primary_topic": {
+        "id": "expense-reimbursement",
+        "title": "Expense Reimbursement Procedure"
+      },
+      "cross_references": [
+        {
+          "id": "remote-work-eligibility",
+          "title": "Remote Work Eligibility Guidelines"
+        },
+        {
+          "id": "incident-response",
+          "title": "Security Incident Response Plan"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-remote-work-eligibility",
+      "filename": "doc-remote-work-eligibility.pdf",
+      "primary_topic": {
+        "id": "remote-work-eligibility",
+        "title": "Remote Work Eligibility Guidelines"
+      },
+      "cross_references": [
+        {
+          "id": "incident-response",
+          "title": "Security Incident Response Plan"
+        },
+        {
+          "id": "vendor-onboarding",
+          "title": "Vendor Onboarding Checklist"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-incident-response",
+      "filename": "doc-incident-response.pdf",
+      "primary_topic": {
+        "id": "incident-response",
+        "title": "Security Incident Response Plan"
+      },
+      "cross_references": [
+        {
+          "id": "vendor-onboarding",
+          "title": "Vendor Onboarding Checklist"
+        },
+        {
+          "id": "pto-accrual",
+          "title": "Paid Time Off Accrual Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-vendor-onboarding",
+      "filename": "doc-vendor-onboarding.pdf",
+      "primary_topic": {
+        "id": "vendor-onboarding",
+        "title": "Vendor Onboarding Checklist"
+      },
+      "cross_references": [
+        {
+          "id": "pto-accrual",
+          "title": "Paid Time Off Accrual Policy"
+        },
+        {
+          "id": "equipment-provisioning",
+          "title": "Employee Equipment Provisioning Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-pto-accrual",
+      "filename": "doc-pto-accrual.pdf",
+      "primary_topic": {
+        "id": "pto-accrual",
+        "title": "Paid Time Off Accrual Policy"
+      },
+      "cross_references": [
+        {
+          "id": "equipment-provisioning",
+          "title": "Employee Equipment Provisioning Policy"
+        },
+        {
+          "id": "travel-authorization",
+          "title": "Business Travel Authorization Procedure"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-equipment-provisioning",
+      "filename": "doc-equipment-provisioning.pdf",
+      "primary_topic": {
+        "id": "equipment-provisioning",
+        "title": "Employee Equipment Provisioning Policy"
+      },
+      "cross_references": [
+        {
+          "id": "travel-authorization",
+          "title": "Business Travel Authorization Procedure"
+        },
+        {
+          "id": "whistleblower-protection",
+          "title": "Whistleblower Protection Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-travel-authorization",
+      "filename": "doc-travel-authorization.pdf",
+      "primary_topic": {
+        "id": "travel-authorization",
+        "title": "Business Travel Authorization Procedure"
+      },
+      "cross_references": [
+        {
+          "id": "whistleblower-protection",
+          "title": "Whistleblower Protection Policy"
+        },
+        {
+          "id": "change-management",
+          "title": "IT Change Management Procedure"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-whistleblower-protection",
+      "filename": "doc-whistleblower-protection.pdf",
+      "primary_topic": {
+        "id": "whistleblower-protection",
+        "title": "Whistleblower Protection Policy"
+      },
+      "cross_references": [
+        {
+          "id": "change-management",
+          "title": "IT Change Management Procedure"
+        },
+        {
+          "id": "acceptable-use",
+          "title": "Acceptable Use of Company Technology Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-change-management",
+      "filename": "doc-change-management.pdf",
+      "primary_topic": {
+        "id": "change-management",
+        "title": "IT Change Management Procedure"
+      },
+      "cross_references": [
+        {
+          "id": "acceptable-use",
+          "title": "Acceptable Use of Company Technology Policy"
+        },
+        {
+          "id": "password-management",
+          "title": "Password and Credential Management Standard"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-acceptable-use",
+      "filename": "doc-acceptable-use.pdf",
+      "primary_topic": {
+        "id": "acceptable-use",
+        "title": "Acceptable Use of Company Technology Policy"
+      },
+      "cross_references": [
+        {
+          "id": "password-management",
+          "title": "Password and Credential Management Standard"
+        },
+        {
+          "id": "data-classification",
+          "title": "Data Classification and Handling Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-password-management",
+      "filename": "doc-password-management.pdf",
+      "primary_topic": {
+        "id": "password-management",
+        "title": "Password and Credential Management Standard"
+      },
+      "cross_references": [
+        {
+          "id": "data-classification",
+          "title": "Data Classification and Handling Policy"
+        },
+        {
+          "id": "conflict-of-interest",
+          "title": "Conflict of Interest Disclosure Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-data-classification",
+      "filename": "doc-data-classification.pdf",
+      "primary_topic": {
+        "id": "data-classification",
+        "title": "Data Classification and Handling Policy"
+      },
+      "cross_references": [
+        {
+          "id": "conflict-of-interest",
+          "title": "Conflict of Interest Disclosure Policy"
+        },
+        {
+          "id": "anti-harassment",
+          "title": "Anti-Harassment and Workplace Conduct Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-conflict-of-interest",
+      "filename": "doc-conflict-of-interest.pdf",
+      "primary_topic": {
+        "id": "conflict-of-interest",
+        "title": "Conflict of Interest Disclosure Policy"
+      },
+      "cross_references": [
+        {
+          "id": "anti-harassment",
+          "title": "Anti-Harassment and Workplace Conduct Policy"
+        },
+        {
+          "id": "performance-review-cycle",
+          "title": "Employee Performance Review Cycle Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-anti-harassment",
+      "filename": "doc-anti-harassment.pdf",
+      "primary_topic": {
+        "id": "anti-harassment",
+        "title": "Anti-Harassment and Workplace Conduct Policy"
+      },
+      "cross_references": [
+        {
+          "id": "performance-review-cycle",
+          "title": "Employee Performance Review Cycle Policy"
+        },
+        {
+          "id": "procurement-approval",
+          "title": "Procurement and Purchase Approval Procedure"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-performance-review-cycle",
+      "filename": "doc-performance-review-cycle.pdf",
+      "primary_topic": {
+        "id": "performance-review-cycle",
+        "title": "Employee Performance Review Cycle Policy"
+      },
+      "cross_references": [
+        {
+          "id": "procurement-approval",
+          "title": "Procurement and Purchase Approval Procedure"
+        },
+        {
+          "id": "business-continuity",
+          "title": "Business Continuity and Disaster Recovery Plan"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-procurement-approval",
+      "filename": "doc-procurement-approval.pdf",
+      "primary_topic": {
+        "id": "procurement-approval",
+        "title": "Procurement and Purchase Approval Procedure"
+      },
+      "cross_references": [
+        {
+          "id": "business-continuity",
+          "title": "Business Continuity and Disaster Recovery Plan"
+        },
+        {
+          "id": "physical-access-control",
+          "title": "Physical Facility Access Control Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-business-continuity",
+      "filename": "doc-business-continuity.pdf",
+      "primary_topic": {
+        "id": "business-continuity",
+        "title": "Business Continuity and Disaster Recovery Plan"
+      },
+      "cross_references": [
+        {
+          "id": "physical-access-control",
+          "title": "Physical Facility Access Control Policy"
+        },
+        {
+          "id": "intellectual-property",
+          "title": "Intellectual Property Assignment Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-physical-access-control",
+      "filename": "doc-physical-access-control.pdf",
+      "primary_topic": {
+        "id": "physical-access-control",
+        "title": "Physical Facility Access Control Policy"
+      },
+      "cross_references": [
+        {
+          "id": "intellectual-property",
+          "title": "Intellectual Property Assignment Policy"
+        },
+        {
+          "id": "social-media-conduct",
+          "title": "Employee Social Media Conduct Guidelines"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-intellectual-property",
+      "filename": "doc-intellectual-property.pdf",
+      "primary_topic": {
+        "id": "intellectual-property",
+        "title": "Intellectual Property Assignment Policy"
+      },
+      "cross_references": [
+        {
+          "id": "social-media-conduct",
+          "title": "Employee Social Media Conduct Guidelines"
+        },
+        {
+          "id": "diversity-inclusion",
+          "title": "Diversity, Equity, and Inclusion Commitment Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-social-media-conduct",
+      "filename": "doc-social-media-conduct.pdf",
+      "primary_topic": {
+        "id": "social-media-conduct",
+        "title": "Employee Social Media Conduct Guidelines"
+      },
+      "cross_references": [
+        {
+          "id": "diversity-inclusion",
+          "title": "Diversity, Equity, and Inclusion Commitment Policy"
+        },
+        {
+          "id": "third-party-audit",
+          "title": "Third-Party Security Audit Procedure"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-diversity-inclusion",
+      "filename": "doc-diversity-inclusion.pdf",
+      "primary_topic": {
+        "id": "diversity-inclusion",
+        "title": "Diversity, Equity, and Inclusion Commitment Policy"
+      },
+      "cross_references": [
+        {
+          "id": "third-party-audit",
+          "title": "Third-Party Security Audit Procedure"
+        },
+        {
+          "id": "data-subject-rights",
+          "title": "Data Subject Access Request Handling Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-third-party-audit",
+      "filename": "doc-third-party-audit.pdf",
+      "primary_topic": {
+        "id": "third-party-audit",
+        "title": "Third-Party Security Audit Procedure"
+      },
+      "cross_references": [
+        {
+          "id": "data-subject-rights",
+          "title": "Data Subject Access Request Handling Policy"
+        },
+        {
+          "id": "on-call-rotation",
+          "title": "Engineering On-Call Rotation Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-data-subject-rights",
+      "filename": "doc-data-subject-rights.pdf",
+      "primary_topic": {
+        "id": "data-subject-rights",
+        "title": "Data Subject Access Request Handling Policy"
+      },
+      "cross_references": [
+        {
+          "id": "on-call-rotation",
+          "title": "Engineering On-Call Rotation Policy"
+        },
+        {
+          "id": "gift-and-entertainment",
+          "title": "Gift and Entertainment Acceptance Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-on-call-rotation",
+      "filename": "doc-on-call-rotation.pdf",
+      "primary_topic": {
+        "id": "on-call-rotation",
+        "title": "Engineering On-Call Rotation Policy"
+      },
+      "cross_references": [
+        {
+          "id": "gift-and-entertainment",
+          "title": "Gift and Entertainment Acceptance Policy"
+        },
+        {
+          "id": "contractor-classification",
+          "title": "Independent Contractor Classification Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-gift-and-entertainment",
+      "filename": "doc-gift-and-entertainment.pdf",
+      "primary_topic": {
+        "id": "gift-and-entertainment",
+        "title": "Gift and Entertainment Acceptance Policy"
+      },
+      "cross_references": [
+        {
+          "id": "contractor-classification",
+          "title": "Independent Contractor Classification Policy"
+        },
+        {
+          "id": "software-license-compliance",
+          "title": "Software License Compliance Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-contractor-classification",
+      "filename": "doc-contractor-classification.pdf",
+      "primary_topic": {
+        "id": "contractor-classification",
+        "title": "Independent Contractor Classification Policy"
+      },
+      "cross_references": [
+        {
+          "id": "software-license-compliance",
+          "title": "Software License Compliance Policy"
+        },
+        {
+          "id": "workplace-safety",
+          "title": "Workplace Health and Safety Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-software-license-compliance",
+      "filename": "doc-software-license-compliance.pdf",
+      "primary_topic": {
+        "id": "software-license-compliance",
+        "title": "Software License Compliance Policy"
+      },
+      "cross_references": [
+        {
+          "id": "workplace-safety",
+          "title": "Workplace Health and Safety Policy"
+        },
+        {
+          "id": "records-retention-litigation-hold",
+          "title": "Litigation Hold and Records Preservation Procedure"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-workplace-safety",
+      "filename": "doc-workplace-safety.pdf",
+      "primary_topic": {
+        "id": "workplace-safety",
+        "title": "Workplace Health and Safety Policy"
+      },
+      "cross_references": [
+        {
+          "id": "records-retention-litigation-hold",
+          "title": "Litigation Hold and Records Preservation Procedure"
+        },
+        {
+          "id": "mobile-device-management",
+          "title": "Mobile Device Management and BYOD Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-records-retention-litigation-hold",
+      "filename": "doc-records-retention-litigation-hold.pdf",
+      "primary_topic": {
+        "id": "records-retention-litigation-hold",
+        "title": "Litigation Hold and Records Preservation Procedure"
+      },
+      "cross_references": [
+        {
+          "id": "mobile-device-management",
+          "title": "Mobile Device Management and BYOD Policy"
+        },
+        {
+          "id": "supplier-diversity",
+          "title": "Supplier Diversity and Ethical Sourcing Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-mobile-device-management",
+      "filename": "doc-mobile-device-management.pdf",
+      "primary_topic": {
+        "id": "mobile-device-management",
+        "title": "Mobile Device Management and BYOD Policy"
+      },
+      "cross_references": [
+        {
+          "id": "supplier-diversity",
+          "title": "Supplier Diversity and Ethical Sourcing Policy"
+        },
+        {
+          "id": "data-retention",
+          "title": "Data Retention Policy"
+        }
+      ]
+    },
+    {
+      "doc_id": "doc-supplier-diversity",
+      "filename": "doc-supplier-diversity.pdf",
+      "primary_topic": {
+        "id": "supplier-diversity",
+        "title": "Supplier Diversity and Ethical Sourcing Policy"
+      },
+      "cross_references": [
+        {
+          "id": "data-retention",
+          "title": "Data Retention Policy"
+        },
+        {
+          "id": "expense-reimbursement",
+          "title": "Expense Reimbursement Procedure"
+        }
+      ]
+    }
+  ]
+}

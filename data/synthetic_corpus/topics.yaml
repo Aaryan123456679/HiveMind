@@ -1,11 +1,12 @@
-# Synthetic policy/manual corpus topic-seed manifest (issue #26, subtask 5.1.2).
+# Synthetic policy/manual corpus topic-seed manifest (issue #26, subtasks 5.1.2 + 5.1.3).
 #
 # Per docs/LLD/eval.md's "Dataset loaders" section: "Synthetic policy/manual PDFs, seeded
-# with ~30-50 predefined ground-truth topics and deliberate cross-topic references." This
-# file ships a smaller, demonstrative seed set (10 topics) to keep local live-Ollama
-# generation runs fast; `data/gen_synthetic_pdfs.py` places no assumption on topic count --
-# append more `topics` entries (following the same shape) to scale toward the LLD's full
-# ~30-50 target with zero code changes.
+# with ~30-50 predefined ground-truth topics and deliberate cross-topic references." 5.1.2
+# shipped a smaller, demonstrative seed set (10 topics) to keep local live-Ollama generation
+# runs fast during that subtask's own development; subtask 5.1.3 (ground-truth
+# topic/query finalization) is the subtask that scales this file toward the LLD's full
+# ~30-50 target -- 32 topics as of 5.1.3, appended below the original 10 with zero code
+# changes to `data/gen_synthetic_pdfs.py`, exactly as that module's docstring anticipated.
 #
 # Each topic:
 #   id:        slug, used as the manifest/doc-spec key and the generated PDF's filename stem.
@@ -79,3 +80,138 @@ topics:
     key_facts:
       - "all production changes require a documented rollback plan before deployment"
       - "emergency changes still require retroactive change-board review within 48 hours"
+
+  # --- Topics 11-32 added under subtask 5.1.3 (ground-truth topic/query finalization,
+  # issue #26) to scale toward docs/HLD.md's ~30-50 predefined ground-truth topic target. ---
+
+  - id: acceptable-use
+    title: "Acceptable Use of Company Technology Policy"
+    key_facts:
+      - "personal use of company devices is permitted only during non-work hours"
+      - "installation of unapproved software requires IT security sign-off"
+
+  - id: password-management
+    title: "Password and Credential Management Standard"
+    key_facts:
+      - "passwords must be a minimum of 14 characters and rotated every 180 days"
+      - "multi-factor authentication is mandatory for all systems holding customer data"
+
+  - id: data-classification
+    title: "Data Classification and Handling Policy"
+    key_facts:
+      - "data is classified into public, internal, confidential, and restricted tiers"
+      - "restricted-tier data may never be transmitted over unencrypted channels"
+
+  - id: conflict-of-interest
+    title: "Conflict of Interest Disclosure Policy"
+    key_facts:
+      - "employees must disclose outside financial interests annually in writing"
+      - "undisclosed conflicts discovered later are grounds for disciplinary action"
+
+  - id: anti-harassment
+    title: "Anti-Harassment and Workplace Conduct Policy"
+    key_facts:
+      - "all complaints are investigated by HR within 5 business days of filing"
+      - "confidentiality is maintained for all parties to the extent legally possible"
+
+  - id: performance-review-cycle
+    title: "Employee Performance Review Cycle Policy"
+    key_facts:
+      - "formal performance reviews occur twice yearly, in January and July"
+      - "managers must document at least one development goal per review cycle"
+
+  - id: procurement-approval
+    title: "Procurement and Purchase Approval Procedure"
+    key_facts:
+      - "purchases over $10,000 require two authorized signatures"
+      - "sole-source purchases must include a documented justification memo"
+
+  - id: business-continuity
+    title: "Business Continuity and Disaster Recovery Plan"
+    key_facts:
+      - "critical systems must be restorable within a 4-hour recovery time objective"
+      - "the continuity plan is tested via a full tabletop exercise at least annually"
+
+  - id: physical-access-control
+    title: "Physical Facility Access Control Policy"
+    key_facts:
+      - "badge access to server rooms is limited to designated infrastructure staff"
+      - "visitor access requires an escort at all times within secure areas"
+
+  - id: intellectual-property
+    title: "Intellectual Property Assignment Policy"
+    key_facts:
+      - "all work product created during employment is assigned to the company"
+      - "pre-existing personal inventions must be disclosed in writing at hire"
+
+  - id: social-media-conduct
+    title: "Employee Social Media Conduct Guidelines"
+    key_facts:
+      - "employees must not represent personal opinions as official company positions"
+      - "confidential company information may never be shared on public platforms"
+
+  - id: diversity-inclusion
+    title: "Diversity, Equity, and Inclusion Commitment Policy"
+    key_facts:
+      - "hiring panels must include at least two interviewers from different teams"
+      - "annual DEI training completion is mandatory for all people managers"
+
+  - id: third-party-audit
+    title: "Third-Party Security Audit Procedure"
+    key_facts:
+      - "critical vendors are audited on-site at least once every 24 months"
+      - "audit findings rated high-risk must be remediated within 30 days"
+
+  - id: data-subject-rights
+    title: "Data Subject Access Request Handling Policy"
+    key_facts:
+      - "verified data access requests must be fulfilled within 30 calendar days"
+      - "requests are logged and tracked centrally by the privacy office"
+
+  - id: on-call-rotation
+    title: "Engineering On-Call Rotation Policy"
+    key_facts:
+      - "on-call shifts rotate weekly among the infrastructure engineering team"
+      - "engineers responding to a page must acknowledge within 10 minutes"
+
+  - id: gift-and-entertainment
+    title: "Gift and Entertainment Acceptance Policy"
+    key_facts:
+      - "gifts from vendors valued over $100 must be reported to compliance"
+      - "cash or cash-equivalent gifts of any value are strictly prohibited"
+
+  - id: contractor-classification
+    title: "Independent Contractor Classification Policy"
+    key_facts:
+      - "hiring managers must complete a worker-classification checklist before engagement"
+      - "misclassified contractors are converted to employee status retroactively"
+
+  - id: software-license-compliance
+    title: "Software License Compliance Policy"
+    key_facts:
+      - "all installed software must be tracked in the central license inventory"
+      - "unlicensed software found during audit is removed within 5 business days"
+
+  - id: workplace-safety
+    title: "Workplace Health and Safety Policy"
+    key_facts:
+      - "all workplace injuries must be reported to facilities within 24 hours"
+      - "annual safety training completion is mandatory for on-site employees"
+
+  - id: records-retention-litigation-hold
+    title: "Litigation Hold and Records Preservation Procedure"
+    key_facts:
+      - "a litigation hold notice suspends normal record deletion schedules immediately"
+      - "legal must approve release of any hold before deletion may resume"
+
+  - id: mobile-device-management
+    title: "Mobile Device Management and BYOD Policy"
+    key_facts:
+      - "personal devices accessing company email must enroll in mobile device management"
+      - "lost or stolen enrolled devices are remotely wiped within 1 hour of report"
+
+  - id: supplier-diversity
+    title: "Supplier Diversity and Ethical Sourcing Policy"
+    key_facts:
+      - "preferred-vendor status requires an ethical sourcing self-certification"
+      - "sourcing decisions must document consideration of diverse-owned suppliers"
