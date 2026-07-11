@@ -131,30 +131,55 @@ func NewIDAllocator(fm *FileManager) (*IDAllocator, error) {
 	return &IDAllocator{next: next, stateFile: f}, nil
 }
 
-// maxFileIDInCatalog scans every currently-allocated page of fm's underlying
-// catalog file and returns the largest CatalogRecord.FileID found among all
-// non-tombstoned slots (0 if the catalog has no pages yet, i.e. a brand-new,
-// never-written-to catalog.dat). NewIDAllocator uses this to cross-check the
-// sidecar's persisted high-water-mark against what is actually durably present
-// on disk: if the sidecar's high-water-mark is behind this value, the sidecar
-// cannot be trusted (it may have been deleted/lost, independently restored to a
-// stale copy, or simply never created against a catalog.dat that already has
+// maxFileIDInCatalog scans every currently-allocated AND still-in-use page of
+// fm's underlying catalog file (i.e. skipping any page ID not marked used in
+// the free-list bitmap — see FileManager.isUsed/FreePage) and returns the
+// largest CatalogRecord.FileID found among all non-tombstoned slots on those
+// pages (0 if the catalog has no in-use pages yet, i.e. a brand-new,
+// never-written-to catalog.dat, or every allocated page has since been
+// freed). NewIDAllocator uses this to cross-check the sidecar's persisted
+// high-water-mark against what is actually durably present on disk: if the
+// sidecar's high-water-mark is behind this value, the sidecar cannot be
+// trusted (it may have been deleted/lost, independently restored to a stale
+// copy, or simply never created against a catalog.dat that already has
 // records in it), and blindly trusting it would let Next() hand out a fileID
 // that collides with one already recorded in catalog.dat. This closes the gap
 // flagged by 1.1.4's verification and cross-referenced in catalog.go's "Known
 // gap" doc comment on NewCatalog.
 //
-// This performs a full scan of every allocated page, but only once per
-// NewIDAllocator call (i.e. once per process startup/catalog reopen), not on
-// every CRUD call — the acceptance criteria for this subtask is a cross-check
-// "on first CRUD use" via NewIDAllocator, not a per-call cost.
+// The free-list bitmap check is required because FileManager.FreePage only
+// clears a page's bitmap bit — it never zeroes or tombstones the page's
+// on-disk bytes. A freed page can therefore still contain a stale
+// CatalogRecord with an arbitrary FileID, and skipping fm.isUsed would let
+// that stale, no-longer-live record count toward the returned maximum (see
+// .cdr/index/regression.jsonl id
+// "hivemind-idalloc-maxfileid-ignores-freelist-bitmap"). Nothing in the
+// Catalog CRUD path calls FreePage on catalog pages today, so this check is
+// a no-op in current production use, but closes the gap ahead of any future
+// subtask that wires page-freeing into Catalog CRUD.
+//
+// This performs a full scan of every allocated, in-use page, but only once
+// per NewIDAllocator call (i.e. once per process startup/catalog reopen),
+// not on every CRUD call — the acceptance criteria for this subtask is a
+// cross-check "on first CRUD use" via NewIDAllocator, not a per-call cost.
 func maxFileIDInCatalog(fm *FileManager) (uint64, error) {
 	fm.mu.Lock()
 	highest := fm.highestAllocated
+	used := make([]bool, highest+1) // used[pageID], pageID in [1, highest]
+	for pageID := uint64(1); pageID <= highest; pageID++ {
+		used[pageID] = fm.isUsed(pageID)
+	}
 	fm.mu.Unlock()
 
 	var maxFileID uint64
 	for pageID := uint64(1); pageID <= highest; pageID++ {
+		if !used[pageID] {
+			// Page has been freed back to the free-list: its bitmap bit is clear, but
+			// FreePage never zeroes/tombstones its bytes, so any CatalogRecord still
+			// present in its slots is stale and must not count toward the max.
+			continue
+		}
+
 		page, err := fm.ReadPage(pageID)
 		if err != nil {
 			return 0, fmt.Errorf("reading page %d: %w", pageID, err)

@@ -1,0 +1,32 @@
+{
+  "subtask": "4.5.19.1",
+  "issue": 58,
+  "files_to_change": [
+    {
+      "path": "engine/catalog/idalloc.go",
+      "change": "maxFileIDInCatalog: skip page IDs not marked used in the free-list bitmap (fm.isUsed) before calling fm.ReadPage."
+    },
+    {
+      "path": "engine/catalog/idalloc_test.go",
+      "change": "Add regression test freeing a high-numbered page with a stale high-FileID record and asserting maxFileIDInCatalog ignores it."
+    }
+  ],
+  "exported_api_changes": "none",
+  "callers_of_maxFileIDInCatalog": [
+    "engine/catalog/idalloc.go: NewIDAllocator (unexported call, same file)"
+  ],
+  "callers_of_NewIDAllocator": [
+    "engine/integration_test.go",
+    "engine/split/execute_test.go",
+    "engine/cmd/smokeserver/main.go",
+    "engine/rpc/*"
+  ],
+  "behavior_change_risk": "Low. Today no code path calls FileManager.FreePage on catalog pages, so highest==used for every existing production/test scenario and the new isUsed check is a no-op in all current call sites. Only the new regression test exercises the changed branch.",
+  "concurrency_considerations": "fm.isUsed is not internally synchronized (matches AllocatePage/FreePage convention of calling it under fm.mu). Fix takes fm.mu.Lock() once to snapshot which page IDs are used, matching file.go's documented locking model of not holding mu across page I/O (ReadPage/WritePage do their own separate synchronization).",
+  "test_impact": {
+    "existing": "go test ./engine/catalog/... -run TestMaxFileIDInCatalog -v must continue to pass unchanged.",
+    "new": "New subtest/case in idalloc_test.go exercising a freed high-numbered page."
+  },
+  "docs_impact": "docs/LLD/catalog.md's maxFileIDInCatalog description already implies 'currently-allocated' pages only; no wording change strictly required, but the doc's list of gaps/known-issues (if any references this regression id) should be checked for closure bookkeeping.",
+  "regression_entry_to_close": "hivemind-idalloc-maxfileid-ignores-freelist-bitmap (status open -> fixed)"
+}

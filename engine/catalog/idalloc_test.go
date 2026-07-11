@@ -170,6 +170,120 @@ func TestFileIDAllocator(t *testing.T) {
 	})
 }
 
+// TestMaxFileIDInCatalog exercises the test spec for subtask 4.5.19.1: freeing a
+// page back to the free-list must cause maxFileIDInCatalog to skip it entirely, even
+// though FreePage never zeroes/tombstones the freed page's stale on-disk content. See
+// .cdr/index/regression.jsonl id "hivemind-idalloc-maxfileid-ignores-freelist-bitmap".
+func TestMaxFileIDInCatalog(t *testing.T) {
+	t.Run("no pages allocated yet returns 0", func(t *testing.T) {
+		dir := t.TempDir()
+		fm, err := Open(filepath.Join(dir, "catalog.dat"))
+		if err != nil {
+			t.Fatalf("Open() = _, %v; want nil error", err)
+		}
+		defer fm.Close()
+
+		got, err := maxFileIDInCatalog(fm)
+		if err != nil {
+			t.Fatalf("maxFileIDInCatalog(fm) = _, %v; want nil error", err)
+		}
+		if got != 0 {
+			t.Fatalf("maxFileIDInCatalog(fm) = %d; want 0 for a brand-new catalog", got)
+		}
+	})
+
+	t.Run("returns max FileID among only still-used pages, ignoring freed ones", func(t *testing.T) {
+		dir := t.TempDir()
+		fm, err := Open(filepath.Join(dir, "catalog.dat"))
+		if err != nil {
+			t.Fatalf("Open() = _, %v; want nil error", err)
+		}
+		defer fm.Close()
+
+		// writeRecordToNewPage allocates a fresh page, writes a single CatalogRecord
+		// with the given fileID into slot 0, and returns the page ID it landed on.
+		writeRecordToNewPage := func(fileID uint64) uint64 {
+			t.Helper()
+
+			pageID, err := fm.AllocatePage()
+			if err != nil {
+				t.Fatalf("AllocatePage() = _, %v; want nil error", err)
+			}
+
+			data, err := CatalogRecord{FileID: fileID, SizeBytes: 1}.Encode()
+			if err != nil {
+				t.Fatalf("Encode(fileID=%d) = _, %v; want nil error", fileID, err)
+			}
+
+			page := NewPage()
+			if _, err := page.InsertSlot(data); err != nil {
+				t.Fatalf("InsertSlot(fileID=%d) = _, %v; want nil error", fileID, err)
+			}
+			if err := fm.WritePage(pageID, page); err != nil {
+				t.Fatalf("WritePage(%d) = %v; want nil error", pageID, err)
+			}
+
+			return pageID
+		}
+
+		// A still-used page holding the "real" max fileID (42).
+		writeRecordToNewPage(42)
+
+		// A page holding a much higher fileID (9999) that will be freed. Its bitmap
+		// bit becomes clear, but FreePage leaves the page's bytes (including its
+		// CatalogRecord{FileID: 9999}) untouched on disk.
+		freedPageID := writeRecordToNewPage(9999)
+		if err := fm.FreePage(freedPageID); err != nil {
+			t.Fatalf("FreePage(%d) = %v; want nil error", freedPageID, err)
+		}
+
+		got, err := maxFileIDInCatalog(fm)
+		if err != nil {
+			t.Fatalf("maxFileIDInCatalog(fm) = _, %v; want nil error", err)
+		}
+		if got != 42 {
+			t.Fatalf("maxFileIDInCatalog(fm) = %d; want 42 (must not scan/count the freed page's stale fileID 9999)", got)
+		}
+	})
+
+	t.Run("all pages freed returns 0", func(t *testing.T) {
+		dir := t.TempDir()
+		fm, err := Open(filepath.Join(dir, "catalog.dat"))
+		if err != nil {
+			t.Fatalf("Open() = _, %v; want nil error", err)
+		}
+		defer fm.Close()
+
+		pageID, err := fm.AllocatePage()
+		if err != nil {
+			t.Fatalf("AllocatePage() = _, %v; want nil error", err)
+		}
+
+		data, err := CatalogRecord{FileID: 7}.Encode()
+		if err != nil {
+			t.Fatalf("Encode() = _, %v; want nil error", err)
+		}
+		page := NewPage()
+		if _, err := page.InsertSlot(data); err != nil {
+			t.Fatalf("InsertSlot() = _, %v; want nil error", err)
+		}
+		if err := fm.WritePage(pageID, page); err != nil {
+			t.Fatalf("WritePage(%d) = %v; want nil error", pageID, err)
+		}
+		if err := fm.FreePage(pageID); err != nil {
+			t.Fatalf("FreePage(%d) = %v; want nil error", pageID, err)
+		}
+
+		got, err := maxFileIDInCatalog(fm)
+		if err != nil {
+			t.Fatalf("maxFileIDInCatalog(fm) = _, %v; want nil error", err)
+		}
+		if got != 0 {
+			t.Fatalf("maxFileIDInCatalog(fm) = %d; want 0 when every allocated page has been freed", got)
+		}
+	})
+}
+
 // writeSidecarHighWaterMark overwrites the .idalloc sidecar file alongside
 // catalogPath with the given high-water-mark value, simulating an
 // independently-restored (stale) sidecar.

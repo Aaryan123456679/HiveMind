@@ -1,0 +1,35 @@
+{
+  "subtask": "4.5.19.1",
+  "cases": [
+    {
+      "id": "V1",
+      "description": "Existing TestMaxFileIDInCatalog behavior unchanged when no pages are freed (normal, no-frees case from 75203e0)",
+      "expected": "pass, same results as before the fix",
+      "covered_by": "existing test in idalloc_test.go"
+    },
+    {
+      "id": "V2",
+      "description": "Freed high-numbered page with stale high FileID record is skipped; maxFileIDInCatalog returns max among only still-used pages",
+      "expected": "returns the lower, still-live FileID; freed page's stale FileID not counted",
+      "covered_by": "new regression test case added in this subtask"
+    },
+    {
+      "id": "V3",
+      "description": "Brand-new/empty catalog (highestAllocated == 0)",
+      "expected": "returns 0, nil, no pages scanned",
+      "covered_by": "existing test coverage (unchanged code path)"
+    },
+    {
+      "id": "V4",
+      "description": "NewIDAllocator cross-check (sidecar behind catalog.dat's real max) still errors correctly",
+      "expected": "unchanged pass, since maxFileIDInCatalog's return value for the non-freed case is unaffected by this fix",
+      "covered_by": "existing idalloc_test.go cross-check tests from 75203e0"
+    },
+    {
+      "id": "V5",
+      "description": "Full package build + test suite",
+      "expected": "go build ./... and go test ./engine/catalog/... pass",
+      "covered_by": "self-consistency step"
+    }
+  ]
+}
