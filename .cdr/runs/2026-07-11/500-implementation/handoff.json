@@ -4,7 +4,7 @@
   "subtask": "4.5.18.2",
   "issue": 57,
   "status": "completed",
-  "commit": "PENDING_FILL_AFTER_COMMIT",
+  "commit": "45c0c5255946ca4d5999f0e39a353289fc180d61",
   "files_changed": [
     "docs/LLD/btree.md"
   ],
