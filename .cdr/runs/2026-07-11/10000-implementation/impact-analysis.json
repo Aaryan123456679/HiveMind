@@ -1,0 +1,28 @@
+{
+  "subtask": "5.1.1",
+  "new_files": [
+    "agents/eval/datasets.py",
+    "agents/eval/test_dataset_interface.py"
+  ],
+  "modified_files": [],
+  "not_touched_but_depended_on": [
+    "data/load_bitext.py (existing, task-3.5.1, reused unchanged)",
+    "data/load_enron.py (existing, task-3.5.1, reused unchanged)",
+    "agents/ingestion/rawdoc.py (existing RawDocument type, reused unchanged as common record shape)",
+    "agents/ingestion/dispatch.py (transitively invoked via the loaders' lazy imports)",
+    "data/fixtures/bitext_sample.json, data/fixtures/enron_sample/ (fixture data, unchanged)"
+  ],
+  "downstream_consumers": [
+    "Future subtasks under milestone #7 (Phase 5 benchmark suite): the three retrieval-arm benchmark harnesses (HiveMind, vector-RAG baseline, GraphRAG-style baseline) will all call agents/eval/datasets.py's load_dataset()/available_datasets() to get an identical corpus feed, per docs/LLD/eval.md's 'only the retrieval step varies between arms' requirement.",
+    "A later subtask will register the synthetic-PDF dataset loader (issue #26's third dataset) into the same registry; interface shape (load_dataset(name, *, limit=None) -> Iterator[RawDocument]) is designed to accept that without a breaking change."
+  ],
+  "risk_notes": [
+    "agents/eval/ and data/ are separate Python roots (data/ has no __init__.py, relies on implicit namespace packages); wiring must replicate the exact sys.path pattern already established and verified in agents/ingestion/test_e2e_smoke.py (task-3.5.2) rather than invent a new mechanism, to stay consistent with the rest of the codebase.",
+    "Must not modify data/load_bitext.py, data/load_enron.py, or agents/ingestion/rawdoc.py -- this subtask is purely additive wiring, per the launcher's explicit instruction not to reimplement already-existing loading logic.",
+    "No engine/ (Go) changes; no new third-party dependencies."
+  ],
+  "test_impact": {
+    "new_tests": ["agents/eval/test_dataset_interface.py"],
+    "existing_tests_expected_unaffected": ["data/test_loaders.py", "agents/ingestion/test_e2e_smoke.py (skipped unless go/grpc/ollama available)"]
+  }
+}
