@@ -325,3 +325,30 @@ func TestCatalogFileManagerNarrowLockDoesNotSerializeAcrossIO(t *testing.T) {
 		t.Fatalf("delayed WritePage(pageA) = %v; want nil error", err)
 	}
 }
+
+// TestFreePageDoubleFreeRejected exercises the test spec for subtask 4.5.5.1: free a
+// page, then free the same page again, and assert the second call returns an
+// explicit error instead of silently succeeding.
+func TestFreePageDoubleFreeRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.dat")
+
+	fm, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(%q) = _, %v; want nil error", path, err)
+	}
+	defer fm.Close()
+
+	id, err := fm.AllocatePage()
+	if err != nil {
+		t.Fatalf("AllocatePage() = _, %v; want nil error", err)
+	}
+
+	if err := fm.FreePage(id); err != nil {
+		t.Fatalf("first FreePage(%d) = %v; want nil error", id, err)
+	}
+
+	if err := fm.FreePage(id); err == nil {
+		t.Fatalf("second FreePage(%d) (double-free) = nil error; want an explicit error", id)
+	}
+}

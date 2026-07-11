@@ -181,6 +181,16 @@ func (fm *FileManager) AllocatePage() (uint64, error) {
 // AllocatePage call. This is the file-manager-level mechanism behind "deleting/
 // merging a slot returns the page to free-list reclamation": callers that delete or
 // merge catalog records such that a page becomes empty invoke FreePage directly.
+//
+// FreePage rejects a double-free: if pageID's bitmap bit is already clear (i.e. the
+// page is already free), it returns an explicit error instead of silently
+// succeeding. This is deliberate: a caller that erroneously calls FreePage twice on
+// the same page ID it (wrongly) still thinks it owns is a real bug — most
+// dangerously, in the window between the two calls another goroutine may have
+// legitimately AllocatePage'd and reused that same page ID for something else, and a
+// silent second free would let the erroneous caller re-free (and make eligible for a
+// third, conflicting reallocation) a page that is now actively in use. Failing loudly
+// here turns that bug pattern into an immediate error at the second call site.
 func (fm *FileManager) FreePage(pageID uint64) error {
 	if pageID == freeListPageID {
 		return fmt.Errorf("catalog: cannot free reserved free-list page %d", pageID)
@@ -191,6 +201,10 @@ func (fm *FileManager) FreePage(pageID uint64) error {
 
 	if pageID == 0 || pageID > fm.highestAllocated {
 		return fmt.Errorf("catalog: cannot free page %d: not an allocated page (highest allocated is %d)", pageID, fm.highestAllocated)
+	}
+
+	if !fm.isUsed(pageID) {
+		return fmt.Errorf("catalog: cannot free page %d: already free (double-free)", pageID)
 	}
 
 	fm.setUsed(pageID, false)
