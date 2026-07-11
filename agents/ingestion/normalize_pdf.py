@@ -33,6 +33,12 @@ Use :func:`iter_pages` to parse the output of :func:`normalize_pdf` back into
 ``(page_number, text)`` pairs. Do not parse the format with a naive
 "non-greedy regex to the closing marker" approach: that is exactly the
 ambiguity this length-prefixed format is designed to avoid.
+
+Trust boundary: :func:`iter_pages` trusts the embedded ``LEN=<n>`` value
+verbatim to slice the payload; it does not independently re-derive or
+cross-validate `n` against the page's true text length. See
+:func:`iter_pages`'s docstring for the defense-in-depth check that guards
+against a corrupted/incorrect `n`.
 """
 
 from __future__ import annotations
@@ -102,6 +108,23 @@ def iter_pages(normalized_text: str) -> Iterator[tuple[int, str]]:
     otherwise corrupting parsing -- this is the safe way to consume
     :func:`normalize_pdf` output; do not re-derive a content-scanning regex.
 
+    Trust boundary: this function trusts the embedded ``LEN=<n>`` value
+    verbatim when slicing the payload. It does not independently
+    cross-validate `n` against the *true* length of the page's real text --
+    doing so would require re-deriving that length some other way, which is
+    exactly what the length-prefixed format exists to avoid. As defense in
+    depth against a corrupted/incorrect `n` (e.g. from a future
+    intermediate transformation introduced between :func:`normalize_pdf` and
+    this function), the code below requires the very next bytes after the
+    `n`-character slice to be a well-formed closing marker for the same page
+    number; if `n` is wrong, that closing marker is, in practice, very
+    unlikely to be found at the resulting offset, so corruption surfaces as
+    a raised :class:`ValueError` rather than a silently truncated or
+    wrong-content page. This check is a heuristic, not a proof: a
+    sufficiently adversarial payload could in principle construct a wrong
+    `n` whose slice boundary still happens to land on text that looks like
+    a valid closing marker, and such a case would not be detected.
+
     Args:
         normalized_text: Output of :func:`normalize_pdf`.
 
@@ -111,7 +134,9 @@ def iter_pages(normalized_text: str) -> Iterator[tuple[int, str]]:
     Raises:
         ValueError: If a page header is malformed, the payload length does
             not fit in the remaining text, or the expected closing marker is
-            missing or mismatched.
+            missing or mismatched (including as a side effect of a
+            corrupted/incorrect ``LEN`` value -- see the trust-boundary note
+            above).
     """
     pos = 0
     length = len(normalized_text)

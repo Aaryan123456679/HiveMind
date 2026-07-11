@@ -154,3 +154,47 @@ def test_normalize_pdf_raises_on_corrupt_file(tmp_path: Path) -> None:
     corrupt_path.write_bytes(b"%PDF-1.4\nnot actually a valid pdf body")
     with pytest.raises(Exception):
         normalize_pdf(corrupt_path)
+
+
+# --- F3 (task-3.3.1): LEN=k trust-boundary documentation follow-up ---
+
+
+def test_len_trust_boundary_too_short_len_raises_value_error() -> None:
+    """`iter_pages` trusts the embedded ``LEN=<n>`` verbatim for slicing (it
+    does not independently re-derive or cross-validate the true page-text
+    length), but its defense-in-depth closing-marker check must still catch
+    an incorrect `n` here: an under-counted LEN shifts the slice boundary so
+    the very next bytes are no longer a well-formed closing marker, so this
+    must surface as an explicit ValueError rather than a silently truncated
+    page with no signal."""
+    real_text = "Hello world\n"
+    wrong_len = len(real_text) - 4  # deliberately too short
+    blob = f"[[PAGE 1 LEN={wrong_len}]]\n{real_text}[[/PAGE 1]]\n"
+
+    with pytest.raises(ValueError, match="Missing or mismatched closing marker"):
+        list(iter_pages(blob))
+
+
+def test_len_trust_boundary_too_long_len_raises_value_error() -> None:
+    """An over-counted LEN that still fits within the remaining text must
+    also be caught by the closing-marker check rather than silently
+    consuming bytes belonging to the next marker/page."""
+    page1_text = "Hi\n"
+    page2_text = "Page two content.\n"
+    wrong_len = len(page1_text) + 3  # deliberately too long
+    blob = (
+        f"[[PAGE 1 LEN={wrong_len}]]\n{page1_text}[[/PAGE 1]]\n"
+        + _page_marker(2, page2_text)
+    )
+
+    with pytest.raises(ValueError, match="Missing or mismatched closing marker"):
+        list(iter_pages(blob))
+
+
+def test_len_trust_boundary_len_exceeding_remaining_text_raises_value_error() -> None:
+    """A LEN value larger than the remaining text entirely must raise
+    explicitly instead of silently slicing whatever is left."""
+    blob = "[[PAGE 1 LEN=9999]]\nshort\n[[/PAGE 1]]\n"
+
+    with pytest.raises(ValueError, match="exceeds remaining text"):
+        list(iter_pages(blob))
