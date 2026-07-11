@@ -1102,3 +1102,70 @@ func TestSplitPublishLastOrderingRegression(t *testing.T) {
 	assertAllLookupable(t, store, finalRoot, wantPresent)
 	assertStructuralInvariants(t, store, finalRoot, len(wantPresent))
 }
+
+// TestChooseSplitBoundaryCases is subtask 4.5.1.6's (issue #38) required test
+// spec for chooseLeafSplit/chooseInternalSplit's boundary cases: a
+// pathologically oversized single key (chooseLeafSplit cannot fix an
+// individually-oversized key by choosing a different split point, since the
+// key alone must land in one half or the other) and a 2-key overflowing
+// internal node (the smallest possible internal node that can still
+// overflow). Both are test-only: they lock down that these functions already
+// return an in-bounds split index without panicking or looping forever in
+// these degenerate cases, not new behavior.
+func TestChooseSplitBoundaryCases(t *testing.T) {
+	t.Run("chooseLeafSplit pathologically oversized key", func(t *testing.T) {
+		hugeKey := stringOfLen(NodeSize * 4)
+
+		// 2-key leaf: mid can only ever be 1 (len(Keys)/2, and both boundary
+		// loops are no-ops at mid==1 for a 2-key node), so the oversized key
+		// unavoidably lands alone in one half or the other -- confirms the
+		// function returns that in-bounds index rather than panicking or
+		// returning something out of [1, len(Keys)-1].
+		n := LeafNode{Keys: []string{hugeKey, "z"}, FileIDs: []uint64{1, 2}}
+		if leafEncodedSize(n) <= NodeSize {
+			t.Fatalf("test setup error: leaf with a %d-byte key should exceed NodeSize (%d)", len(hugeKey), NodeSize)
+		}
+		mid := chooseLeafSplit(n)
+		if mid < 1 || mid > len(n.Keys)-1 {
+			t.Fatalf("chooseLeafSplit returned out-of-bounds mid=%d for a 2-key node (want in [1, %d])", mid, len(n.Keys)-1)
+		}
+
+		// 3-key variant with the oversized key in the middle: confirms the
+		// returned index stays in-bounds regardless of which key is huge.
+		n3 := LeafNode{Keys: []string{"a", hugeKey, "z"}, FileIDs: []uint64{1, 2, 3}}
+		mid3 := chooseLeafSplit(n3)
+		if mid3 < 1 || mid3 > len(n3.Keys)-1 {
+			t.Fatalf("chooseLeafSplit returned out-of-bounds mid=%d for a 3-key node (want in [1, %d])", mid3, len(n3.Keys)-1)
+		}
+	})
+
+	t.Run("chooseInternalSplit 2-key overflowing internal node", func(t *testing.T) {
+		hugeKey := stringOfLen(NodeSize * 4)
+
+		// Smallest possible internal node that can still overflow: 2 keys,
+		// 3 children (children are just node IDs, so the oversized key is
+		// what forces the overflow here).
+		n := InternalNode{
+			Keys:     []string{hugeKey, "z"},
+			Children: []uint64{10, 20, 30},
+		}
+		if internalEncodedSize(n) <= NodeSize {
+			t.Fatalf("test setup error: internal node with a %d-byte key should exceed NodeSize (%d)", len(hugeKey), NodeSize)
+		}
+
+		mid := chooseInternalSplit(n)
+		if mid < 0 || mid > len(n.Keys)-1 {
+			t.Fatalf("chooseInternalSplit returned out-of-bounds mid=%d for a 2-key internal node (want in [0, %d])", mid, len(n.Keys)-1)
+		}
+	})
+}
+
+// stringOfLen returns a deterministic string of exactly n bytes, used to
+// construct pathologically oversized keys for boundary-case tests.
+func stringOfLen(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = 'x'
+	}
+	return string(b)
+}

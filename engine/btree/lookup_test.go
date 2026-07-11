@@ -536,3 +536,108 @@ func testOptimisticReadForcedRetryDeterministic(t *testing.T) {
 		t.Fatal("optimisticRetryHook was never invoked for the target node; test did not actually force the version-mismatch retry path")
 	}
 }
+
+// TestReadWriteNodeErrorPaths is subtask 4.5.1.6's (issue #38) required test
+// spec: it locks down three defensive error paths in ReadNode/WriteNode that
+// existed already but had no dedicated coverage -- reserved node ID 0,
+// an unrecognized node-type discriminator byte, and a wrong-length WriteNode
+// buffer. This is test-only: none of these paths' behavior is being changed,
+// only exercised and asserted for the first time.
+func TestReadWriteNodeErrorPaths(t *testing.T) {
+	t.Run("reserved node ID 0", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "name.idx")
+		f, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile: %v", err)
+		}
+		t.Cleanup(func() { f.Close() })
+		store := NewNodeStore(f)
+
+		isLeaf, leaf, internal, err := store.ReadNode(reservedNodeID)
+		if err == nil {
+			t.Fatalf("ReadNode(reservedNodeID): expected a non-nil error, got nil (isLeaf=%v, leaf=%+v, internal=%+v)", isLeaf, leaf, internal)
+		}
+		if isLeaf {
+			t.Fatalf("ReadNode(reservedNodeID): isLeaf = true, want false alongside the error")
+		}
+
+		validEncoded, err := (LeafNode{Keys: []string{"a"}, FileIDs: []uint64{1}}).Encode()
+		if err != nil {
+			t.Fatalf("Encode: unexpected error: %v", err)
+		}
+		if err := store.WriteNode(reservedNodeID, validEncoded); err == nil {
+			t.Fatal("WriteNode(reservedNodeID, ...): expected a non-nil error, got nil")
+		}
+	})
+
+	t.Run("unrecognized type discriminator", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "name.idx")
+		f, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile: %v", err)
+		}
+		t.Cleanup(func() { f.Close() })
+		store := NewNodeStore(f)
+
+		// Hand-write a raw NodeSize-byte buffer with an invalid type
+		// discriminator directly via the underlying file handle: Encode()
+		// never produces a discriminator other than nodeTypeLeaf/
+		// nodeTypeInternal, so WriteNode's own encode path can't be used to
+		// construct this malformed-on-disk scenario (e.g. a partially
+		// corrupted node from an unrelated on-disk fault).
+		const badNodeID = uint64(1)
+		raw := make([]byte, NodeSize)
+		raw[offNodeType] = 0xFF // neither nodeTypeLeaf (0) nor nodeTypeInternal (1)
+		offset := int64(badNodeID) * int64(NodeSize)
+		if _, err := f.WriteAt(raw, offset); err != nil {
+			t.Fatalf("WriteAt: unexpected error: %v", err)
+		}
+
+		isLeaf, leaf, internal, err := store.ReadNode(badNodeID)
+		if err == nil {
+			t.Fatalf("ReadNode(badNodeID): expected a non-nil error for an unrecognized type discriminator, got nil (isLeaf=%v, leaf=%+v, internal=%+v)", isLeaf, leaf, internal)
+		}
+	})
+
+	t.Run("wrong-length write", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "name.idx")
+		f, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile: %v", err)
+		}
+		t.Cleanup(func() { f.Close() })
+		store := NewNodeStore(f)
+
+		const nodeID = uint64(1)
+		tooShort := make([]byte, NodeSize-1)
+		if err := store.WriteNode(nodeID, tooShort); err == nil {
+			t.Fatal("WriteNode with a NodeSize-1-byte buffer: expected a non-nil error, got nil")
+		}
+
+		tooLong := make([]byte, NodeSize+1)
+		if err := store.WriteNode(nodeID, tooLong); err == nil {
+			t.Fatal("WriteNode with a NodeSize+1-byte buffer: expected a non-nil error, got nil")
+		}
+
+		// Collateral check: a subsequent, correctly-sized write to a
+		// different node ID must still succeed and round-trip cleanly --
+		// the rejected wrong-length writes above must not have corrupted
+		// the store or left it in a bad state.
+		const otherNodeID = uint64(2)
+		valid := LeafNode{Keys: []string{"auth/login"}, FileIDs: []uint64{101}}
+		encoded, err := valid.Encode()
+		if err != nil {
+			t.Fatalf("Encode: unexpected error: %v", err)
+		}
+		if err := store.WriteNode(otherNodeID, encoded); err != nil {
+			t.Fatalf("WriteNode(otherNodeID, ...): unexpected error: %v", err)
+		}
+		isLeaf, leaf, _, err := store.ReadNode(otherNodeID)
+		if err != nil {
+			t.Fatalf("ReadNode(otherNodeID): unexpected error: %v", err)
+		}
+		if !isLeaf || len(leaf.Keys) != 1 || leaf.Keys[0] != "auth/login" || leaf.FileIDs[0] != 101 {
+			t.Fatalf("ReadNode(otherNodeID) = isLeaf=%v leaf=%+v, want isLeaf=true leaf with key auth/login=101", isLeaf, leaf)
+		}
+	})
+}

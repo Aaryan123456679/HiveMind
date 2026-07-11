@@ -2,6 +2,7 @@ package btree
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -133,6 +134,38 @@ func TestLoadRootFreshIndexFile(t *testing.T) {
 	}
 	if rootID != reservedNodeID {
 		t.Fatalf("LoadRoot on fresh index file = %d, want reservedNodeID (%d)", rootID, reservedNodeID)
+	}
+}
+
+// TestLoadRootTruncatedSidecar is subtask 4.5.1.6's (issue #38) required test
+// spec for a corrupted/truncated .root sidecar file: it saves a well-formed
+// root via SaveRoot, then truncates the sidecar file to fewer than
+// rootStateSize (8) bytes -- simulating a torn/incomplete write or on-disk
+// corruption -- and asserts LoadRoot correctly returns a non-nil error
+// (persist.go's existing info.Size() != rootStateSize check) rather than
+// panicking or silently returning a wrong/zero root ID.
+func TestLoadRootTruncatedSidecar(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "name.idx")
+
+	f, err := OpenIndexFile(path)
+	if err != nil {
+		t.Fatalf("OpenIndexFile: %v", err)
+	}
+	t.Cleanup(func() { f.Close() })
+	store := NewNodeStore(f)
+
+	if err := SaveRoot(store, 42); err != nil {
+		t.Fatalf("SaveRoot: unexpected error: %v", err)
+	}
+
+	sidecarPath := rootStatePath(store)
+	if err := os.Truncate(sidecarPath, 3); err != nil {
+		t.Fatalf("truncating sidecar file %s: %v", sidecarPath, err)
+	}
+
+	rootID, err := LoadRoot(store)
+	if err == nil {
+		t.Fatalf("LoadRoot against a truncated .root sidecar file: expected a non-nil error, got nil (rootID=%d)", rootID)
 	}
 }
 

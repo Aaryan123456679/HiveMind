@@ -193,6 +193,27 @@ func TestPrefixScanPrefixIsCompleteKey(t *testing.T) {
 	}
 }
 
+// TestPrefixScanEmptyTree is subtask 4.5.1.6's (issue #38) required test spec
+// for PrefixScan against a genuinely empty tree -- one that has never had
+// anything inserted into it (rootNodeID == reservedNodeID), as distinct from
+// TestPrefixScanNoMatches above (a real, populated tree in which a given
+// prefix simply matches zero keys). Per scan.go's PrefixScan doc comment,
+// this case is intentionally NOT special-cased: it behaves like Lookup does
+// for the same rootNodeID, surfacing a non-nil error from the underlying
+// ReadNode(reservedNodeID) call. This is documented, existing behavior being
+// locked down with a test, not a behavioral change.
+func TestPrefixScanEmptyTree(t *testing.T) {
+	store, _ := newTestStoreAndAllocator(t)
+
+	got, err := PrefixScan(store, reservedNodeID, "auth/")
+	if err == nil {
+		t.Fatalf("PrefixScan against a genuinely empty tree (reservedNodeID root): expected a non-nil error, got nil (result=%+v)", got)
+	}
+	if len(got) != 0 {
+		t.Fatalf("PrefixScan against a genuinely empty tree: got non-empty result %+v alongside the expected error", got)
+	}
+}
+
 // sprintfTopic deterministically generates a "topic/NNN" key with a
 // zero-padded, fixed-width numeric suffix so the generated keys sort in the
 // same order they are generated (needed so want/got comparisons are
