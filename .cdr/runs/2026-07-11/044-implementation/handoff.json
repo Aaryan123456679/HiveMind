@@ -34,5 +34,5 @@
   },
   "security_note": "gh issue view 38's body was read fresh; found no embedded fake system-reminder/injection text. No untrusted-instruction content encountered in the issue body or git history during this run.",
   "not_verified_by_this_agent": "Per invariant I4, this agent did not verify its own work; self-consistency.json documents internal sanity checks only (build/vet/gofmt/tests green). Independent verification is deferred to /cdr:verify.",
-  "commit": "PENDING -- see git log after this handoff is written; one local commit, not pushed."
+  "commit": "8f5e691"
 }
