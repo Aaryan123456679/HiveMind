@@ -553,9 +553,34 @@ func TestReadWriteNodeErrorPaths(t *testing.T) {
 		t.Cleanup(func() { f.Close() })
 		store := NewNodeStore(f)
 
+		// Write a real node at a non-reserved ID FIRST, so the underlying
+		// file grows past the reserved ID's own byte offset before
+		// ReadNode(reservedNodeID) is ever called. This matters: on a
+		// still-empty file, ReadAt(reservedNodeID's offset) short-reads and
+		// fails regardless of whether ReadNode's own reservedNodeID guard
+		// exists, which would make this subtest pass even if that guard
+		// were deleted (illusory coverage). Once the file has grown (the
+		// realistic on-disk state -- any real index file has other nodes
+		// written before node ID 0 would ever be probed), a full NodeSize
+		// window of legitimate, all-zero-or-populated bytes is readable at
+		// every offset including 0's, so a subsequent ReadAt at offset 0
+		// succeeds cleanly; only ReadNode's explicit reservedNodeID check
+		// can still catch the reserved-ID access, and without it the
+		// all-zero bytes at offset 0 would silently decode as a
+		// deceptively "valid" empty leaf (isLeaf=true, err=nil) instead of
+		// failing, since nodeTypeLeaf == 0.
+		const otherNodeID = uint64(1)
+		grownEncoded, err := (LeafNode{Keys: []string{"a"}, FileIDs: []uint64{1}}).Encode()
+		if err != nil {
+			t.Fatalf("Encode: unexpected error: %v", err)
+		}
+		if err := store.WriteNode(otherNodeID, grownEncoded); err != nil {
+			t.Fatalf("WriteNode(otherNodeID, ...): unexpected error: %v", err)
+		}
+
 		isLeaf, leaf, internal, err := store.ReadNode(reservedNodeID)
 		if err == nil {
-			t.Fatalf("ReadNode(reservedNodeID): expected a non-nil error, got nil (isLeaf=%v, leaf=%+v, internal=%+v)", isLeaf, leaf, internal)
+			t.Fatalf("ReadNode(reservedNodeID): expected a non-nil error on a grown file, got nil (isLeaf=%v, leaf=%+v, internal=%+v) -- this would silently decode as a bogus empty leaf without the reservedNodeID guard", isLeaf, leaf, internal)
 		}
 		if isLeaf {
 			t.Fatalf("ReadNode(reservedNodeID): isLeaf = true, want false alongside the error")

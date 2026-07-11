@@ -1107,11 +1107,16 @@ func TestSplitPublishLastOrderingRegression(t *testing.T) {
 // spec for chooseLeafSplit/chooseInternalSplit's boundary cases: a
 // pathologically oversized single key (chooseLeafSplit cannot fix an
 // individually-oversized key by choosing a different split point, since the
-// key alone must land in one half or the other) and a 2-key overflowing
+// key alone must land in one half or the other), a 2-key overflowing
 // internal node (the smallest possible internal node that can still
-// overflow). Both are test-only: they lock down that these functions already
-// return an in-bounds split index without panicking or looping forever in
-// these degenerate cases, not new behavior.
+// overflow), and -- for both functions -- a case specifically constructed so
+// the naive, unshifted midpoint (len/2) and the actual shift-loop-adjusted
+// split index differ, so that these subtests cannot pass with the shift
+// logic deleted entirely. It is still test-only: none of this locks down new
+// behavior, only exercises and asserts the shift loops' existing effect for
+// the first time (a loose in-bounds-only check would pass identically
+// whether or not the shift loops ran at all, since len/2 clamped to
+// [1, len-1] is trivially in-bounds regardless).
 func TestChooseSplitBoundaryCases(t *testing.T) {
 	t.Run("chooseLeafSplit pathologically oversized key", func(t *testing.T) {
 		hugeKey := stringOfLen(NodeSize * 4)
@@ -1130,12 +1135,28 @@ func TestChooseSplitBoundaryCases(t *testing.T) {
 			t.Fatalf("chooseLeafSplit returned out-of-bounds mid=%d for a 2-key node (want in [1, %d])", mid, len(n.Keys)-1)
 		}
 
-		// 3-key variant with the oversized key in the middle: confirms the
-		// returned index stays in-bounds regardless of which key is huge.
+		// 3-key variant with the oversized key in the middle. Naive
+		// len(Keys)/2 = 1 would put the huge middle key in the LEFT half
+		// (Keys[:1] doesn't include it, but Keys[1:mid... ] -- concretely,
+		// at mid=1 the right half is Keys[1:] = [hugeKey, "z"], which
+		// overflows NodeSize, so chooseLeafSplit's second (right-side)
+		// shift loop must fire and push mid to 2 (right half becomes just
+		// ["z"], which fits). A naive implementation with the shift loops
+		// deleted would stop at mid=1 -- still "in bounds" per a loose
+		// [1, len-1] check, but the WRONG index, proving that check alone
+		// is not a real regression guard for the shift logic. Assert the
+		// actual expected value, not just bounds.
 		n3 := LeafNode{Keys: []string{"a", hugeKey, "z"}, FileIDs: []uint64{1, 2, 3}}
+		const wantMid3 = 2
 		mid3 := chooseLeafSplit(n3)
 		if mid3 < 1 || mid3 > len(n3.Keys)-1 {
 			t.Fatalf("chooseLeafSplit returned out-of-bounds mid=%d for a 3-key node (want in [1, %d])", mid3, len(n3.Keys)-1)
+		}
+		if mid3 != wantMid3 {
+			t.Fatalf("chooseLeafSplit(n3) = %d, want exactly %d (naive len(Keys)/2 = 1 would leave the oversized key %q in the overflowing right half; the shift loop must move it to the left half instead)", mid3, wantMid3, "hugeKey")
+		}
+		if leafEncodedSize(LeafNode{Keys: n3.Keys[mid3:], FileIDs: n3.FileIDs[mid3:]}) > NodeSize {
+			t.Fatalf("chooseLeafSplit(n3) = %d still leaves an overflowing right half; shift logic did not do its job", mid3)
 		}
 	})
 
@@ -1156,6 +1177,46 @@ func TestChooseSplitBoundaryCases(t *testing.T) {
 		mid := chooseInternalSplit(n)
 		if mid < 0 || mid > len(n.Keys)-1 {
 			t.Fatalf("chooseInternalSplit returned out-of-bounds mid=%d for a 2-key internal node (want in [0, %d])", mid, len(n.Keys)-1)
+		}
+	})
+
+	t.Run("chooseInternalSplit trailing oversized key requires a shift", func(t *testing.T) {
+		// Unlike chooseLeafSplit's middle-huge-key case, a middle huge key
+		// in an internal node is promoted away entirely by the split (it
+		// lands in neither the left nor the right half), so it can never
+		// force a shift here -- an equivalent construction for
+		// chooseInternalSplit needs the oversized key to remain INSIDE one
+		// of the two included halves, i.e. trailing (not the promoted
+		// middle element).
+		//
+		// 3 keys, 4 children. Naive len(Keys)/2 = 1: the right half would be
+		// Keys[mid+1:] = Keys[2:] = [hugeKey], Children[2:] = [c2, c3],
+		// which overflows NodeSize on its own since hugeKey alone exceeds
+		// it. chooseInternalSplit's second (right-side) shift loop must
+		// therefore fire and push mid to 2, shrinking the right half to
+		// Keys[3:] = [] (hugeKey itself becomes the promoted median,
+		// removed from both halves). A naive implementation with the shift
+		// loops deleted would stop at mid=1 -- still "in bounds" per a
+		// loose [0, len-1] check, but leaving an overflowing right half.
+		hugeKey := stringOfLen(NodeSize * 4)
+		n := InternalNode{
+			Keys:     []string{"a", "b", hugeKey},
+			Children: []uint64{10, 20, 30, 40},
+		}
+		if internalEncodedSize(InternalNode{Keys: n.Keys[2:], Children: n.Children[2:]}) <= NodeSize {
+			t.Fatalf("test setup error: naive right half (mid=1) should exceed NodeSize (%d)", NodeSize)
+		}
+
+		const wantMid = 2
+		mid := chooseInternalSplit(n)
+		if mid < 0 || mid > len(n.Keys)-1 {
+			t.Fatalf("chooseInternalSplit returned out-of-bounds mid=%d for a 3-key internal node (want in [0, %d])", mid, len(n.Keys)-1)
+		}
+		if mid != wantMid {
+			t.Fatalf("chooseInternalSplit(n) = %d, want exactly %d (naive len(Keys)/2 = 1 would leave the oversized key in the overflowing right half; the shift loop must push it into the promoted median instead)", mid, wantMid)
+		}
+		if internalEncodedSize(InternalNode{Keys: n.Keys[mid+1:], Children: n.Children[mid+1:]}) > NodeSize {
+			t.Fatalf("chooseInternalSplit(n) = %d still leaves an overflowing right half; shift logic did not do its job", mid)
 		}
 	})
 }

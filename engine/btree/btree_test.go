@@ -138,35 +138,98 @@ func TestLoadRootFreshIndexFile(t *testing.T) {
 }
 
 // TestLoadRootTruncatedSidecar is subtask 4.5.1.6's (issue #38) required test
-// spec for a corrupted/truncated .root sidecar file: it saves a well-formed
-// root via SaveRoot, then truncates the sidecar file to fewer than
-// rootStateSize (8) bytes -- simulating a torn/incomplete write or on-disk
-// corruption -- and asserts LoadRoot correctly returns a non-nil error
-// (persist.go's existing info.Size() != rootStateSize check) rather than
-// panicking or silently returning a wrong/zero root ID.
+// spec for a corrupted/malformed-size .root sidecar file. It covers both
+// directions of size mismatch against rootStateSize (8 bytes):
+//
+//   - undersized (fewer than rootStateSize bytes): simulates a torn/
+//     incomplete write. Note that ReadAt alone already short-read-errors on
+//     this case regardless of persist.go's explicit info.Size() !=
+//     rootStateSize check, so this subtest alone would give illusory
+//     coverage of that check; it is kept because it is still a real,
+//     legitimate corruption scenario worth regression-guarding, just not
+//     sufficient by itself to prove the explicit size check does anything.
+//   - oversized (more than rootStateSize bytes, e.g. trailing garbage
+//     appended by a torn write that wrote too much): ReadAt happily reads
+//     the first rootStateSize bytes successfully and would NOT error on its
+//     own in this direction, so only persist.go's explicit
+//     info.Size() != rootStateSize equality check can catch it. This is the
+//     subtest that actually pins down that check's behavior.
+//
+// Both cases assert LoadRoot returns a non-nil error rather than panicking
+// or silently returning a wrong/truncated-but-"successfully"-read root ID.
 func TestLoadRootTruncatedSidecar(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "name.idx")
+	t.Run("undersized", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "name.idx")
 
-	f, err := OpenIndexFile(path)
-	if err != nil {
-		t.Fatalf("OpenIndexFile: %v", err)
-	}
-	t.Cleanup(func() { f.Close() })
-	store := NewNodeStore(f)
+		f, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile: %v", err)
+		}
+		t.Cleanup(func() { f.Close() })
+		store := NewNodeStore(f)
 
-	if err := SaveRoot(store, 42); err != nil {
-		t.Fatalf("SaveRoot: unexpected error: %v", err)
-	}
+		if err := SaveRoot(store, 42); err != nil {
+			t.Fatalf("SaveRoot: unexpected error: %v", err)
+		}
 
-	sidecarPath := rootStatePath(store)
-	if err := os.Truncate(sidecarPath, 3); err != nil {
-		t.Fatalf("truncating sidecar file %s: %v", sidecarPath, err)
-	}
+		sidecarPath := rootStatePath(store)
+		if err := os.Truncate(sidecarPath, 3); err != nil {
+			t.Fatalf("truncating sidecar file %s: %v", sidecarPath, err)
+		}
 
-	rootID, err := LoadRoot(store)
-	if err == nil {
-		t.Fatalf("LoadRoot against a truncated .root sidecar file: expected a non-nil error, got nil (rootID=%d)", rootID)
-	}
+		rootID, err := LoadRoot(store)
+		if err == nil {
+			t.Fatalf("LoadRoot against an undersized .root sidecar file: expected a non-nil error, got nil (rootID=%d)", rootID)
+		}
+	})
+
+	t.Run("oversized", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "name.idx")
+
+		f, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile: %v", err)
+		}
+		t.Cleanup(func() { f.Close() })
+		store := NewNodeStore(f)
+
+		if err := SaveRoot(store, 42); err != nil {
+			t.Fatalf("SaveRoot: unexpected error: %v", err)
+		}
+
+		// Append trailing garbage bytes past the well-formed rootStateSize
+		// content, so the sidecar file is now LARGER than rootStateSize.
+		// ReadAt(buf[:rootStateSize], 0) below would succeed cleanly on
+		// this file (it can read the first rootStateSize bytes without any
+		// short read) -- only LoadRoot's explicit info.Size() !=
+		// rootStateSize equality check can detect this malformation.
+		sidecarPath := rootStatePath(store)
+		sf, err := os.OpenFile(sidecarPath, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			t.Fatalf("opening sidecar file %s for append: %v", sidecarPath, err)
+		}
+		garbage := []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x00}
+		if _, err := sf.Write(garbage); err != nil {
+			sf.Close()
+			t.Fatalf("appending garbage to sidecar file %s: %v", sidecarPath, err)
+		}
+		if err := sf.Close(); err != nil {
+			t.Fatalf("closing sidecar file %s: %v", sidecarPath, err)
+		}
+
+		info, err := os.Stat(sidecarPath)
+		if err != nil {
+			t.Fatalf("stat sidecar file %s: %v", sidecarPath, err)
+		}
+		if info.Size() <= rootStateSize {
+			t.Fatalf("test setup error: sidecar file %s has size %d, want > %d (rootStateSize) after appending garbage", sidecarPath, info.Size(), rootStateSize)
+		}
+
+		rootID, err := LoadRoot(store)
+		if err == nil {
+			t.Fatalf("LoadRoot against an oversized .root sidecar file: expected a non-nil error, got nil (rootID=%d) -- ReadAt alone would not catch this, only the explicit size check can", rootID)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
