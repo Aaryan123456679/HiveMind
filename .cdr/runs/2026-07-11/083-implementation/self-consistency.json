@@ -1,0 +1,37 @@
+{
+  "build": {
+    "command": "go build ./engine/split/...",
+    "result": "pass"
+  },
+  "vet": {
+    "command": "go vet ./engine/split/...",
+    "result": "pass"
+  },
+  "full_package_tests": {
+    "command": "go test ./engine/split/... -race -count=1",
+    "result": "pass",
+    "duration_s": 84.934
+  },
+  "mutation_tests_self_run": [
+    {
+      "mutation": "invert reclaimIfExpired's expiry check to always treat lease as expired",
+      "expected_failures": ["TestAbandonedSplittingRecoversAfterTimeout", "TestReclaimNeverDoubleAcquiresGuardForSlowHolder"],
+      "observed": "both failed as expected; TestEndSplitClearsLeaseForFreshSubsequentAttempt still passed",
+      "result": "pass (matrix V1/V2 confirmed)"
+    },
+    {
+      "mutation": "disable EndSplit's delete(o.leases, fileID)",
+      "expected_failures": ["TestEndSplitClearsLeaseForFreshSubsequentAttempt"],
+      "observed": "failed as expected; TestAbandonedSplittingRecoversAfterTimeout and TestReclaimNeverDoubleAcquiresGuardForSlowHolder still passed",
+      "result": "pass (matrix V4 confirmed, closes the verifier's disclosed coverage gap)"
+    }
+  ],
+  "file_restored_after_mutation_tests": "verified via diff against /tmp backup, byte-identical",
+  "scope_check": {
+    "files_staged": ["engine/split/orchestrate.go", "engine/split/orchestrate_test.go"],
+    "guard_go_touched": false,
+    "split_race_test_go_touched": false,
+    "cdr_index_files_touched": false
+  },
+  "note": "This is internal sanity only (I4): build/vet/tests green and validation matrix covered. This is NOT independent verification -- that is /cdr:verify's responsibility."
+}

@@ -1,0 +1,70 @@
+{
+  "files_touched": [
+    "engine/split/orchestrate.go",
+    "engine/split/orchestrate_test.go"
+  ],
+  "files_explicitly_not_touched": [
+    "engine/split/guard.go",
+    "engine/split/split_race_test.go",
+    "engine/split/execute.go",
+    "engine/engine_stress_test.go",
+    "engine/smokeserver",
+    ".cdr/index/regression.jsonl",
+    ".cdr/index/task.jsonl"
+  ],
+  "public_api_changes": [
+    {
+      "symbol": "WithClock",
+      "change": "renamed/unexported to withClock (Option constructor)",
+      "reason": "non-blocking verification note; no external callers besides this package's own test file",
+      "compile_impact": "none outside engine/split (grep confirmed only orchestrate.go and orchestrate_test.go reference it)"
+    },
+    {
+      "symbol": "WithLeaseDuration",
+      "change": "renamed/unexported to withLeaseDuration (Option constructor)",
+      "reason": "same as above",
+      "compile_impact": "none outside engine/split"
+    }
+  ],
+  "internal_behavior_changes": [
+    {
+      "component": "reclaimIfExpired",
+      "before": "on lease expiry: force-revert catalog Status Splitting->Active AND release FileGuard hold, then let BeginSplit retry TryAcquire",
+      "after": "on lease expiry: force-revert catalog Status Splitting->Active only; never releases the guard; entire check-then-act sequence (including the transitionStatus WAL I/O) now runs under Orchestrator.mu, shared with EndSplit's own critical section, so the two can never interleave for the same fileID",
+      "risk": "eliminates double-acquisition entirely; reintroduces 'future BeginSplit blocked forever' for a fileID whose true holder genuinely crashed (never calls EndSplit) -- explicitly documented tradeoff, not silently accepted"
+    },
+    {
+      "component": "BeginSplit",
+      "before": "on TryAcquire loss, called reclaimIfExpired and retried TryAcquire if it returned true",
+      "after": "on TryAcquire loss, calls reclaimIfExpired for its writer-unblocking side effect only, then always returns ErrAlreadySplitting (no retry, since reclaim no longer releases the guard)"
+    },
+    {
+      "component": "EndSplit",
+      "before": "transitionStatus call unlocked; guard.Release and clearLease deferred independently",
+      "after": "transitionStatus call plus lease-entry delete now run together under Orchestrator.mu (the other half of the fencing pair with reclaimIfExpired); guard.Release remains a separate, unlocked defer (unaffected by outcome, same as before)"
+    },
+    {
+      "component": "leases map value type",
+      "before": "map[uint64]time.Time (deadline only)",
+      "after": "map[uint64]leaseEntry{deadline, gen, reclaimed} -- gen is a monotonically increasing per-Orchestrator counter (nextGen), reclaimed marks a lease that has already been force-reverted so repeated BeginSplit attempts for a still-abandoned fileID short-circuit instead of repeating a wasted transitionStatus call"
+    }
+  ],
+  "test_impact": [
+    {
+      "test": "TestAbandonedSplittingRecoversAfterTimeout",
+      "change": "assertions updated: a second BeginSplit after lease expiry now correctly still returns ErrAlreadySplitting (guard stays held); catalog Status reverts to Active (writers unblocked); the true holder's eventual EndSplit returns ErrNotSplitting but still releases the guard; only then does a fresh BeginSplit succeed"
+    },
+    {
+      "test": "TestReclaimNeverDoubleAcquiresGuardForSlowHolder",
+      "change": "new concurrency test; drives real goroutines racing BeginSplit against a fake-clock-expired-but-still-live H, asserting no iteration ever observes double-acquisition"
+    },
+    {
+      "test": "TestEndSplitClearsLeaseForFreshSubsequentAttempt",
+      "change": "new test targeting the disclosed test-coverage gap (disabling clearLease previously still passed); directly inspects the unexported leases map (white-box, same package) immediately after EndSplit to prove the entry is actually removed"
+    }
+  ],
+  "downstream_consumers_checked": [
+    "engine/split/execute.go (comments only, no compile dependency)",
+    "engine/split/split_race_test.go (compiles unchanged; full package test run confirms)"
+  ]
+}

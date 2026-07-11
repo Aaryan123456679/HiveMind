@@ -378,11 +378,26 @@ func TestSplittingStatusIsolation(t *testing.T) {
 // TestAbandonedSplittingRecoversAfterTimeout subtask 4.5.3.3's
 // acceptance-criteria test (issue #40): a catalog record left in
 // StatusSplitting because its split holder crashed between BeginSplit and
-// EndSplit/AbortSplit is automatically reverted once its lease expires,
-// rather than permanently blocking future BeginSplit calls for that fileID.
+// EndSplit/AbortSplit has its catalog record automatically reverted once its
+// lease expires, unblocking AdmitWrite callers, rather than permanently
+// blocking writers for that fileID.
 //
-// Uses an injected fake clock (WithClock), not a real-time sleep, so
+// Uses an injected fake clock (withClock), not a real-time sleep, so
 // "advance past the lease timeout" is deterministic and instant.
+//
+// Fix-cycle correction (issue #40 verification, attempt 1): this test's
+// assertions were updated to match reclaimIfExpired's corrected,
+// guard-preserving design (see orchestrate.go's package doc comment and
+// reclaimIfExpired's own doc comment for the full rationale). Previously,
+// this test asserted that a SECOND BeginSplit call after lease expiry
+// SUCCEEDS and wins a fresh split attempt -- that assertion described
+// exactly the unsafe "release the stale guard and let a new caller start a
+// concurrent second split" behavior the verification finding identified.
+// The corrected behavior asserted below is: the catalog record is reverted
+// to StatusActive (so AdmitWrite stops refusing writers) but the guard
+// itself is NOT released by the reclaim, so a second BeginSplit still
+// correctly returns ErrAlreadySplitting -- only the ORIGINAL holder's own
+// (however belated) EndSplit/AbortSplit call can release the guard.
 func TestAbandonedSplittingRecoversAfterTimeout(t *testing.T) {
 	dir := t.TempDir()
 	cat := newTestCatalog(t)
@@ -396,7 +411,7 @@ func TestAbandonedSplittingRecoversAfterTimeout(t *testing.T) {
 
 	const lease = 5 * time.Second
 	guard := NewFileGuard()
-	orch, err := NewOrchestrator(guard, cat, w, WithClock(fakeClock), WithLeaseDuration(lease))
+	orch, err := NewOrchestrator(guard, cat, w, withClock(fakeClock), withLeaseDuration(lease))
 	if err != nil {
 		t.Fatalf("NewOrchestrator: %v", err)
 	}
@@ -424,39 +439,252 @@ func TestAbandonedSplittingRecoversAfterTimeout(t *testing.T) {
 	// Advance the injected clock past the lease timeout -- no real sleep.
 	nowNanos.Add(int64(lease) + int64(time.Second))
 
-	// A subsequent BeginSplit for the same fileID must now succeed: the
-	// abandoned SPLITTING record is force-reverted to StatusActive and the
-	// stale guard hold released, then this call wins a fresh split attempt.
-	rec, err = orch.BeginSplit(fileID)
-	if err != nil {
-		t.Fatalf("BeginSplit after lease expiry: unexpected error: %v", err)
-	}
-	if rec.Status != catalog.StatusSplitting {
-		t.Fatalf("BeginSplit after lease expiry: Status = %v, want StatusSplitting", rec.Status)
+	// A subsequent BeginSplit for the same fileID must still be refused:
+	// the abandoned SPLITTING record's lease has expired, so this call
+	// force-reverts the catalog record to StatusActive (unblocking
+	// AdmitWrite), but it must NOT release the guard or let this call (or
+	// any other concurrent caller) start a second, concurrent split -- that
+	// is precisely the double-acquisition the verification finding
+	// identified as unsafe.
+	if _, err := orch.BeginSplit(fileID); !errors.Is(err, ErrAlreadySplitting) {
+		t.Fatalf("BeginSplit after lease expiry: err = %v, want ErrAlreadySplitting (guard must stay held)", err)
 	}
 
 	gotRec, err := cat.Get(fileID)
 	if err != nil {
 		t.Fatalf("cat.Get after reclaim: %v", err)
 	}
-	if gotRec.Status != catalog.StatusSplitting {
-		t.Fatalf("cat.Get after reclaim: Status = %v, want StatusSplitting", gotRec.Status)
+	if gotRec.Status != catalog.StatusActive {
+		t.Fatalf("cat.Get after reclaim: Status = %v, want StatusActive (writers unblocked)", gotRec.Status)
 	}
 	if !guard.InProgress(fileID) {
-		t.Fatalf("guard.InProgress after reclaim+fresh BeginSplit: want true (this attempt's own hold)")
+		t.Fatalf("guard.InProgress after reclaim: want true -- reclaim must not release the guard")
 	}
 
-	// The reclaimed-and-restarted split attempt behaves like any normal
-	// one: EndSplit cleanly transitions it out and releases the guard, with
-	// no leftover lease/guard state from the abandoned first attempt.
-	rec, err = orch.EndSplit(fileID, catalog.StatusSplit)
-	if err != nil {
-		t.Fatalf("EndSplit after reclaim: unexpected error: %v", err)
+	// AdmitWrite must now succeed: the reclaim unblocked writers even though
+	// the guard itself is still (correctly) held.
+	if _, err := orch.AdmitWrite(fileID); err != nil {
+		t.Fatalf("AdmitWrite after reclaim: unexpected error: %v", err)
 	}
-	if rec.Status != catalog.StatusSplit {
-		t.Fatalf("EndSplit after reclaim: Status = %v, want StatusSplit", rec.Status)
+
+	// The true (simulated-crashed) original holder eventually "wakes up"
+	// and calls EndSplit. Because its record was already force-reverted out
+	// from under it, EndSplit correctly reports ErrNotSplitting (its split
+	// attempt was invalidated) rather than silently succeeding against
+	// whatever state happens to be there -- but it still releases the guard
+	// and clears the lease, exactly as a normal exit would, since FileGuard's
+	// "winner eventually calls Release" contract does not depend on the
+	// transition itself having succeeded.
+	if _, err := orch.EndSplit(fileID, catalog.StatusSplit); !errors.Is(err, ErrNotSplitting) {
+		t.Fatalf("EndSplit for the true (reclaimed) holder: err = %v, want ErrNotSplitting", err)
 	}
 	if guard.InProgress(fileID) {
-		t.Fatalf("EndSplit after reclaim: guard still marked InProgress -- leaked guard state")
+		t.Fatalf("EndSplit for the true (reclaimed) holder: guard still marked InProgress -- leaked guard state")
+	}
+
+	// Only NOW -- after the true holder's own EndSplit call actually
+	// released the guard -- can a fresh BeginSplit succeed.
+	rec, err = orch.BeginSplit(fileID)
+	if err != nil {
+		t.Fatalf("BeginSplit after true holder's EndSplit: unexpected error: %v", err)
+	}
+	if rec.Status != catalog.StatusSplitting {
+		t.Fatalf("BeginSplit after true holder's EndSplit: Status = %v, want StatusSplitting", rec.Status)
+	}
+	if _, err := orch.EndSplit(fileID, catalog.StatusSplit); err != nil {
+		t.Fatalf("EndSplit for the fresh attempt: unexpected error: %v", err)
+	}
+}
+
+// TestReclaimNeverDoubleAcquiresGuardForSlowHolder is this fix-cycle's
+// concurrency test (issue #40 verification, attempt 1) proving the
+// verification finding's concrete scenario -- a legitimate split holder H
+// that is merely slow (not actually crashed) past leaseDuration -- can no
+// longer result in a second, concurrent caller C believing it has also won
+// the right to split the same fileID while H is still working.
+//
+// Before this fix-cycle's correction, reclaimIfExpired released the stale
+// guard hold on lease expiry, so C's BeginSplit (retried internally after a
+// successful reclaim) could win TryAcquire and start executing while H was
+// still live, and H's eventual EndSplit would then clobber C's state and
+// release C's guard in turn. This test drives exactly that timeline with
+// real goroutines (not just a single-threaded sequential replay) and a fake
+// clock, and asserts guard.InProgress(fileID) is true for the entire
+// window, with C never observing anything other than ErrAlreadySplitting,
+// however many times or however long it retries -- i.e. the fix makes
+// double-acquisition structurally impossible, not merely less likely.
+func TestReclaimNeverDoubleAcquiresGuardForSlowHolder(t *testing.T) {
+	dir := t.TempDir()
+	cat := newTestCatalog(t)
+	w := newTestWAL(t, dir)
+	const fileID = uint64(8)
+	putActiveRecord(t, cat, fileID)
+
+	var nowNanos atomic.Int64
+	nowNanos.Store(time.Now().UnixNano())
+	fakeClock := func() time.Time { return time.Unix(0, nowNanos.Load()) }
+
+	const lease = 1 * time.Second
+	guard := NewFileGuard()
+	orch, err := NewOrchestrator(guard, cat, w, withClock(fakeClock), withLeaseDuration(lease))
+	if err != nil {
+		t.Fatalf("NewOrchestrator: %v", err)
+	}
+
+	// H wins the one and only legitimate BeginSplit for fileID.
+	if _, err := orch.BeginSplit(fileID); err != nil {
+		t.Fatalf("H's BeginSplit: unexpected error: %v", err)
+	}
+
+	// Advance the fake clock well past H's lease -- from this point on, any
+	// call into reclaimIfExpired for fileID judges H's lease expired, even
+	// though H (below) is still genuinely "working", not crashed.
+	nowNanos.Add(int64(lease) * 10)
+
+	// C hammers BeginSplit concurrently with H still "in flight", exactly
+	// mirroring the verification finding's scenario. If the bug were
+	// present, some iteration of this loop would observe err == nil (C
+	// believing it won a fresh split) while guard.InProgress(fileID) was
+	// already true for H.
+	var sawDoubleAcquisition atomic.Bool
+	var cWon atomic.Bool
+	stopC := make(chan struct{})
+	var wgC sync.WaitGroup
+	wgC.Add(1)
+	go func() {
+		defer wgC.Done()
+		for {
+			select {
+			case <-stopC:
+				return
+			default:
+			}
+			if _, err := orch.BeginSplit(fileID); err == nil {
+				// C's BeginSplit reported success while H's own attempt is
+				// still outstanding: a genuine double-acquisition.
+				cWon.Store(true)
+				sawDoubleAcquisition.Store(true)
+				return
+			} else if !errors.Is(err, ErrAlreadySplitting) {
+				sawDoubleAcquisition.Store(true) // unexpected error shape entirely
+				return
+			}
+		}
+	}()
+
+	// Give C's goroutine a real (short) window to hammer BeginSplit while
+	// H's lease is expired and H has still not called EndSplit -- this is
+	// the exact window the bug required to manifest.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) && !sawDoubleAcquisition.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	close(stopC)
+	wgC.Wait()
+
+	if sawDoubleAcquisition.Load() {
+		t.Fatalf("double-acquisition detected: C's BeginSplit succeeded (or errored unexpectedly) while H's split was still outstanding")
+	}
+	if cWon.Load() {
+		t.Fatalf("C's BeginSplit reported success while H's guard hold was still outstanding")
+	}
+	if !guard.InProgress(fileID) {
+		t.Fatalf("guard.InProgress(fileID) = false after C's hammering -- H's guard hold was released out from under it")
+	}
+
+	// H (finally) finishes and calls EndSplit -- even though its record was
+	// force-reverted by C's repeated reclaim attempts, EndSplit still
+	// releases H's guard at this, the actually-correct, moment.
+	if _, err := orch.EndSplit(fileID, catalog.StatusSplit); !errors.Is(err, ErrNotSplitting) {
+		t.Fatalf("H's EndSplit: err = %v, want ErrNotSplitting (record was reclaimed while H worked)", err)
+	}
+	if guard.InProgress(fileID) {
+		t.Fatalf("guard.InProgress(fileID) = true after H's EndSplit -- guard leaked")
+	}
+
+	// Only now can a fresh BeginSplit legitimately succeed.
+	if _, err := orch.BeginSplit(fileID); err != nil {
+		t.Fatalf("BeginSplit after H's EndSplit: unexpected error: %v", err)
+	}
+}
+
+// TestEndSplitClearsLeaseForFreshSubsequentAttempt is this fix-cycle's test
+// for the disclosed test-coverage gap (issue #40 verification, attempt 1):
+// the original acceptance test never actually observed any effect of
+// EndSplit clearing fileID's lease entry, so disabling that clear entirely
+// still passed every existing test. This test constructs a scenario where a
+// stale (un-cleared) lease entry left behind by a normal EndSplit would
+// cause a completely fresh, still-within-its-own-lease BeginSplit attempt to
+// be wrongly treated as expired by a later reclaimIfExpired call.
+func TestEndSplitClearsLeaseForFreshSubsequentAttempt(t *testing.T) {
+	dir := t.TempDir()
+	cat := newTestCatalog(t)
+	w := newTestWAL(t, dir)
+	const fileID = uint64(9)
+	putActiveRecord(t, cat, fileID)
+
+	var nowNanos atomic.Int64
+	nowNanos.Store(time.Now().UnixNano())
+	fakeClock := func() time.Time { return time.Unix(0, nowNanos.Load()) }
+
+	const lease = 5 * time.Second
+	guard := NewFileGuard()
+	orch, err := NewOrchestrator(guard, cat, w, withClock(fakeClock), withLeaseDuration(lease))
+	if err != nil {
+		t.Fatalf("NewOrchestrator: %v", err)
+	}
+
+	// First attempt: begins at t0, its lease deadline is t0+lease.
+	if _, err := orch.BeginSplit(fileID); err != nil {
+		t.Fatalf("first BeginSplit: %v", err)
+	}
+	// Ends cleanly, well within its own lease -- EndSplit must clear this
+	// attempt's lease entry entirely, not merely leave it stale.
+	if _, err := orch.AbortSplit(fileID); err != nil {
+		t.Fatalf("first AbortSplit: %v", err)
+	}
+
+	// Directly inspect the unexported leases map (this test file is in
+	// package split, so it can): if EndSplit's clear did not run, a stale
+	// entry for fileID -- with the FIRST attempt's now-past deadline --
+	// would still be sitting here.
+	orch.mu.Lock()
+	_, staleEntryStillPresent := orch.leases[fileID]
+	orch.mu.Unlock()
+	if staleEntryStillPresent {
+		t.Fatalf("leases[fileID] still present immediately after EndSplit -- clearLease did not run")
+	}
+
+	// Advance the clock to exactly the moment the FIRST attempt's
+	// (already-cleared) deadline would have expired.
+	nowNanos.Add(int64(lease) + int64(time.Second))
+
+	// Second, entirely fresh attempt begins now, at t0+lease+1s -- its OWN
+	// lease deadline is (t0+lease+1s)+lease, still far in the future.
+	if _, err := orch.BeginSplit(fileID); err != nil {
+		t.Fatalf("second BeginSplit: %v", err)
+	}
+
+	// A concurrent third caller's BeginSplit must be refused via the normal
+	// TryAcquire-loses path, with reclaimIfExpired correctly finding nothing
+	// to reclaim (the second attempt's own lease is nowhere near expired
+	// yet). If the first attempt's stale entry had survived (the mutation
+	// this test targets), reclaimIfExpired would instead have found that
+	// old, already-expired deadline still sitting in the map and wrongly
+	// force-reverted the SECOND (still fully legitimate) attempt's record
+	// back to StatusActive.
+	if _, err := orch.BeginSplit(fileID); !errors.Is(err, ErrAlreadySplitting) {
+		t.Fatalf("third BeginSplit: err = %v, want ErrAlreadySplitting", err)
+	}
+	rec, err := cat.Get(fileID)
+	if err != nil {
+		t.Fatalf("cat.Get: %v", err)
+	}
+	if rec.Status != catalog.StatusSplitting {
+		t.Fatalf("Status after third BeginSplit = %v, want StatusSplitting (second attempt must still be intact, not wrongly reclaimed)", rec.Status)
+	}
+
+	if _, err := orch.EndSplit(fileID, catalog.StatusSplit); err != nil {
+		t.Fatalf("second attempt's EndSplit: unexpected error: %v", err)
 	}
 }
