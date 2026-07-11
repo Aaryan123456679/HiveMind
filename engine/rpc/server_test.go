@@ -397,26 +397,43 @@ func TestRPCServerHandlers(t *testing.T) {
 
 	t.Run("SearchCandidates", func(t *testing.T) {
 		f := newFixture(t)
-		want, err := btree.PrefixScan(f.btreeStore, f.btreeRoot, "topics/alpha/")
-		if err != nil {
-			t.Fatalf("btree.PrefixScan (direct): %v", err)
-		}
 
+		// task 4.5.9.2 (issue #47) changed pool assembly from a single literal
+		// PrefixScan(req.Query) call to one PrefixScan PER TERM of req.Query, split via
+		// the SAME non-alphanumeric-run convention rankCandidates' tokenizeTerms already
+		// uses for scoring (splitTerms/termSplitRE, search_candidates.go) -- resolving a
+		// pre-existing inconsistency where pool selection treated "topics/alpha/" as one
+		// literal path-prefix token while ranking already tokenized it into ["topics",
+		// "alpha"]. "topics/alpha/" therefore now splits into terms ["topics", "alpha"];
+		// PrefixScan("topics") matches BOTH seeded paths (topics/alpha/intro AND
+		// topics/beta/intro, both sharing the "topics" prefix), while PrefixScan("alpha")
+		// matches neither literally (no path starts with "alpha"). The merged pool is
+		// therefore both entries, but rankCandidates' term-overlap scoring still ranks
+		// topics/alpha/intro first (2-of-2 terms match its path tokens) ahead of
+		// topics/beta/intro (1-of-2) -- broader recall than the pre-4.5.9.2 behavior
+		// (which silently excluded topics/beta/intro from the pool entirely), still
+		// correctly ranked.
 		resp, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{
 			Query: "topics/alpha/",
 		})
 		if err != nil {
 			t.Fatalf("SearchCandidates: %v", err)
 		}
-		if len(resp.GetCandidates()) != len(want) {
-			t.Fatalf("SearchCandidates: got %d candidates, want %d", len(resp.GetCandidates()), len(want))
+
+		got := resp.GetCandidates()
+		if len(got) != 2 {
+			t.Fatalf("SearchCandidates: got %d candidates, want 2 (topics/alpha/intro and topics/beta/intro, both sharing the \"topics\" scan term)", len(got))
 		}
-		for i, e := range want {
-			got := resp.GetCandidates()[i]
-			if got.GetFileId() != e.FileID || got.GetPath() != e.Path {
-				t.Fatalf("SearchCandidates: candidate[%d] = {%d, %q}, want {%d, %q}",
-					i, got.GetFileId(), got.GetPath(), e.FileID, e.Path)
-			}
+		if got[0].GetPath() != "topics/alpha/intro" || got[0].GetFileId() != f.alphaID {
+			t.Fatalf("SearchCandidates: candidate[0] = {%d, %q}, want {%d, %q} (highest term-overlap: matches both \"topics\" and \"alpha\")",
+				got[0].GetFileId(), got[0].GetPath(), f.alphaID, "topics/alpha/intro")
+		}
+		if got[1].GetPath() != "topics/beta/intro" || got[1].GetFileId() != f.betaID {
+			t.Fatalf("SearchCandidates: candidate[1] = {%d, %q}, want {%d, %q} (lower term-overlap: matches only \"topics\")",
+				got[1].GetFileId(), got[1].GetPath(), f.betaID, "topics/beta/intro")
+		}
+		if !(got[0].GetScore() > got[1].GetScore()) {
+			t.Fatalf("SearchCandidates: candidate[0] score %v not greater than candidate[1] score %v", got[0].GetScore(), got[1].GetScore())
 		}
 	})
 

@@ -59,6 +59,16 @@ A custom on-disk B+Tree, persisted at `index/name.idx`, mapping topic path strin
     unchanged by this decision — see [query-agent.md](query-agent.md#known-risks) for the full
     rationale and the still-open residual gap this does not close. Actual implementation is
     deferred to subtask 4.5.9.2 (this subtask, 4.5.9.1, is decision + documentation only).
+  - **Implemented (issue #47, subtask 4.5.9.2)**: `engine/rpc/search_candidates.go`'s new
+    `candidatePool` function now issues one `btree.PrefixScan` per query term and merges the
+    results; `PrefixScan`'s exported signature and internal semantics remain completely
+    unchanged — confirmed no edit to `engine/btree/scan.go` was needed. The per-term split now
+    uses the same non-alphanumeric-run convention `rankCandidates` already uses for scoring
+    (not naive whitespace splitting as this decision's text originally described), and the
+    merge is bounded by two conservative caps (`perTermPoolCap`, `mergedPoolCap`) to avoid an
+    unbounded multi-term fan-out cost against `PrefixScan`'s uncapped per-call result size. See
+    [query-agent.md](query-agent.md#known-risks) for the full implementation writeup and
+    rationale.
 
 ## Cross-references
 

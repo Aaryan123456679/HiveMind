@@ -106,6 +106,54 @@ query -> intent_refiner -> topic_selector (+ SearchCandidates / GraphNeighbors) 
       behaviorally unchanged — `PrefixScan`'s existing exported signature is reused as-is, called
       multiple times by the caller; 4.5.9.2 should confirm no change to `scan.go` is actually
       needed before closing that impacted-module entry).
+  - **Implemented (issue #47, subtask 4.5.9.2)**: option (b) is now implemented in
+    `engine/rpc/search_candidates.go`'s new `candidatePool` function, called once from
+    `SearchCandidates` (`server.go`) in place of the old single-first-token
+    `btree.PrefixScan` call. Two gaps flagged by 4.5.9.1's own verification
+    (`.cdr/index/regression.jsonl`, run `101-verification`) were resolved as part of this
+    implementation, not left as further-deferred follow-ups:
+    - **Tokenization-convention consistency** (the decision text above said
+      "whitespace-separated terms," but `rankCandidates` actually splits on any
+      non-alphanumeric run via `termSplitRE`/`tokenizeTerms`, which differs for
+      punctuated/hyphenated queries such as "graph-database"): `candidatePool` splits the
+      query via a new `splitTerms` helper that shares the *exact same* `termSplitRE` regex
+      `tokenizeTerms` uses (`tokenizeTerms` is now simply
+      `splitTerms(strings.ToLower(s))`) — pool assembly and ranking now use one single
+      splitting convention, not two divergent ones. `splitTerms` deliberately does **not**
+      lower-case its output, unlike `tokenizeTerms`: `btree.PrefixScan`'s prefix match is
+      case-sensitive against on-disk paths that preserve their original case, so feeding it
+      a lower-cased term (as a naive reuse of `tokenizeTerms` would have) could silently
+      drop real mixed-case-path matches. Ranking (`termOverlapScore`, via `rankCandidates`'s
+      still-unmodified call to `tokenizeTerms`) remains case-insensitive, which is correct
+      for its in-memory string comparison against already-lower-cased path tokens.
+    - **Perf/unbounded-pool bound**: `btree.PrefixScan` has no per-call result limit, and
+      `SearchCandidates`'s `max_results` is applied only to the final *ranked* output
+      (after pool assembly, per `server.go`'s own doc comment) — so merging N per-term
+      scans without any earlier bound could multiply an already-uncapped single-scan cost
+      by the query's term count. `candidatePool` now applies two bounds, both documented
+      inline in `search_candidates.go`: `perTermPoolCap` (500 entries, truncating any single
+      term's own `PrefixScan` result before merging) and `mergedPoolCap` (2000 entries,
+      capping the total deduplicated merged pool). Both are deliberately conservative
+      constants chosen to be far above any realistic single-term or natural-language
+      multi-term query's expected result size, so they should not visibly change behavior
+      in the common case while bounding worst-case fan-out cost for a pathological query.
+      Neither cap applies to the pre-existing zero-term/empty-query case (`query=""`,
+      `agents/ingestion/shortlist.py`'s pool-retrieval usage), which still issues exactly
+      one uncapped `PrefixScan(store, rootNodeID, "")` call, byte-for-byte identical to the
+      pre-4.5.9.2 behavior.
+    - **Confirmed**: `engine/btree/scan.go` required no change — `PrefixScan`'s existing
+      exported signature (`store, rootNodeID, prefix`) is reused as-is, called once per
+      query term from the new caller-side loop in `engine/rpc/search_candidates.go`.
+    - **Residual limitation, still accepted** (unchanged from 4.5.9.1's decision): if
+      *none* of the query's terms is itself a leading path-segment token, the merged pool
+      is still empty. Closing that would require a genuinely non-prefix index primitive
+      (option (a)), out of scope here.
+    - Regression coverage: `engine/rpc/search_candidates_test.go`'s
+      `TestSearchCandidatesMultiWordQuery` seeds paths such that a genuine multi-word
+      natural-language query ("how do I configure the graph database") returns a
+      non-empty, correctly-ranked result set including a path found only via a
+      non-first-token scan term — proving the pre-4.5.9.2 first-token-only pool selection
+      would have returned zero results for this exact query.
 
 ## Cross-references
 

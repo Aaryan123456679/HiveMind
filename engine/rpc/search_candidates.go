@@ -27,6 +27,11 @@
 // be a ranking no-op (every candidate scores 0, so a stable sort leaves PrefixScan's own
 // sorted-path order untouched), which is exactly what shortlist()'s existing empty-query
 // pool-retrieval usage already depends on.
+//
+// Task 4.5.9.2 (issue #47) update: candidatePool (below) replaced the original
+// single-first-token PrefixScan pool selection with a per-query-term PrefixScan-and-merge
+// strategy, per the decision recorded in docs/LLD/query-agent.md / docs/LLD/btree.md's
+// "Known risks" (subtask 4.5.9.1). rankCandidates itself is unchanged by this update.
 package rpc
 
 import (
@@ -38,39 +43,38 @@ import (
 	hivemindv1 "github.com/Aaryan123456679/HiveMind/engine/rpc/gen"
 )
 
-// prefixTerm returns the first whitespace-separated token of query, trimmed of any
-// leading/trailing whitespace, or "" if query has no non-whitespace content. This is the
-// literal string SearchCandidates (server.go) passes to btree.PrefixScan as its prefix --
-// btree exposes no multi-term/fuzzy query primitive, so only a single leading token can
-// ever act as a literal prefix. A query with no interior whitespace (every pre-existing
-// caller, including agents/ingestion/shortlist.py's query="" pool-retrieval usage and
-// task-3.2.2's original single-token queries) is its own only token, so prefixTerm is the
-// identity function for all of them -- this function only changes behavior for a query
-// that actually contains multiple whitespace-separated terms, which no pre-existing caller
-// produces.
-func prefixTerm(query string) string {
-	fields := strings.Fields(query)
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
-}
-
 // termSplitRE splits a string into terms on any run of non-alphanumeric characters --
 // the same simple convention agents/ingestion/shortlist.py's _TOKEN_SPLIT_RE uses for the
 // same kind of path-string tokenization, so that e.g. "docs/beta/graph-database" splits
 // into ["docs", "beta", "graph", "database"] (path separators, hyphens, dots, etc. all act
-// as separators).
+// as separators). This is the single, shared splitting convention used by BOTH
+// candidatePool's PrefixScan-term assembly and rankCandidates' scoring (via splitTerms and
+// tokenizeTerms below) -- task 4.5.9.2 (issue #47) deliberately unified these two call
+// sites onto one regex so a punctuated/hyphenated query like "graph-database" is split
+// identically at both pool-selection time and ranking time; see docs/LLD/query-agent.md's
+// "Known risks" section for the full history (a naive whitespace-only split, as an earlier
+// prefixTerm helper used, would disagree with this regex for such queries).
 var termSplitRE = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 
-// tokenizeTerms lower-cases s and splits it into its non-empty alphanumeric terms via
-// termSplitRE. Returns nil for a string with no alphanumeric content (including the empty
-// string) -- callers must treat a nil/empty term list as "no terms", not an error.
-func tokenizeTerms(s string) []string {
+// splitTerms splits s into its non-empty terms via termSplitRE, WITHOUT any case
+// normalization. Returns nil for a string with no alphanumeric content (including the
+// empty string) -- callers must treat a nil/empty term list as "no terms", not an error.
+//
+// splitTerms (not tokenizeTerms) is what candidatePool uses to build the literal terms it
+// passes to btree.PrefixScan: PrefixScan's prefix match is plain, case-sensitive
+// strings.HasPrefix against on-disk paths that preserve their original case (see
+// engine/btree/scan.go), so lower-casing a scan prefix could silently drop real
+// mixed-case-path matches (e.g. a query term "Graph" scanning prefix "graph" would miss a
+// path starting "Graph/..."). tokenizeTerms' case-insensitivity is appropriate for
+// termOverlapScore's in-memory scoring (which does its own case-insensitive comparison
+// against already-lower-cased path terms), but is NOT appropriate for a literal on-disk
+// scan prefix -- so the two callers share the same split regex/convention (this function)
+// while differing only in whether the result is subsequently lower-cased.
+func splitTerms(s string) []string {
 	if s == "" {
 		return nil
 	}
-	parts := termSplitRE.Split(strings.ToLower(s), -1)
+	parts := termSplitRE.Split(s, -1)
 	terms := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if p != "" {
@@ -78,6 +82,112 @@ func tokenizeTerms(s string) []string {
 		}
 	}
 	return terms
+}
+
+// tokenizeTerms lower-cases s and splits it into its non-empty alphanumeric terms via
+// splitTerms/termSplitRE. Returns nil for a string with no alphanumeric content (including
+// the empty string) -- callers must treat a nil/empty term list as "no terms", not an
+// error. Used only for scoring (termOverlapScore/rankCandidates), where case-insensitive
+// comparison is correct; see splitTerms' doc comment for why candidatePool's PrefixScan
+// term assembly deliberately does NOT go through this case-folding step.
+func tokenizeTerms(s string) []string {
+	return splitTerms(strings.ToLower(s))
+}
+
+// perTermPoolCap bounds how many btree.PrefixScan entries a single query term may
+// contribute to candidatePool's merged pool (task 4.5.9.2, issue #47). btree.PrefixScan
+// itself has no per-call result limit (engine/btree/scan.go returns every matching entry),
+// and candidatePool now issues one PrefixScan per query term instead of the pre-4.5.9.2
+// single first-token scan -- without a bound, a query containing several common short
+// terms could multiply an already-uncapped single-scan cost by the term count. 500 is a
+// deliberately conservative, cheap-to-compute safety valve: real single-term queries (the
+// pre-existing, still-most-common case) are expected to stay far under this in practice,
+// so it should not visibly change behavior for them, while it caps worst-case fan-out cost
+// for a pathological multi-term query. This bound is applied to EACH term's own scan
+// result (first perTermPoolCap entries in PrefixScan's ascending sorted-path order) before
+// merging -- it is independent of, and applied strictly before, SearchCandidates'
+// (server.go) existing max_results cap, which is applied to the final RANKED output, not
+// to pool assembly.
+const perTermPoolCap = 500
+
+// mergedPoolCap bounds the total size of candidatePool's deduplicated, cross-term merged
+// pool before it is handed to rankCandidates (task 4.5.9.2, issue #47). Even with
+// perTermPoolCap limiting each individual term's contribution, a query with many distinct
+// terms could still merge into a pool of unbounded size; mergedPoolCap is a second,
+// coarser safety valve capping the merge's total growth. 2000 is chosen as a generous
+// multiple of perTermPoolCap (accommodating several dozen distinct query terms' worth of
+// non-overlapping matches before truncating) -- large enough that no realistic
+// natural-language query (a handful to a few dozen terms) should ever hit it, while still
+// bounding worst-case cost for a pathological input.
+const mergedPoolCap = 2000
+
+// candidatePool assembles SearchCandidates' (server.go) candidate pool for query: it
+// splits query into terms (splitTerms, NOT tokenizeTerms -- see splitTerms' doc comment
+// for why case must be preserved here), issues one btree.PrefixScan per term, and merges
+// the resulting ScanEntry pools into a single slice, deduplicated by FileID (falling back
+// to Path if two entries somehow share FileID but differ in Path, or vice versa), in
+// first-seen order across terms in split order. This is task 4.5.9.2's (issue #47)
+// implementation of the option-(b) strategy decided and documented in subtask 4.5.9.1
+// (docs/LLD/query-agent.md, docs/LLD/btree.md "Known risks"): rankCandidates itself is
+// completely unmodified by this change, since it already scores each candidate against the
+// FULL query term set regardless of which scan produced it -- only pool ASSEMBLY changes.
+//
+// A query with zero terms (splitTerms(query) == nil, e.g. the empty string) is a special
+// case handled separately: candidatePool issues exactly one btree.PrefixScan with prefix
+// "", returning the FULL uncapped pool. This preserves byte-for-byte the pre-4.5.9.2
+// behavior for agents/ingestion/shortlist.py's existing query="" pool-retrieval usage
+// (task-3.4.2), which depends on receiving the entire tree's contents (subject only to
+// SearchCandidates' max_results, applied after rankCandidates' no-op empty-query scoring)
+// for its own local BM25 re-ranking -- neither perTermPoolCap nor mergedPoolCap apply to
+// this case, since it is not a multi-term fan-out and was already unbounded before this
+// change.
+func candidatePool(store *btree.NodeStore, rootNodeID uint64, query string) ([]btree.ScanEntry, error) {
+	terms := splitTerms(query)
+	if len(terms) == 0 {
+		// Zero terms includes not just query == "" but any query with no alphanumeric
+		// content (e.g. all-whitespace or all-punctuation) -- the pre-4.5.9.2 prefixTerm
+		// helper collapsed both of those to "" (strings.Fields returns none), so this
+		// scans with the literal empty prefix "" (not the raw query string) to match that
+		// exact prior behavior, not just the query == "" case.
+		return btree.PrefixScan(store, rootNodeID, "")
+	}
+
+	seenFileID := make(map[uint64]struct{})
+	seenPath := make(map[string]struct{})
+	merged := make([]btree.ScanEntry, 0, len(terms))
+
+	for _, term := range terms {
+		if len(merged) >= mergedPoolCap {
+			break
+		}
+
+		entries, err := btree.PrefixScan(store, rootNodeID, term)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(entries) > perTermPoolCap {
+			entries = entries[:perTermPoolCap]
+		}
+
+		for _, e := range entries {
+			if _, ok := seenFileID[e.FileID]; ok {
+				continue
+			}
+			if _, ok := seenPath[e.Path]; ok {
+				continue
+			}
+			seenFileID[e.FileID] = struct{}{}
+			seenPath[e.Path] = struct{}{}
+			merged = append(merged, e)
+
+			if len(merged) >= mergedPoolCap {
+				break
+			}
+		}
+	}
+
+	return merged, nil
 }
 
 // termOverlapScore computes a simple term-overlap relevance score for one candidate path

@@ -312,24 +312,29 @@ func (s *Server) GraphNeighbors(ctx context.Context, req *hivemindv1.GraphNeighb
 }
 
 // SearchCandidates performs a non-LLM candidate topic search, delegating to
-// engine/btree.PrefixScan and then ranking the matches by simple term-overlap relevance
-// (task-4.2.1, GitHub issue #21). The issue's acceptance criteria names "btree" as
-// SearchCandidates' delegation target; PrefixScan is the only query-shaped read primitive
-// btree exposes (Lookup is exact-match only), so req.Query cannot be treated as a
-// general/fuzzy multi-term query for the PrefixScan call itself. Instead:
-//   - the btree pool is selected via PrefixScan using only prefixTerm(req.GetQuery())
-//     (search_candidates.go) -- req.Query's FIRST whitespace-separated token -- as the
-//     literal string prefix. This is fully backward compatible with task-3.2.2's original
-//     single-token-query usage (a query with no whitespace is its own only token, so
-//     prefixTerm is the identity function for every pre-existing caller, including
-//     agents/ingestion/shortlist.py's query="" pool-retrieval usage);
+// engine/btree.PrefixScan (via candidatePool, search_candidates.go) and then ranking the
+// matches by simple term-overlap relevance (task-4.2.1, GitHub issue #21). The issue's
+// acceptance criteria names "btree" as SearchCandidates' delegation target; PrefixScan is
+// the only query-shaped read primitive btree exposes (Lookup is exact-match only), so
+// req.Query cannot be treated as a general/fuzzy multi-term query for a single PrefixScan
+// call. Instead (task 4.5.9.2, issue #47, superseding 4.2.1's original single-first-token
+// pool selection -- see docs/LLD/query-agent.md / docs/LLD/btree.md "Known risks" for the
+// full decision history, subtasks 4.5.9.1-4.5.9.2):
+//   - the btree pool is assembled by candidatePool (search_candidates.go): one PrefixScan
+//     per term of req.Query (split via splitTerms, the same non-alphanumeric-run
+//     convention rankCandidates' tokenizeTerms uses for scoring), merged and deduplicated
+//     by FileID/Path, bounded by perTermPoolCap/mergedPoolCap to avoid an unbounded-cost
+//     fan-out for queries with many terms. A zero-term query (e.g. "") is a special case
+//     scanning the literal empty prefix once, unbounded -- fully backward compatible with
+//     task-3.2.2's original single-token-query usage and agents/ingestion/shortlist.py's
+//     query="" pool-retrieval usage (task-3.4.2), neither of which this change affects;
 //   - the FULL req.Query string (all its terms, not just the first) is tokenized and used
-//     to rank the resulting PrefixScan matches, via rankCandidates (search_candidates.go).
-//     This lets a genuinely multi-term query (e.g. "graph database") both select a
-//     literal-prefix-filtered pool (via its first term) AND rank that pool by how many of
-//     its OTHER terms also appear in each match's path -- the "term-overlap ranking" the
-//     issue's acceptance criteria asks for, without requiring btree to support anything
-//     beyond the single prefix-scan primitive it already has.
+//     to rank the resulting merged pool, via rankCandidates (search_candidates.go,
+//     unmodified by 4.5.9.2). This lets a genuinely multi-term natural-language query
+//     (e.g. "how do I configure the graph database") both select a pool covering EVERY
+//     term (not just the first) AND rank that pool by term-overlap against each match's
+//     path -- the "term-overlap ranking" the issue's acceptance criteria asks for, without
+//     requiring btree to support anything beyond the prefix-scan primitive it already has.
 //
 // See search_candidates.go's package doc comment for why term-overlap-against-path-tokens
 // is the only ranking signal available at this layer (engine/btree carries no other
@@ -355,7 +360,7 @@ func (s *Server) SearchCandidates(ctx context.Context, req *hivemindv1.SearchCan
 		return nil, status.Errorf(codes.InvalidArgument, "rpc: SearchCandidates: max_results %d must be >= 0", maxResults)
 	}
 
-	entries, err := btree.PrefixScan(s.btreeStore, s.btreeRootNodeID, prefixTerm(req.GetQuery()))
+	entries, err := candidatePool(s.btreeStore, s.btreeRootNodeID, req.GetQuery())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "rpc: SearchCandidates: %v", err)
 	}

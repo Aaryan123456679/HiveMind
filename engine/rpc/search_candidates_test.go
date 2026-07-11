@@ -256,3 +256,75 @@ func TestSearchCandidates(t *testing.T) {
 		}
 	})
 }
+
+// TestSearchCandidatesMultiWordQuery is task 4.5.9.2's (issue #47) regression test,
+// following the issue's own literal test-spec pattern ("./engine/rpc/... -run
+// TestSearchCandidatesMultiWordQuery": multi-word query returns non-empty,
+// correctly-ranked results, including at least one path not prefix-matching the query's
+// first token). Before this subtask, SearchCandidates' pool selection used ONLY the
+// query's first whitespace token as a literal btree.PrefixScan prefix (prefixTerm,
+// removed by this change); a genuine natural-language query like "how do I configure the
+// graph database" prefix-scans on "how", which matches nothing, so the pre-4.5.9.2 pool
+// (and therefore the final result) would have been empty regardless of ranking.
+func TestSearchCandidatesMultiWordQuery(t *testing.T) {
+	f := newRankingFixture(t, []string{
+		"graph-database/handbook", // "graph" AND "database": 2 of the query's real terms
+		"graph-theory/intro",      // "graph" only: 1 of the query's real terms
+		"database-design/notes",   // "database" only, and does NOT prefix-match "graph"
+		// -- proving the merged pool includes a match found via a
+		// non-first, non-"graph" scan term, not just the first-token-prefix-matching set.
+		"unrelated/other", // matches none of the query's real terms; must not appear.
+	})
+
+	resp, err := f.srv.SearchCandidates(context.Background(), &hivemindv1.SearchCandidatesRequest{
+		Query: "how do I configure the graph database",
+	})
+	if err != nil {
+		t.Fatalf("SearchCandidates: %v", err)
+	}
+
+	got := resp.GetCandidates()
+	if len(got) == 0 {
+		t.Fatalf("SearchCandidates: got 0 candidates for multi-word query, want > 0 (pre-4.5.9.2 first-token-only pool selection would have returned 0 here)")
+	}
+
+	paths := candidatePaths(got)
+	for _, want := range []string{"graph-database/handbook", "graph-theory/intro", "database-design/notes"} {
+		found := false
+		for _, p := range paths {
+			if p == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("SearchCandidates: candidates %v missing expected path %q", paths, want)
+		}
+	}
+	for _, p := range paths {
+		if p == "unrelated/other" {
+			t.Fatalf("SearchCandidates: candidates %v unexpectedly include %q, which matches none of the query's real terms", paths, p)
+		}
+	}
+
+	if got[0].GetPath() != "graph-database/handbook" {
+		t.Fatalf("SearchCandidates: top-ranked result = %q, want %q (matches both \"graph\" and \"database\", the highest term-overlap)", got[0].GetPath(), "graph-database/handbook")
+	}
+	if !(got[0].GetScore() > got[1].GetScore() && got[0].GetScore() > got[2].GetScore()) {
+		t.Fatalf("SearchCandidates: top result score %v not strictly greater than the other two (%v, %v)", got[0].GetScore(), got[1].GetScore(), got[2].GetScore())
+	}
+
+	// database-design/notes does not prefix-match "graph" (the query's first REAL/
+	// content term once stopword-like leading terms "how do I configure the" are
+	// skipped) -- it is only found via the "database" PrefixScan, proving the merge
+	// covers a term other than the pool-dominant one, not merely the first matching term.
+	foundNonGraphPrefixed := false
+	for _, p := range paths {
+		if p == "database-design/notes" {
+			foundNonGraphPrefixed = true
+		}
+	}
+	if !foundNonGraphPrefixed {
+		t.Fatalf("SearchCandidates: candidates %v missing %q (a path found only via a non-\"graph\" scan term)", paths, "database-design/notes")
+	}
+}
