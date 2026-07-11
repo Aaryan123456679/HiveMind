@@ -127,6 +127,14 @@ DEFAULT_CORPUS_DIR = DEFAULT_MANIFEST_PATH.parent
 #: `llm.interceptor._FREE_PROVIDERS`/`cost_latency._FREE_LOCAL_PROVIDERS`'s own convention.
 _FREE_PROVIDERS = frozenset({"ollama"})
 
+#: Local Ollama model used for every non-judge call (retrieval, final-answer generation,
+#: graphrag_lite). `llm.ollama_client.DEFAULT_MODEL` (`llama3.1:8b`) is a much larger model
+#: whose load/swap time under Ollama's single-model-server proxy was observed empirically to
+#: make the transient /api/generate 404 (see ResilientLLMClient) far more likely to outlast the
+#: retry budget. `mistral:latest` was validated as reliably fast and JSON-compliant enough for
+#: this corpus's queries in isolated pre-integration testing.
+_LOCAL_OLLAMA_MODEL = "mistral:latest"
+
 #: Retry budget for `ResilientLLMClient` -- see constraint (c) in the module docstring.
 _RESILIENT_MAX_ATTEMPTS = 5
 #: Temperature used on retry attempts (attempt index >= 1), per constraint (c).
@@ -529,6 +537,16 @@ def _build_judge_config(
     The judge client itself (`judge_llm_client`) is **never** wrapped in `ResilientLLMClient` --
     see module docstring's constraint (d) and `test_run_live_benchmark.py`'s
     `test_judge_client_never_wrapped_in_resilient_client`.
+
+    `JudgeConfig.model` is documented as forwarded to *both* the final-answer call
+    (`final_answer_llm_client`, always the local Ollama client here) and the judge call
+    (`judge_llm_client`, the possibly-paid provider). `judge_model` is only ever a name in the
+    judge provider's own model space (e.g. `openai/gpt-4o-mini`), so it must never be set as
+    `JudgeConfig.model` -- doing so forwards a paid-provider model name straight into the local
+    Ollama client's `complete(model=...)`, which 404s deterministically on every call and every
+    retry (confirmed via a live run). Each client already carries its own correct model from
+    construction (`_LOCAL_OLLAMA_MODEL` here, `judge_model` via `judge_kwargs` below), so
+    `JudgeConfig.model` is left `None` and both calls fall back to their own client's default.
     """
     judge_kwargs: dict[str, object] = {}
     if judge_model is not None:
@@ -541,7 +559,7 @@ def _build_judge_config(
         judge_llm_client=judge_llm_client,
         interceptor=interceptor,
         provider=judge_provider,
-        model=judge_model,
+        model=None,
     )
     return judge_config, interceptor
 
@@ -604,9 +622,15 @@ def main(argv: list[str] | None = None) -> None:
 
     # Every non-judge LLM call in this run is local/free Ollama, wrapped for resilience against
     # occasional non-bare-JSON output (constraint (c)) -- never the judge client (constraint (d)).
-    retrieval_llm_client: LLMClient = ResilientLLMClient(create_llm_client(provider="ollama"))
-    final_answer_llm_client: LLMClient = ResilientLLMClient(create_llm_client(provider="ollama"))
-    graphrag_llm_client: LLMClient = ResilientLLMClient(create_llm_client(provider="ollama"))
+    retrieval_llm_client: LLMClient = ResilientLLMClient(
+        create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
+    )
+    final_answer_llm_client: LLMClient = ResilientLLMClient(
+        create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
+    )
+    graphrag_llm_client: LLMClient = ResilientLLMClient(
+        create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
+    )
     embed_client = OllamaEmbeddingClient()
 
     hivemind_retriever = LiveHivemindRetriever(
