@@ -1,0 +1,26 @@
+{
+  "subtask": "4.5.4.2",
+  "checks": [
+    {
+      "check": "gofmt -l engine/wal/",
+      "result": "clean (no output)"
+    },
+    {
+      "check": "go vet ./engine/wal/...",
+      "result": "clean (no output)"
+    },
+    {
+      "check": "go test ./engine/wal/... -race -v",
+      "result": "PASS — all tests passed, no failures (TestCheckpointManifest, TestRecordEncodeDecodeRoundTrip incl. SplitCommit subtests, TestFsyncBeforeApply, TestAppendAndApplyErrorFromApply, TestAppendAndApplyWriterErrorSkipsApply, TestRecoveryReplay*, TestCrashInjectionRecovery*, TestReplayCRCCorruption, TestSegmentWriter, TestOpenWriterResume*, etc.)"
+    },
+    {
+      "check": "grep -n \"fsync-before-apply write path\" engine/wal/record.go",
+      "result": "exactly one match (line 486, header immediately preceding the real func AppendAndApply doc comment at line 488 / function at line 514) — orphaned duplicate confirmed removed"
+    },
+    {
+      "check": "scope isolation — only engine/wal/record.go and this run's .cdr artifacts touched",
+      "result": "confirmed via git status/diff before staging (see handoff.json)"
+    }
+  ],
+  "note": "This is internal sanity only (build green + matrix covered), NOT independent verification. Verification is deferred to /cdr:verify per invariant I4."
+}

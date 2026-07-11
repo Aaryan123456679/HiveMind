@@ -339,34 +339,6 @@ func (t TypedRecord) AsBTreeDelete() (BTreeDeletePayload, error) {
 	return DecodeBTreeDeletePayload(t.Payload)
 }
 
-// --- fsync-before-apply write path ---
-
-// AppendAndApply is this package's fsync-before-apply write path: it encodes
-// rec, durably appends it to w (via Writer.Append, which — per subtask
-// 1.3.1 — does not return until the record has been fsynced to disk), and
-// ONLY THEN invokes apply.
-//
-// This is a structural guarantee, not just a documented convention: the WAL
-// package itself, not the caller, decides when apply runs, so a call site
-// cannot accidentally mutate catalog/index state before the corresponding
-// WAL record is durable. This directly implements docs/LLD/wal.md's
-// invariant ("every mutation to the catalog or any index must be logged in
-// the WAL before it is applied in memory or on disk").
-//
-// Error handling:
-//   - If encoding or the underlying Writer.Append fails, apply is never
-//     called, and the error is returned with a zero offset. Nothing was
-//     durably logged, so nothing should be applied.
-//   - If Writer.Append succeeds but apply returns an error, AppendAndApply
-//     still returns the (non-zero, valid) offset alongside the wrapped
-//     error. This is deliberate: the mutation's intent is already safely
-//     and durably persisted in the WAL at that point, regardless of whether
-//     the in-memory/on-disk apply step succeeded. A failed apply does not
-//     un-happen the durable log write — it is exactly the scenario subtask
-//     1.3.4's recovery replay exists to reconcile (replaying the logged
-//     mutation again on next startup), so callers should treat an apply
-//     error here as "retry or recover the apply step," not as license to
-//     also roll back or ignore the WAL record.
 // --- SplitCommit ---
 
 // SplitCommitEntry is one (NewPath, FileID, SizeBytes) triple produced by an
