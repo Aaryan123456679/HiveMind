@@ -21,6 +21,10 @@ TESTDATA_DIR = Path(__file__).parent / "testdata"
 FIXTURE_1 = TESTDATA_DIR / "enron_sample_1.txt"
 FIXTURE_2_REPLY = TESTDATA_DIR / "enron_sample_2_reply.txt"
 FIXTURE_3_MINIMAL = TESTDATA_DIR / "enron_sample_3_no_optional_headers.txt"
+FIXTURE_4_MULTIPART = TESTDATA_DIR / "enron_sample_4_multipart.txt"
+FIXTURE_5_QUOTED_PRINTABLE = TESTDATA_DIR / "enron_sample_5_quoted_printable.txt"
+FIXTURE_6_DISPLAY_NAME_FROM = TESTDATA_DIR / "enron_sample_6_display_name_from.txt"
+FIXTURE_7_MULTI_CC = TESTDATA_DIR / "enron_sample_7_multi_cc.txt"
 
 
 def test_sender_extracted() -> None:
@@ -80,3 +84,46 @@ def test_normalize_email_raises_on_nonexistent_path(tmp_path: Path) -> None:
     missing_path = tmp_path / "does-not-exist.txt"
     with pytest.raises(OSError):
         normalize_email(missing_path)
+
+
+def test_multipart_body_extracts_plain_text_part() -> None:
+    # FIXTURE_4 is multipart/alternative with a text/plain part first and a
+    # text/html part second -- get_body(preferencelist=("plain",)) must pick the
+    # plain-text part's content, not the HTML part's.
+    fields = normalize_email(FIXTURE_4_MULTIPART)
+    assert "Here is the draft Q3 forecast" in fields.body
+    assert "<html>" not in fields.body
+    assert "HTML copy" not in fields.body
+    assert fields.sender == "phillip.allen@enron.com"
+
+
+def test_quoted_printable_body_is_decoded() -> None:
+    # FIXTURE_5 declares Content-Transfer-Encoding: quoted-printable, with an
+    # encoded em dash (=E2=80=94) and a soft line break (trailing "="). The decoded
+    # body must contain the literal em dash and the soft-broken line rejoined, not
+    # the raw quoted-printable escapes.
+    fields = normalize_email(FIXTURE_5_QUOTED_PRINTABLE)
+    assert "—" in fields.body
+    assert "=E2=80=94" not in fields.body
+    assert "=\n" not in fields.body
+    assert "know if anything shifts" in fields.body
+
+
+def test_display_name_from_extracts_bare_address() -> None:
+    # FIXTURE_6's From header is `"Allen, Phillip K." <phillip.allen@enron.com>`
+    # -- a quoted display name containing a comma, a case parseaddr must still
+    # resolve to the bare address rather than leaking the display name/comma.
+    fields = normalize_email(FIXTURE_6_DISPLAY_NAME_FROM)
+    assert fields.sender == "phillip.allen@enron.com"
+    assert "Allen" not in fields.sender
+
+
+def test_multi_cc_addresses_does_not_break_parsing() -> None:
+    # FIXTURE_7's Cc header has three comma-separated addresses (one with a quoted
+    # display name containing a comma). EmailFields does not expose a `cc` field,
+    # but parsing must not raise or corrupt any other extracted field.
+    fields = normalize_email(FIXTURE_7_MULTI_CC)
+    assert isinstance(fields, EmailFields)
+    assert fields.sender == "john.lavorato@enron.com"
+    assert fields.subject == "Regional split follow-up"
+    assert "Looping in Sally, Steven, and Mark" in fields.body

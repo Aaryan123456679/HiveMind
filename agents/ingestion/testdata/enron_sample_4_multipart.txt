@@ -1,0 +1,31 @@
+Message-ID: <5512309.1075855378443.JavaMail.evans@thyme>
+Date: Thu, 17 May 2001 10:20:00 -0700 (PDT)
+From: phillip.allen@enron.com
+To: john.lavorato@enron.com
+Subject: Q3 forecast draft
+Cc:
+Bcc:
+X-From: Phillip K Allen
+X-To: John J Lavorato
+X-cc:
+X-bcc:
+X-Folder: \Phillip_Allen_Dec2000\Notes Folders\All documents
+X-Origin: Allen-P
+X-FileName: pallen.nsf
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="====boundary1234===="
+
+--====boundary1234====
+Content-Type: text/plain; charset="us-ascii"
+
+John,
+
+Here is the draft Q3 forecast. Let me know your thoughts before Friday.
+
+Phillip
+--====boundary1234====
+Content-Type: text/html; charset="us-ascii"
+
+<html><body><p>John,</p><p>Here is the draft Q3 forecast (HTML copy, should
+not be picked over the plain-text part above).</p><p>Phillip</p></body></html>
+--====boundary1234====--
