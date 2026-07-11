@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "run_id": "040-verification",
+  "subtask": "4.5.11.3",
+  "issue": 49,
+  "verdict": "PASS_WITH_COMMENTS",
+  "pointers": {
+    "verification_doc": ".cdr/runs/2026-07-11/040-verification/verification.json",
+    "guard_read_path": "engine/graph/csr.go lines 101-112 (decodeCSREdge), 279-285 (LoadCSR's per-edge decode+error-propagate loop)",
+    "guard_write_path": "engine/graph/csr.go lines 174-179 (WriteCSR)",
+    "convention_reference": "engine/graph/edge_append.go lines 132-151 (decodeEdge)",
+    "shared_validator": "engine/graph/edge.go line 27 (ValidEdgeType)",
+    "new_test": "engine/graph/csr_test.go TestLoadCSRRejectsUnknownEdgeType (line 176)",
+    "mutation_test_performed": "manually removed decodeCSREdge's ValidEdgeType check, reran test (failed as expected), restored file, confirmed git status clean"
+  },
+  "index_entries_appended": ["task.jsonl:task-4.5.11.3", "regression.jsonl: 3 entries (verification-summary, coverage-gap, issue-closure-assessment)"],
+  "issue_49_final_status": "all 3 subtasks (4.5.11.1, 4.5.11.2, 4.5.11.3) verified PASS_WITH_COMMENTS, no blocking findings, issue closeable"
+}

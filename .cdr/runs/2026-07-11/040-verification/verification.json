@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "run_id": "040-verification",
+  "subtask": "4.5.11.3",
+  "issue": 49,
+  "commits_reviewed": ["69fa26e", "a5b3bd7"],
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Independently re-derived and confirmed the implementer's claim: engine/graph/csr.go's decodeCSREdge (called by LoadCSR per-edge) already invokes ValidEdgeType (engine/graph/edge.go, from subtask 3.1.4) and returns an explicit, wrapped error on an out-of-range EdgeType byte -- it does not silently decode or skip. WriteCSR independently refuses to persist an invalid EdgeType before ever touching disk. This matches edge_append.go's decodeEdge convention (explicit error, same message style 'graph: decoded ... invalid type %d', though decodeEdge's valid set is intentionally narrower: SplitSibling/Redirect only, per edge.go's documented scope note). The only diff is the new exact-named test TestLoadCSRRejectsUnknownEdgeType in csr_test.go, which is correct and non-vacuous.",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "csr.go lines 101-112 (decodeCSREdge) and 174-179 (WriteCSR) both gate on ValidEdgeType; LoadCSR (line 228) calls decodeCSREdge per edge (line 279) and propagates its error wrapped with file path and edge index (line 281). Confirmed by direct read of engine/graph/csr.go, not by trusting the implementer's commit message."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "Matches docs/LLD/graph.md-referenced edge_append.go decodeEdge convention: explicit fmt.Errorf on invalid type byte, no panic/recover, no silent default. Shared ValidEdgeType(edge.go) is the single source of truth for the 4-type set; decodeEdge in edge_append.go intentionally validates a narrower 2-type subset per edge.go's documented scope comment (SPLIT_SIBLING/REDIRECT only, since EdgeLog/edge_append.go is documented as a distinct, narrower mechanism) -- this is a real, not superficial, semantic difference from decodeCSREdge's 4-type check, but the *convention* (explicit-error-not-silent-decode) is genuinely shared, which is what the requirement asks to match."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "Diff is test-only (engine/graph/csr_test.go). Ran `go test ./engine/graph/... -run TestLoadCSRRejectsUnknownEdgeType -v` (PASS), `go test ./engine/graph/... -race` (PASS, cached and fresh via go clean -testcache), and `go test ./engine/... -race` across engine, btree, catalog, graph, mvcc, rpc, split, wal (all PASS, zero regressions). go vet and go build clean."
+    },
+    "test_coverage_and_correctness": {
+      "verdict": "pass_with_comment",
+      "evidence": "Verified the new test's mechanics line-by-line: it builds a real graph via BuildCSR/WriteCSR (so header/offsets/CRC come from the real code path), computes the on-disk offset of edge 0's Type byte correctly (csrHeaderSize + nodeCount*8 + (nodeCount+1)*8 + offCSREdgeType, matching encodeCSRPayload's layout exactly), patches it to sentinel 99, asserts ValidEdgeType(99)==false as a fixture self-check, and recomputes the payload CRC32 so the failure is attributable to the type-validation guard rather than the already-separately-tested CRC-mismatch path (TestCSRCorruptedPayloadDetected). MUTATION TEST PERFORMED: temporarily removed the `if !ValidEdgeType(e.Type) { return ... }` block from decodeCSREdge and reran the new test in isolation -- it failed as expected ('got nil error, want an explicit error'), confirming the test is not vacuously passing (not masked by the CRC check, not a false positive from an unrelated I/O error, not passing due to a recovered panic). File was restored and confirmed via git status (clean).",
+      "comment": "Minor, non-blocking coverage gap: the test only patches edge index 0 of a single-node, single-edge fixture, and only exercises decodeCSREdge indirectly via LoadCSR's end-to-end path (never calls decodeCSREdge directly, nor tests a non-zero edge index, nor a multi-node fixture where the corrupted edge is not the first one). This is consistent with the issue's test spec (which explicitly asks for a LoadCSR-level test), so it is not a deficiency relative to the acceptance criteria, but it does mean an off-by-one in the byte-offset arithmetic for edges beyond index 0 is not covered. Non-blocking."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "No new attack surface. The guard defends against an unrecognized on-disk byte value being silently treated as valid graph state, which is the correct posture for a second (now-real, per PutEdge/RPC server.go) write path into graph.dat."
+    },
+    "performance": {
+      "verdict": "pass",
+      "evidence": "No production code changed. Test uses t.TempDir(), single small graph, negligible runtime (0.01s)."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Test is well-commented, explains why the fixture must be hand-patched (WriteCSR already refuses invalid types) and how it's isolated from the CRC-mismatch test case. Comments are verbose/dense in this codebase's house style but accurate on inspection."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "All claims in the implementer's commit message were independently re-derived from source, not trusted: (1) guard pre-existed and is genuinely wired into the LoadCSR read path, not just WriteCSR's write path -- confirmed by reading the call chain LoadCSR->decodeCSREdge->ValidEdgeType; (2) convention match with edge_append.go's decodeEdge -- confirmed by reading both functions; (3) test genuinely exercises the guard and is not vacuous -- confirmed by manual mutation testing (guard removed -> test fails; guard restored -> test passes); (4) zero regressions -- confirmed via full engine/... -race suite, not by trusting a prior test-results claim in handoff.json."
+    },
+    "possible_improvements": [
+      "Add a direct unit test for decodeCSREdge itself (not just via LoadCSR) covering a non-first edge index and a multi-node fixture, to close the byte-offset-arithmetic coverage gap noted above.",
+      "Consider a shared 'decodeEdge convention' doc-comment or table-driven cross-check test asserting decodeCSREdge's 4-type set and edge_append.go's decodeEdge 2-type subset are both derived correctly from ValidEdgeType / the documented narrower scope, to prevent future drift if a 5th EdgeType is ever added and only one of the two decoders is updated."
+    ]
+  },
+  "issue_49_overall_assessment": {
+    "verdict": "all_3_subtasks_genuinely_complete",
+    "evidence": "4.5.11.1 (data-loss fix, commit 2e415e5) and 4.5.11.2 (lock-ordering fix, commit 0ed8461) are both recorded in .cdr/index/task.jsonl as verified PASS_WITH_COMMENTS (task-4.5.11.1, task-4.5.11.2), each with non-blocking findings only (per regression.jsonl compressed entries bef47d5731be / fd207ba9e4d5, not re-litigated here since this run's scope is 4.5.11.3, but neither was flagged CHANGES_REQUESTED or FAIL, and no blocking finding from either was noted as still-open in this run's context bundle). 4.5.11.3 (this run) is now independently confirmed PASS_WITH_COMMENTS: the required guard exists and works on the read path, and the required exact-named regression test now exists, passes, and is non-vacuous per manual mutation testing. No blocking issues remain across the 3 subtasks; issue #49 is verifiably complete as a whole, modulo the accumulated non-blocking comments across all 3 verification runs which should be tracked (not necessarily resolved) before closing the GitHub issue."
+  },
+  "regression_entries_appended": ["task-4.5.11.3"],
+  "untrusted_content_disclosure": "No embedded fake system-reminder-style text, fake date-change notices, or fake tool-instruction blocks were found in the issue #49 subtask 4.5.11.3 text, the two commit messages (69fa26e, a5b3bd7), or the source files reviewed (csr.go, csr_test.go, edge.go, edge_append.go). Nothing to disclose for this subtask."
+}

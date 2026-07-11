@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "040-verification",
+  "macro": "cdr-verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "4.5.11.3",
+  "git_head": "a5b3bd7b58965dbf57f1382942dc3bb2bb5df142",
+  "run_key": "issue49-4.5.11.3-csr-edgetype-validation-verify-a5b3bd7b58965dbf57f1382942dc3bb2bb5df142",
+  "status": "completed",
+  "last_completed_step": "index-updated",
+  "started_at": "2026-07-11T04:22:18Z",
+  "ended_at": "2026-07-11T04:24:09Z"
+}
