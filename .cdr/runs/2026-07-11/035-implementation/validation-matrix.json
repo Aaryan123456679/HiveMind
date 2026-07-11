@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.5.11.1",
+  "rows": [
+    {
+      "scenario": "AppendEdge(w=3) -> Compact (fully successful) -> AppendEdge(w=5) -> Compact again",
+      "expected": "Second Compact's LoadCSR shows Weight=8 (3+5) for the EdgeEntityCooccur edge, not 3; edge is not lost",
+      "covered_by": "TestCompactNormalTruncateThenAppendThenCompactAgain (new, exact issue-mandated name)",
+      "also_covered_by": "TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost (pre-existing, same scenario plus a third round-trip)",
+      "status": "pass"
+    },
+    {
+      "scenario": "Segment numbering never reused across TruncateNode calls (repeated append/compact cycles on same node)",
+      "expected": "wal.WriteSegmentFloor monotonically advances; no collision with stale compact-state sidecar entries",
+      "covered_by": "TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost's third round-trip; TestTruncateNode",
+      "status": "pass (pre-existing, unmodified)"
+    },
+    {
+      "scenario": "Crash-injected truncate failure retry (F1, distinct from F2 covered here)",
+      "expected": "No double-counting of EdgeEntityCooccur weight on retry",
+      "covered_by": "TestCompaction_RetryAfterTruncateFailureDoesNotDoubleCountWeight, TestCompaction_FailedTruncateRetryThenOrdinarySubsequentAppendsSurvive",
+      "status": "pass (pre-existing, unmodified, out of scope for this subtask but re-run as regression gate)"
+    },
+    {
+      "scenario": "Full engine/graph package suite",
+      "expected": "All tests green under -race",
+      "covered_by": "go test ./engine/graph/... -race -v",
+      "status": "pass"
+    },
+    {
+      "scenario": "Full engine module suite (cross-package regression check: wal, catalog, split, etc.)",
+      "expected": "All tests green under -race",
+      "covered_by": "go test ./... -race (run from engine/ module)",
+      "status": "pass"
+    }
+  ],
+  "out_of_scope_explicitly_not_tested": [
+    "4.5.11.2 lock-ordering race between ReadNodeAfter/TruncateNode and concurrent AppendEdge",
+    "4.5.11.3 EdgeType validation guard in LoadCSR/decodeCSREdge"
+  ]
+}

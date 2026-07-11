@@ -566,6 +566,103 @@ func TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost(t *testing.T)
 	assertNeighbors(t, reloaded3.Neighbors(source), want3)
 }
 
+// TestCompactNormalTruncateThenAppendThenCompactAgain is the exact-named
+// regression test required by issue #49's subtask 4.5.11.1 test spec
+// (`go test ./engine/graph/... -run
+// TestCompactNormalTruncateThenAppendThenCompactAgain`), pinned to the issue's
+// own worked repro: append an edge, run a fully successful (no
+// failure-injected) Compact, append a second edge to the SAME node, and
+// Compact again. Before the fix landed in commit ed57468 (see
+// EdgeLog.TruncateNode's doc comment, "Segment numbering must never be
+// reused after a successful truncation"), TruncateNode fully removed the
+// node's per-node edge-log directory after the first Compact, so
+// wal.OpenWriter's next AppendEdge for that node restarted segment
+// numbering at 0 - the exact segment number compact.go's compact-state
+// sidecar had already durably recorded as "already folded into graph.dat"
+// for this node. The second Compact then silently skipped that reused
+// segment as already-accounted-for, permanently discarding the second edge
+// with no crash or failure injection anywhere in the sequence: LoadCSR
+// would show Weight=3 (only the first edge), not 3+5=8, and the edge log
+// would be empty too - the edge existed nowhere. This test asserts that
+// outcome can no longer happen. It intentionally duplicates none of
+// TestCompaction_SecondAppendAfterSuccessfulCompactionIsNotLost's extra
+// third-round-trip coverage; it exists so the issue's literal acceptance
+// command finds a test by this precise name, independent of any other test.
+func TestCompactNormalTruncateThenAppendThenCompactAgain(t *testing.T) {
+	dir := t.TempDir()
+	graphPath := filepath.Join(dir, "graph.dat")
+	logRoot := filepath.Join(dir, "edgelogs")
+
+	l, err := OpenEdgeLog(logRoot)
+	if err != nil {
+		t.Fatalf("OpenEdgeLog: %v", err)
+	}
+	defer l.Close()
+
+	const source, target = 42, 4242
+
+	// AppendEdge(weight=3).
+	first := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 3, LastUpdated: 100}
+	if err := l.AppendEdge(source, first); err != nil {
+		t.Fatalf("AppendEdge #1 (weight=3): %v", err)
+	}
+
+	// Compact (fully successful - no failure injected anywhere in this test).
+	if _, err := Compact(graphPath, l); err != nil {
+		t.Fatalf("first Compact: unexpected error: %v", err)
+	}
+	afterFirst, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after first Compact: %v", err)
+	}
+	assertNeighbors(t, afterFirst.Neighbors(source), []CSREdge{first})
+
+	// The node's own edge log must have been truncated by the successful
+	// Compact above (durably reflected in graph.dat now).
+	loggedAfterFirst, err := l.ReadNode(source)
+	if err != nil {
+		t.Fatalf("ReadNode after first Compact: %v", err)
+	}
+	if len(loggedAfterFirst) != 0 {
+		t.Fatalf("expected node %d's edge log truncated to empty after successful Compact, got %+v", source, loggedAfterFirst)
+	}
+
+	// AppendEdge(weight=5) to the SAME node, on the ordinary happy path -
+	// no crash, no failure injection, nothing unusual about this second
+	// append at all.
+	second := CSREdge{Target: target, Type: EdgeEntityCooccur, Weight: 5, LastUpdated: 200}
+	if err := l.AppendEdge(source, second); err != nil {
+		t.Fatalf("AppendEdge #2 (weight=5): %v", err)
+	}
+
+	// Compact again.
+	if _, err := Compact(graphPath, l); err != nil {
+		t.Fatalf("second Compact: unexpected error: %v", err)
+	}
+	afterSecond, err := LoadCSR(graphPath)
+	if err != nil {
+		t.Fatalf("LoadCSR after second Compact: %v", err)
+	}
+
+	// The regression: on the buggy code this showed Weight=3 (the second
+	// edge silently lost), not 3+5=8.
+	want := []CSREdge{{Target: target, Type: EdgeEntityCooccur, Weight: 8, LastUpdated: 200}}
+	assertNeighbors(t, afterSecond.Neighbors(source), want)
+
+	// The regression also manifested as the edge existing nowhere at all
+	// (neither in graph.dat nor in the edge log) - explicitly confirm the
+	// edge log was, correctly, truncated again after this second successful
+	// Compact, so the surviving Weight=8 above is not an artifact of the
+	// edge log still separately holding the second edge uncompacted.
+	loggedAfterSecond, err := l.ReadNode(source)
+	if err != nil {
+		t.Fatalf("ReadNode after second Compact: %v", err)
+	}
+	if len(loggedAfterSecond) != 0 {
+		t.Fatalf("expected node %d's edge log truncated to empty after second successful Compact, got %+v", source, loggedAfterSecond)
+	}
+}
+
 // TestCompaction_FailedTruncateRetryThenOrdinarySubsequentAppendsSurvive
 // combines both fix cycles in one sequence, targeting the exact seam between
 // them: a failed-truncate retry cycle (F1's scenario) followed by normal,
