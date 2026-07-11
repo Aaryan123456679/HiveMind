@@ -442,6 +442,45 @@ func collectLeafTags(t *testing.T, cat *catalog.Catalog, cs *catalog.ContentStor
 // to be byte-identical to EITHER preSplitContent OR the exact redirect-stub
 // bytes ExecuteSplitAtomic writes (buildRedirectStubContent), never
 // anything else.
+//
+// Subtask 4.5.3.6 (issue #40) fix: the "reader observed post-split content
+// at least once" assertion previously relied on a sleep-based overlap
+// ASSUMPTION -- a fixed readerIterations * time.Sleep(10*time.Microsecond)
+// budget (~4ms, in practice stretched further by scheduling/GC/-race
+// instrumentation overhead) was assumed to be long enough to still be
+// looping by the time ExecuteSplitAtomic's redirect-stub rename lands. Under
+// load (CI contention, -race overhead) that assumption occasionally failed:
+// the reader's fixed loop could exhaust all its iterations before the
+// rename ever happened, observing ONLY preSplitContent across all reads and
+// tripping the "reader never observed post-split content" failure even
+// though nothing was actually broken -- the reported ~1-3% flake.
+//
+// Fixed by replacing the sleep-based timing assumption with a deterministic
+// synchronization barrier built on the package's existing atomicCommitHook
+// test-only seam (engine/split/execute.go, already used by
+// TestSplitAtomicCommit's crash-injection subtests; nil/no-op in
+// production, zero behavior change here beyond this test installing it for
+// its own duration): the hook is installed to close renamedCh at the
+// "before_commit_append" stage, which ExecuteSplitAtomic reaches only AFTER
+// its redirect-stub content file has already been durably written via the
+// same write-to-temp-then-atomic-rename technique as the rest of this
+// package (see writeNewContentFile) -- i.e. exactly the point after which
+// engine/catalog/content.go's ContentStore.Read (which reads
+// cs.ContentPath(fileID) directly off disk, gated only by cat.Get
+// succeeding, not by catalog Status -- see content.go's Read doc comment)
+// is guaranteed to observe the post-split stub bytes on every subsequent
+// call, forever (the content file never reverts). Once renamedCh closes,
+// this goroutine issues one more cs.Read(fileID) call directly and folds
+// it into the same reads slice the concurrent background reader appends
+// to: that read is deterministically sequenced (via channel receipt,
+// establishing happens-before) to occur strictly after the rename, so it
+// is GUARANTEED to observe expectedStub -- removing all dependence on
+// scheduler timing for the "observed post-split content at least once"
+// assertion. The concurrent background reader loop is retained unchanged
+// in spirit (it still runs throughout the real split window under -race)
+// but is no longer the sole, timing-dependent source of that assertion;
+// it continues to be exactly what proves the "never observe a torn read"
+// half of this test's contract, which was never the flaky half.
 func TestReaderDuringSplit(t *testing.T) {
 	idAlloc, cs, cat, w := newTestContentStoreDepsWithWAL(t)
 	tree := newTestBtree(t)
@@ -471,6 +510,29 @@ func TestReaderDuringSplit(t *testing.T) {
 		t.Fatalf("tree.Insert: %v", err)
 	}
 
+	// Deterministic barrier (subtask 4.5.3.6 / issue #40 fix): install the
+	// package's existing atomicCommitHook test seam (execute.go, nil/no-op
+	// in production; already used by TestSplitAtomicCommit's crash-injection
+	// subtests) to close renamedCh the moment ExecuteSplitAtomic reaches the
+	// "before_commit_append" stage -- which is only reached AFTER the
+	// redirect-stub content file has already been durably renamed onto disk
+	// (see execute.go's writeNewContentFile call immediately preceding that
+	// hook). From that instant on, cs.Read(fileID) is guaranteed to observe
+	// the post-split stub bytes on every call, forever (the on-disk content
+	// never reverts), since ContentStore.Read reads cs.ContentPath(fileID)
+	// directly and is gated only by cat.Get succeeding, not by catalog
+	// Status. Restored to nil (its production default) via defer so it
+	// cannot leak into any other test in this package.
+	renamedCh := make(chan struct{})
+	var renamedOnce sync.Once
+	atomicCommitHook = func(stage string) error {
+		if stage == "before_commit_append" {
+			renamedOnce.Do(func() { close(renamedCh) })
+		}
+		return nil
+	}
+	defer func() { atomicCommitHook = nil }()
+
 	// Long-running reader: repeatedly reads fileID's content directly
 	// through cs (the SAME ContentStore ExecuteSplitAtomic mutates)
 	// throughout the split window, recording a copy of every observed read.
@@ -478,15 +540,26 @@ func TestReaderDuringSplit(t *testing.T) {
 	// values happens AFTER the split completes (once RedirectTargetIDs is
 	// known, since the new fileID is allocated inside ExecuteSplitAtomic and
 	// cannot be predicted in advance) -- see the exact-match check below.
-	// Runs concurrently with the real split, under -race.
-	const readerIterations = 400
+	// Runs concurrently with the real split, under -race. Bounded by stopCh
+	// (signaled once the split has fully committed and the deterministic
+	// post-rename read below has been taken) rather than a fixed iteration
+	// count, so it keeps genuinely overlapping the split for as long as the
+	// split actually takes -- it is no longer the sole, timing-dependent
+	// source of the "observed post-split content" assertion (that is now
+	// guaranteed below via renamedCh), only of the "never observed a torn
+	// read" half of this test's contract. readerIterationCap is a defensive
+	// upper bound only (never expected to be hit in a working test/build);
+	// it exists solely so a bug in this test's own synchronization cannot
+	// spin CPU forever instead of failing loudly.
+	const readerIterationCap = 2_000_000
 	readerErrCh := make(chan error, 1)
 	readerDone := make(chan struct{})
+	stopCh := make(chan struct{})
 	var readsMu sync.Mutex
 	var reads [][]byte
 	go func() {
 		defer close(readerDone)
-		for i := 0; i < readerIterations; i++ {
+		for i := 0; i < readerIterationCap; i++ {
 			got, err := cs.Read(fileID)
 			if err != nil {
 				readerErrCh <- fmt.Errorf("cs.Read() iteration %d: %v", i, err)
@@ -496,6 +569,11 @@ func TestReaderDuringSplit(t *testing.T) {
 			readsMu.Lock()
 			reads = append(reads, gotCopy)
 			readsMu.Unlock()
+			select {
+			case <-stopCh:
+				return
+			default:
+			}
 			time.Sleep(10 * time.Microsecond)
 		}
 	}()
@@ -529,6 +607,30 @@ func TestReaderDuringSplit(t *testing.T) {
 	if err := <-splitDone; err != nil {
 		t.Fatalf("concurrent split failed: %v", err)
 	}
+
+	// The split has fully committed, which (per ExecuteSplitAtomic's own
+	// commit ordering) can only happen strictly after the
+	// "before_commit_append" hook fired, so renamedCh is already closed at
+	// this point; this receive is non-blocking in practice and exists only
+	// to make that happens-before relationship explicit in the code.
+	<-renamedCh
+
+	// Deterministic guaranteed-post-rename read: sequenced (via renamedCh's
+	// happens-before) strictly after the redirect-stub rename, so it is
+	// GUARANTEED to observe expectedStub regardless of any goroutine
+	// scheduling -- this is what removes the timing-dependent flake from
+	// the "reader observed post-split content at least once" assertion
+	// below. Folded into the same reads slice the background reader
+	// appends to, so it participates in the same exact-match validation.
+	if postRenameRead, err := cs.Read(fileID); err != nil {
+		t.Fatalf("cs.Read() after renamedCh closed: %v", err)
+	} else {
+		readsMu.Lock()
+		reads = append(reads, append([]byte(nil), postRenameRead...))
+		readsMu.Unlock()
+	}
+
+	close(stopCh)
 	<-readerDone
 	select {
 	case err := <-readerErrCh:

@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-069-implementation",
+  "subtask": "4.5.1.5",
+  "issue": 38,
+  "status": "completed",
+  "landed_commit": "e0804f23d00f974a48bff3fe3d0986fd21476a32",
+  "commit_attribution_anomaly": {
+    "description": "This run's changes (engine/btree/{delete.go,insert.go,delete_test.go,insert_test.go} plus this run's own .cdr/runs/2026-07-11/069-implementation/ directory) were staged via `git add` with explicit paths only, per this run's mandatory scope isolation. However, before this agent issued its own `git commit`, a concurrent background agent working in the SAME shared working tree/index (on an unrelated engine/catalog subtask, issue #42) ran its own `git add`+`git commit` and, because git's index is shared process-wide in this checkout, that commit (e0804f23d00f974a48bff3fe3d0986fd21476a32, message 'test(catalog): add concurrent Append-vs-Read -race test for no-torn-read guarantee') swept in this run's already-staged btree files (and this run's 069-implementation run directory, plus an unrelated 071-implementation directory belonging to that other agent) alongside its own catalog-only changes. This agent never itself ran `git commit`.",
+    "impact": "No data loss and no incorrect content: verified via `git diff HEAD -- engine/btree/...` (empty) and `git show e0804f2:engine/btree/{delete_test.go,insert_test.go}` (both new test functions present, byte-identical to what this agent authored). go build/go vet/go test -race all pass against the landed commit. The ONLY issue is git hygiene: the commit message/description at e0804f2 does not mention this subtask's btree changes at all, and unrelated work (catalog + two run directories from two different agents) is bundled into one commit instead of two separate, clearly-attributed commits.",
+    "action_taken": "Did not attempt any git reset/amend/rebase to split or relabel the already-made commit (explicitly disallowed by this run's instructions, and re-staging/re-committing in the same actively-contended shared index right now would risk repeating the same collision). Verified the landed state is correct and complete, then added only this handoff.json as a new, separate, low-risk commit documenting the anomaly for the record.",
+    "recommendation": "A human or a later docs-only CDR run may want to add a clarifying note (not a history rewrite) to the project's commit/task index that e0804f2 also contains subtask 4.5.1.5's (issue #38) btree regression tests and delete.go bugfix, for future git-archaeology clarity. No code action required."
+  },
+  "what_was_added": {
+    "engine/btree/delete_test.go": "TestRepairEmptyLeafOrphanRegression -- deterministic, hook-forced-interleaving regression test for repairEmptyLeafAtParent's orphan-guard (left sibling splits concurrently, not yet linked into parent)",
+    "engine/btree/insert_test.go": "TestSplitPublishLastOrderingRegression -- deterministic, hook-forced-interleaving regression test for the leaf/internal split publish-last write ordering",
+    "engine/btree/insert.go": "Two new nil-in-production test-only hooks: splitPublishHook, prePropagateHook (no logic change)",
+    "engine/btree/delete.go": "Bugfix: repairEmptyLeafAtParent's orphan-guard retry branch previously double-Unlock(leftID)'d and never unlocked leafID (leaked latch + guaranteed panic on next Lock/Unlock of either node) -- a previously-undetected bug discovered while writing the new regression test, present unchanged since commit b31328f. Fixed to unlock each of the three held latches (leftID, leafID, parentID) exactly once."
+  },
+  "test_only_vs_production_change": "Mostly test-only regression coverage for two already-shipped fixes (commit b31328f), PLUS one narrow, newly-discovered production bugfix in delete.go (see above) that was required because the new regression test would otherwise deterministically panic against the pre-existing (buggy) code.",
+  "validation": {
+    "targeted": "go test ./engine/btree/... -race -run 'TestRepairEmptyLeafOrphanRegression|TestSplitPublishLastOrderingRegression' -v -count=5 : all pass",
+    "full_package": "go test ./engine/btree/... -race -count=1 : pass (73.8s)",
+    "mutation_tested": "both new tests independently confirmed to fail/panic against a reverted (pre-fix) copy of the relevant code, then confirmed to pass again after restoring the exact original fix (verified byte-identical via diff)"
+  },
+  "not_verified_by_this_agent": "Per invariant I4, this agent does not verify its own work; delegated to /cdr:verify."
+}
