@@ -58,3 +58,6 @@
 {"path": "agents/llm/client.py", "module": "agents/llm", "features": ["llmclient-interface", "complete-with-usage", "tokenusage", "completionresult", "backward-compatible-complete"], "last_change_run": "2026-07-11-10025-implementation"}
 {"path": "agents/llm/openrouter_client.py", "module": "agents/llm", "features": ["openrouter-client", "usage-field-parsing", "complete-with-usage"], "last_change_run": "2026-07-11-10025-implementation"}
 {"path": "agents/llm/gemini_client.py", "module": "agents/llm", "features": ["gemini-client", "usagemetadata-field-parsing", "complete-with-usage"], "last_change_run": "2026-07-11-10025-implementation"}
+{"path": "agents/eval/llm_judge.py", "module": "agents/eval", "features": ["llm-judge-rubric-scoring", "score-answer", "score-arm-answers", "judgeerror-strict-parsing", "interceptor-routed"], "last_change_run": "2026-07-12-001-implementation"}
+{"path": "agents/eval/calibrate_judge.py", "module": "agents/eval", "features": ["manual-calibration-harness", "run-calibration", "calibration-report", "cli-boundary-deferred-client-construction"], "last_change_run": "2026-07-12-001-implementation"}
+{"path": "agents/eval/test_llm_judge.py", "module": "agents/eval", "features": ["llm-judge-tests", "judgeerror-malformed-input-tests", "calibration-harness-tests", "test"], "last_change_run": "2026-07-12-001-implementation"}
