@@ -3,6 +3,8 @@ package split
 import (
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/Aaryan123456679/HiveMind/engine/catalog"
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
@@ -61,13 +63,28 @@ var ErrUnexpectedStatus = errors.New("split: EndSplit: outcome must be StatusAct
 //     for whichever later subtask actually connects engine/split to
 //     engine/catalog's write path; issue #10's impacted-modules list for
 //     2b.1.3 is engine/split/orchestrate.go (+ its test) only.
-//   - Automatic recovery of a SPLITTING record abandoned by a crashed split
-//     holder (FileGuard's in-memory state does not survive a process
-//     restart, mirroring catalog.Catalog's own documented "empty index on
-//     load" gap) -- BeginSplit refuses to start a second split over an
-//     already-SPLITTING record (via its Status precondition check), which
-//     prevents a double-split, but does not time out or auto-revert a
-//     genuinely stuck record. That recovery story is explicitly deferred.
+//   - Cross-process-restart recovery of a SPLITTING record abandoned by a
+//     crashed split holder whose lease this same Orchestrator instance never
+//     recorded (FileGuard's in-memory state, and this Orchestrator's own
+//     in-memory lease bookkeeping, do not survive a process restart,
+//     mirroring catalog.Catalog's own documented "empty index on load" gap).
+//     Doing so would need a lease-start timestamp persisted on
+//     CatalogRecord itself, which is out of this subtask's file scope
+//     (engine/split/orchestrate.go only) and left as future work.
+//
+// Subtask 4.5.3.3 (issue #40) DOES add same-process lease/heartbeat-based
+// recovery: BeginSplit records a lease deadline (o.now() + o.leaseDuration)
+// each time it wins the guard and transitions a record to StatusSplitting.
+// If a later BeginSplit for the same fileID finds the guard still held past
+// that deadline, it treats the holder as abandoned (e.g. a goroutine that
+// panicked, or simply forgot, between BeginSplit and EndSplit/AbortSplit),
+// force-reverts the record back to StatusActive, releases the stale guard
+// hold, and retries as a fresh attempt -- see reclaimIfExpired below. This
+// prevents the previously-documented "blocks ErrAlreadySplitting forever"
+// failure mode for that case; it deliberately does NOT close the
+// cross-process-restart gap above, since without a persisted lease-start
+// timestamp there is nothing for a freshly-constructed Orchestrator to
+// compare its clock against.
 //
 // "Readers unaffected via MVCC" (the third acceptance criterion) requires no
 // new machinery in this file at all: engine/mvcc's Snapshot/NewSnapshot/Read
@@ -82,6 +99,80 @@ type Orchestrator struct {
 	guard *FileGuard
 	cat   *catalog.Catalog
 	w     *wal.Writer
+
+	// now is this Orchestrator's time source, used only for lease bookkeeping
+	// (subtask 4.5.3.3). Defaults to time.Now in NewOrchestrator, matching
+	// this repo's established "now func() time.Time, injectable via a
+	// functional Option" idiom (see engine/rpc/server.go's and
+	// engine/rpc/interceptor.go's own now fields) so tests can advance a
+	// fake clock deterministically instead of sleeping real wall-clock time.
+	now func() time.Time
+	// leaseDuration is how long a BeginSplit-held guard/StatusSplitting pair
+	// is allowed to remain outstanding before a later BeginSplit for the
+	// same fileID is entitled to treat it as abandoned and reclaim it (see
+	// reclaimIfExpired). Defaults to DefaultSplitLeaseDuration.
+	leaseDuration time.Duration
+
+	// mu guards leases below. Deliberately a separate mutex from
+	// FileGuard.mu (guard's own internal lock): lease bookkeeping is purely
+	// this Orchestrator's concern (see doc comment above on scope), and
+	// giving it its own lock keeps it independent of FileGuard's per-key
+	// registry/eviction locking, exactly as FileGuard itself is documented
+	// to be independent of Trigger's statelessness.
+	mu sync.Mutex
+	// leases maps a fileID currently held by a winning BeginSplit call (i.e.
+	// one for which EndSplit/AbortSplit has not yet been called) to the wall
+	// time after which that hold is considered abandoned. Entries are
+	// created in BeginSplit's success path, and removed either by a clean
+	// EndSplit/AbortSplit exit or by a later reclaimIfExpired call -- so, at
+	// steady state, this map holds at most one entry per fileID with a
+	// genuinely in-flight split, not one entry per fileID ever split
+	// (unlike the growth characteristic FileGuard.guards had before subtask
+	// 4.5.3.2's eviction fix; no analogous eviction policy is needed here
+	// because this map is already self-bounding by construction).
+	leases map[uint64]time.Time
+}
+
+// DefaultSplitLeaseDuration is the lease timeout NewOrchestrator applies when
+// no WithLeaseDuration Option is supplied. Chosen to be comfortably longer
+// than any legitimate split-execution window (issue #12's ExecuteSplitAtomic
+// commit path) while still being short enough that a genuinely abandoned
+// SPLITTING record does not block future BeginSplit calls indefinitely.
+// Callers with different requirements (e.g. tests wanting a short lease to
+// exercise reclaim deterministically via an injected clock, or production
+// callers with slower split executors) should override it with
+// WithLeaseDuration rather than relying on this specific value staying
+// fixed.
+const DefaultSplitLeaseDuration = 30 * time.Second
+
+// Option configures optional NewOrchestrator behavior, following this
+// repo's established functional-options idiom (see engine/rpc/interceptor.go's
+// Option/WithRecorder).
+type Option func(*Orchestrator)
+
+// WithClock overrides the Orchestrator's time source used for lease
+// bookkeeping (subtask 4.5.3.3). Intended for tests that need to advance
+// past a lease deadline deterministically without a real-time sleep; now
+// must not be nil.
+func WithClock(now func() time.Time) Option {
+	return func(o *Orchestrator) {
+		if now != nil {
+			o.now = now
+		}
+	}
+}
+
+// WithLeaseDuration overrides DefaultSplitLeaseDuration for this
+// Orchestrator's lease-based abandoned-SPLITTING recovery (subtask 4.5.3.3).
+// A non-positive d is ignored (leaving the default, or whatever was set by
+// an earlier Option, in place) rather than producing a lease that expires
+// immediately or in the past.
+func WithLeaseDuration(d time.Duration) Option {
+	return func(o *Orchestrator) {
+		if d > 0 {
+			o.leaseDuration = d
+		}
+	}
 }
 
 // NewOrchestrator constructs an Orchestrator over guard (the per-file CAS
@@ -93,7 +184,11 @@ type Orchestrator struct {
 // guard, cat, or w may be nil; NewOrchestrator returns an error rather than
 // panicking on invalid construction, matching this repo's convention (see
 // e.g. engine/catalog.OpenContentStore).
-func NewOrchestrator(guard *FileGuard, cat *catalog.Catalog, w *wal.Writer) (*Orchestrator, error) {
+//
+// opts may include WithClock and/or WithLeaseDuration to customize subtask
+// 4.5.3.3's lease-based abandoned-SPLITTING recovery; by default the
+// Orchestrator uses time.Now and DefaultSplitLeaseDuration.
+func NewOrchestrator(guard *FileGuard, cat *catalog.Catalog, w *wal.Writer, opts ...Option) (*Orchestrator, error) {
 	if guard == nil {
 		return nil, fmt.Errorf("split: NewOrchestrator: guard must not be nil")
 	}
@@ -103,7 +198,18 @@ func NewOrchestrator(guard *FileGuard, cat *catalog.Catalog, w *wal.Writer) (*Or
 	if w == nil {
 		return nil, fmt.Errorf("split: NewOrchestrator: w must not be nil")
 	}
-	return &Orchestrator{guard: guard, cat: cat, w: w}, nil
+	o := &Orchestrator{
+		guard:         guard,
+		cat:           cat,
+		w:             w,
+		now:           time.Now,
+		leaseDuration: DefaultSplitLeaseDuration,
+		leases:        make(map[uint64]time.Time),
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o, nil
 }
 
 // BeginSplit attempts to win the right to split fileID and, if it wins,
@@ -134,11 +240,35 @@ func NewOrchestrator(guard *FileGuard, cat *catalog.Catalog, w *wal.Writer) (*Or
 // split attempt and is responsible for eventually calling EndSplit or
 // AbortSplit, which releases the guard as part of transitioning back out of
 // SPLITTING.
+//
+// Subtask 4.5.3.3: if the guard is already held for fileID (i.e. the
+// TryAcquire above loses), BeginSplit does not immediately give up. It first
+// checks whether the PREVIOUS winner's lease (recorded the last time
+// BeginSplit won for this fileID, see recordLease) has expired per this
+// Orchestrator's clock. If so, the previous holder is presumed abandoned
+// (crashed, or otherwise never called EndSplit/AbortSplit), and
+// reclaimIfExpired force-reverts the record to StatusActive and releases the
+// stale guard hold before BeginSplit retries TryAcquire once, as a fresh
+// attempt. Only if the guard is still busy (no expired lease was found, or
+// the reclaim itself lost a race to some other caller) does BeginSplit
+// return ErrAlreadySplitting.
 func (o *Orchestrator) BeginSplit(fileID uint64) (catalog.CatalogRecord, error) {
-	if !o.guard.TryAcquire(fileID) {
-		return catalog.CatalogRecord{}, fmt.Errorf("%w: fileID %d", ErrAlreadySplitting, fileID)
+	if o.guard.TryAcquire(fileID) {
+		return o.finishBeginSplit(fileID)
 	}
+	if o.reclaimIfExpired(fileID) && o.guard.TryAcquire(fileID) {
+		return o.finishBeginSplit(fileID)
+	}
+	return catalog.CatalogRecord{}, fmt.Errorf("%w: fileID %d", ErrAlreadySplitting, fileID)
+}
 
+// finishBeginSplit performs the transitionStatus(Active -> Splitting) half of
+// BeginSplit, assuming the caller has just won o.guard.TryAcquire(fileID).
+// On success it records this attempt's lease deadline (see recordLease); on
+// failure it releases the just-won guard, exactly as BeginSplit's inline
+// logic did before subtask 4.5.3.3 split it out to be shared between the
+// direct-win and reclaim-then-retry paths above.
+func (o *Orchestrator) finishBeginSplit(fileID uint64) (catalog.CatalogRecord, error) {
 	updated, err := o.transitionStatus(fileID, catalog.StatusActive, catalog.StatusSplitting)
 	if err != nil {
 		o.guard.Release(fileID)
@@ -147,7 +277,80 @@ func (o *Orchestrator) BeginSplit(fileID uint64) (catalog.CatalogRecord, error) 
 		}
 		return catalog.CatalogRecord{}, err
 	}
+	o.recordLease(fileID)
 	return updated, nil
+}
+
+// recordLease sets fileID's lease deadline to o.now() + o.leaseDuration,
+// overwriting any prior entry. Called once, by finishBeginSplit, exactly
+// when a BeginSplit attempt actually wins both the guard and the
+// Active->Splitting transition.
+func (o *Orchestrator) recordLease(fileID uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.leases == nil {
+		o.leases = make(map[uint64]time.Time)
+	}
+	o.leases[fileID] = o.now().Add(o.leaseDuration)
+}
+
+// clearLease removes fileID's lease entry, if any. Called by EndSplit
+// (covering both the AbortSplit and successful-split outcomes) so that a
+// clean exit never leaves a stale lease entry behind for reclaimIfExpired to
+// find later; also called by reclaimIfExpired itself once it decides to act
+// on an expired entry, so a given lease is never reclaimed twice.
+func (o *Orchestrator) clearLease(fileID uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.leases, fileID)
+}
+
+// reclaimIfExpired reports whether it force-reclaimed an abandoned SPLITTING
+// hold for fileID, implementing subtask 4.5.3.3's lease-timeout recovery.
+//
+// It looks up fileID's recorded lease deadline; if none exists, or the
+// deadline has not yet passed per o.now(), it does nothing and returns
+// false (this is the common case: either no split has ever begun for
+// fileID, or one is genuinely still in progress within its lease window).
+//
+// If the deadline has passed, reclaimIfExpired removes the lease entry
+// (under o.mu, so two concurrent callers can never both observe and act on
+// the same expired entry) and then forces the catalog record from
+// StatusSplitting back to StatusActive via the same WAL-before-apply
+// transitionStatus primitive BeginSplit/EndSplit use, followed by
+// o.guard.Release(fileID) to clear the presumed-abandoned holder's stale
+// in-memory guard flag. Both steps are best-effort: if transitionStatus
+// fails (e.g. the record was not actually StatusSplitting anymore --
+// perhaps a legitimate EndSplit/AbortSplit call raced this reclaim and won,
+// or some other caller's reclaim got there first), reclaimIfExpired simply
+// returns false without touching the guard, leaving the guard's actual
+// current holder (whoever that now is) undisturbed.
+//
+// This is a deliberate, best-effort trade-off inherent to any lease-based
+// recovery mechanism (mirroring e.g. distributed lock leases generally): if
+// leaseDuration is set shorter than a legitimate split genuinely takes, a
+// live (not actually crashed) holder's hold can be force-reclaimed out from
+// under it. DefaultSplitLeaseDuration is chosen generously to make that
+// unlikely in practice, and WithLeaseDuration lets callers tune it for their
+// own executor's expected latency; this subtask does not attempt to detect
+// or prevent that false-positive case itself (doing so would need real
+// heartbeat renewal from the split holder, which is a larger change than
+// this subtask's scope -- see this file's package doc comment).
+func (o *Orchestrator) reclaimIfExpired(fileID uint64) bool {
+	o.mu.Lock()
+	deadline, ok := o.leases[fileID]
+	if !ok || o.now().Before(deadline) {
+		o.mu.Unlock()
+		return false
+	}
+	delete(o.leases, fileID)
+	o.mu.Unlock()
+
+	if _, err := o.transitionStatus(fileID, catalog.StatusSplitting, catalog.StatusActive); err != nil {
+		return false
+	}
+	o.guard.Release(fileID)
+	return true
 }
 
 // EndSplit durably transitions fileID's catalog record's Status out of
@@ -172,11 +375,17 @@ func (o *Orchestrator) BeginSplit(fileID uint64) (catalog.CatalogRecord, error) 
 // released in this case (via a deferred release after outcome validation),
 // so a caller that raced or mis-tracked state does not leave the guard
 // stuck.
+//
+// EndSplit also always clears fileID's lease entry (subtask 4.5.3.3's
+// abandoned-SPLITTING recovery bookkeeping, see recordLease/clearLease),
+// again regardless of outcome, so a clean exit never leaves a stale lease
+// deadline behind for a later BeginSplit's reclaimIfExpired to trip over.
 func (o *Orchestrator) EndSplit(fileID uint64, outcome catalog.RecordStatus) (catalog.CatalogRecord, error) {
 	if outcome != catalog.StatusActive && outcome != catalog.StatusSplit {
 		return catalog.CatalogRecord{}, fmt.Errorf("%w: got %v", ErrUnexpectedStatus, outcome)
 	}
 	defer o.guard.Release(fileID)
+	defer o.clearLease(fileID)
 
 	updated, err := o.transitionStatus(fileID, catalog.StatusSplitting, outcome)
 	if err != nil {

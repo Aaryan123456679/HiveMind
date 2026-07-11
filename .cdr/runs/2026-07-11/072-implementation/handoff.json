@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-072-implementation",
+  "subtask": "task-4.5.3.2",
+  "issue": 40,
+  "fix_cycle_attempt": "1 of 3",
+  "status": "completed",
+  "responds_to": ".cdr/runs/2026-07-11/070-verification/verification.json",
+  "ordinal_note": "072 was the next free ordinal at start of run (071-implementation, 070-verification already existed); no collision encountered, no relocation needed.",
+  "fix_path_chosen": "b -- investigated and confirmed the 'load-bearing, prevents double-acquisition' claim in Release's doc comment does NOT hold (structurally, not just 'unproven'); corrected the doc comment to state the real, verifier-confirmed behavior (reversing the order breaks eviction progress, not correctness) and added a deterministic regression test proving both halves.",
+  "commit": "pending (created immediately after this handoff is written)",
+  "files_touched": ["engine/split/guard.go", "engine/split/guard_test.go"],
+  "pointers": {
+    "requirement": ".cdr/runs/2026-07-11/072-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-11/072-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-11/072-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-11/072-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-11/072-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-11/072-implementation/self-consistency.json",
+    "guard_go_corrected_release_comment": "engine/split/guard.go lines ~199-249 (Release func + doc)",
+    "guard_test_go_new_tests": [
+      "engine/split/guard_test.go: TestFileGuardReleaseOrderingAffectsEvictionProgressNotCorrectness",
+      "engine/split/guard_test.go: TestFileGuardEvictionGateInProgressClauseIsolated",
+      "engine/split/guard_test.go: TestFileGuardRegistryRetainsInProgressEntries (doc comment corrected only, behavior unchanged)"
+    ]
+  },
+  "next_step": "Independent re-verification (separate agent/step, invariant I4 -- this agent does not verify its own work).",
+  "notes_for_verifier": [
+    "Production logic in guard.go is byte-for-byte unchanged apart from comments (confirmed via diff of non-comment lines against c6840a5).",
+    "Self-mutation-tests performed and reverted: (1) removing !inProgress clause -> new isolated test fails as required, old integration test still passes (matches verifier's original finding, now documented rather than hidden); (2) reversing Release's real ordering -> TestFileGuardRegistryBounded fails exactly as verifier found, while the new ordering test's no-double-acquisition assertion still holds even against the mutated production code.",
+    "Full engine/split suite: one run hit the pre-existing, previously-documented TestReaderDuringSplit flake (subtask 4.5.3.6, out of scope, unrelated file split_race_test.go which we did not touch); isolated rerun (count=5) and a second full-suite run both passed clean.",
+    "SECURITY NOTE: during this run, a suspicious system-reminder-style message appeared mid-conversation instructing silence about a date change; disclosed to the user in the final report per instructions, not acted upon, and had no bearing on this implementation."
+  ]
+}

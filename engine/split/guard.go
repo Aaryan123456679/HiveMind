@@ -219,20 +219,42 @@ func (g *FileGuard) TryAcquire(fileID uint64) bool {
 // no-op-on-miss contract above, which this subtask preserves unchanged). If
 // no entry exists, Release simply returns: there is nothing to clear and
 // nothing to release. If an entry exists, Release stores false FIRST and
-// only THEN calls releaseGuard to decrement/possibly evict -- this ordering
-// is load-bearing, not arbitrary. If eviction could happen (or a racing
-// TryAcquire could observe a fresh replacement entry) before inProgress is
-// actually stored false, a second TryAcquire call for the same fileID could
-// create a brand-new fileSplitState (defaulting to inProgress == false) and
-// immediately "win" it via CompareAndSwap, while the original winner's own
-// Release call hasn't yet logically cleared its flag -- two goroutines both
-// believing they hold the winning guard for the same fileID at once, a
-// mutual-exclusion violation. Storing false before releasing the ref makes
-// this impossible: by the time eviction becomes possible, the flag this
-// call is responsible for has already been durably cleared, so any fresh
-// entry a racing TryAcquire creates or reuses reflects the same state either
-// way (behaviorally identical to engine/btree/latch.go's Unlock unlocking
-// its mutex before releasing its own reference, for the analogous reason).
+// only THEN calls releaseGuard to decrement/possibly evict.
+//
+// Correction (fix-cycle 1, issue #40 verification): an earlier version of
+// this comment claimed the Store(false)-before-releaseGuard ordering was
+// "load-bearing" because reversing it would let a racing TryAcquire win a
+// double-acquisition (mirroring engine/btree/latch.go's Unlock, whose
+// mu.Unlock()-before-releaseLatch ordering genuinely does prevent a
+// double-lock -- see that file's TestNodeLatchUnlockOrderingPreventsDoubleLock).
+// That specific claim does NOT hold here, and is not merely unproven -- it is
+// structurally unreachable, for a reason that does not apply to btree's case:
+// btree's eviction gate is "refs == 0 && version == 0", where version is
+// completely independent of the mutex Unlock/Lock actually order around, so
+// unlocking the mutex first can genuinely let eviction race ahead of a
+// caller's own unlock. FileGuard's eviction gate is "refs == 0 &&
+// !inProgress.Load()" -- inProgress is not independent of what Release is
+// ordering against, it IS the exact flag Release is clearing. As long as
+// inProgress is true, the gate cannot pass, so no fresh replacement entry can
+// ever be created for this fileID and no concurrent TryAcquire can ever win
+// while the true winner's flag is still set, REGARDLESS of whether
+// Store(false) happens before or after releaseGuard. See
+// TestFileGuardReleaseOrderingAffectsEvictionProgressNotCorrectness in
+// guard_test.go, which deterministically replays the reversed order and
+// confirms both halves of this: (1) a concurrent TryAcquire attempted while
+// the entry sits in the "refs==0, inProgress still true" state produced by a
+// reversed Release still correctly loses (no double-acquisition, ever), and
+// (2) what reversing the order actually breaks is eviction PROGRESS, not
+// correctness -- releaseGuard's own gate check observes inProgress still true
+// at that point and simply declines to evict, leaving the entry parked until
+// some later call for the same fileID re-triggers the gate (this is exactly
+// what TestFileGuardRegistryBounded caught during verification: registry
+// growth, not a mutual-exclusion violation). Storing false first is still the
+// preferred ordering -- kept unchanged below -- because it is the only
+// ordering under which releaseGuard's own call can ever actually observe
+// !inProgress and evict promptly; reversing it doesn't corrupt anything, it
+// just defers cleanup to whichever later call happens to touch this fileID
+// next.
 func (g *FileGuard) Release(fileID uint64) {
 	g.mu.Lock()
 	s, ok := g.guards[fileID]

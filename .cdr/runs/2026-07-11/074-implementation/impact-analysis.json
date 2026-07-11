@@ -1,0 +1,79 @@
+{
+  "subtask": "4.5.3.3",
+  "issue": 40,
+  "files_touched": [
+    "engine/split/orchestrate.go",
+    "engine/split/orchestrate_test.go"
+  ],
+  "public_api_changes": [
+    {
+      "kind": "signature-widened-backward-compatible",
+      "symbol": "func NewOrchestrator(guard *FileGuard, cat *catalog.Catalog, w *wal.Writer) (*Orchestrator, error)",
+      "new_symbol": "func NewOrchestrator(guard *FileGuard, cat *catalog.Catalog, w *wal.Writer, opts ...Option) (*Orchestrator, error)",
+      "backward_compatible": true,
+      "reason": "variadic opts appended; all existing call sites (3-arg calls) compile unchanged"
+    },
+    {
+      "kind": "new-exported-symbol",
+      "symbol": "type Option func(*Orchestrator)"
+    },
+    {
+      "kind": "new-exported-symbol",
+      "symbol": "func WithClock(now func() time.Time) Option"
+    },
+    {
+      "kind": "new-exported-symbol",
+      "symbol": "func WithLeaseDuration(d time.Duration) Option"
+    },
+    {
+      "kind": "new-exported-symbol",
+      "symbol": "const DefaultSplitLeaseDuration = 30 * time.Second"
+    }
+  ],
+  "internal_additions": [
+    "Orchestrator.now func() time.Time",
+    "Orchestrator.leaseDuration time.Duration",
+    "Orchestrator.mu sync.Mutex",
+    "Orchestrator.leases map[uint64]time.Time",
+    "func (o *Orchestrator) finishBeginSplit(fileID uint64) (catalog.CatalogRecord, error)",
+    "func (o *Orchestrator) recordLease(fileID uint64)",
+    "func (o *Orchestrator) clearLease(fileID uint64)",
+    "func (o *Orchestrator) reclaimIfExpired(fileID uint64) bool"
+  ],
+  "behavior_changes": [
+    {
+      "change": "BeginSplit no longer immediately returns ErrAlreadySplitting when guard.TryAcquire fails; it first checks reclaimIfExpired and retries TryAcquire once if a stale lease was reclaimed.",
+      "risk": "low",
+      "mitigation": "Only triggers when a previously-recorded lease (set exclusively by a prior successful BeginSplit on THIS Orchestrator instance) has expired per the injected/default clock. Verified via TestSplittingStatusIsolation (pre-existing) and the new TestAbandonedSplittingRecoversAfterTimeout that immediate re-BeginSplit (well within default 30s lease) still returns ErrAlreadySplitting."
+    },
+    {
+      "change": "EndSplit now also clears the fileID's lease entry via a deferred clearLease call, regardless of outcome.",
+      "risk": "negligible",
+      "mitigation": "Purely additive bookkeeping cleanup; does not affect EndSplit's existing return values or guard-release behavior."
+    }
+  ],
+  "downstream_consumers_checked": [
+    {
+      "location": "engine/split/execute.go / execute_test.go",
+      "finding": "Uses Orchestrator.BeginSplit/EndSplit/AbortSplit via existing signatures only; not touched, not affected."
+    },
+    {
+      "location": "repo-wide grep for NewOrchestrator(",
+      "finding": "Only call sites are within engine/split's own test files; no other package constructs an Orchestrator directly."
+    }
+  ],
+  "out_of_scope_files_observed_modified_by_others": [
+    "engine/split/guard.go",
+    "engine/split/guard_test.go",
+    "engine/split/split_race_test.go",
+    "engine/btree/delete.go",
+    "engine/btree/delete_test.go",
+    "engine/btree/insert.go",
+    "engine/btree/insert_test.go",
+    "engine/catalog/content_test.go"
+  ],
+  "out_of_scope_untracked_files_observed": [
+    "engine/engine_stress_test.go",
+    "engine/smokeserver"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "build": "PASS (go build ./engine/split/...)",
+  "vet": "PASS (go vet ./engine/split/...)",
+  "validation_matrix_covered": true,
+  "new_test_isolated_run": "PASS (go test ./engine/split/... -race -run TestAbandonedSplittingRecoversAfterTimeout)",
+  "package_regression_run_scoped": "PASS (all engine/split tests except TestConcurrentAppendSplitRace in split_race_test.go, which is owned by a concurrent in-progress agent and excluded per explicit scope-isolation instruction)",
+  "re_verified_after_harness_restart": true,
+  "note": "This is an internal sanity check only (invariant I4): build green + validation matrix covered. It is NOT independent verification -- that is delegated to /cdr:verify."
+}

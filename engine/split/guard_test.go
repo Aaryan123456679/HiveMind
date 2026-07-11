@@ -165,12 +165,22 @@ func TestFileGuardRegistryBounded(t *testing.T) {
 	}
 }
 
-// TestFileGuardRegistryRetainsInProgressEntries verifies the eviction gate
-// directly: a fileID left in-progress (TryAcquire won, Release never
+// TestFileGuardRegistryRetainsInProgressEntries is an end-to-end/integration
+// confirmation that a fileID left in-progress (TryAcquire won, Release never
 // called) must NOT be evicted, even while many OTHER fileIDs are guarded
 // and released around it. This is the FileGuard analogue of
 // engine/btree/latch.go's version==0 gate check -- here the gate is
-// !inProgress, and an entry with inProgress==true must survive.
+// !inProgress.
+//
+// Correction (fix-cycle 1, issue #40 verification): this test does NOT
+// isolate the !inProgress clause from the refs==0 clause -- TryAcquire's
+// winning path here keeps refs>0 for heldFileID the entire time, so removing
+// the !inProgress clause from the eviction gate entirely does not make this
+// test fail (mutation-tested; confirmed). It only proves the realistic,
+// end-to-end scenario (a genuinely in-flight split survives unrelated
+// churn), which is still useful, but the clause-level isolation this test's
+// old doc comment claimed to provide is instead covered by
+// TestFileGuardEvictionGateInProgressClauseIsolated below.
 func TestFileGuardRegistryRetainsInProgressEntries(t *testing.T) {
 	g := NewFileGuard()
 	const heldFileID = uint64(999_999)
@@ -220,5 +230,108 @@ func TestInProgressObservability(t *testing.T) {
 	g.Release(fileID)
 	if g.InProgress(fileID) {
 		t.Fatalf("expected fileID to not be in progress after Release")
+	}
+}
+
+// TestFileGuardReleaseOrderingAffectsEvictionProgressNotCorrectness is the
+// fix-cycle-1 (issue #40 verification) replacement for the unproven
+// "load-bearing, prevents double-acquisition" claim that used to live on
+// Release's doc comment. It deterministically replays the REVERSED order
+// (releaseGuard called before inProgress is stored false) by driving the
+// package-internal releaseGuard/fileSplitState directly -- no goroutine race
+// is needed to reach this window, because the window is reachable by plain
+// sequential code, which is itself part of what the reversed ordering gets
+// wrong (it's not a rare race, it's the deterministic outcome of that order).
+//
+// It proves both halves of the corrected doc comment:
+//  1. The entry is NOT evicted when releaseGuard runs while inProgress is
+//     still true (this is the real, verifier-confirmed failure mode:
+//     eviction progress breaks, matching TestFileGuardRegistryBounded).
+//  2. A TryAcquire attempted during that exact "stuck" window (refs==0,
+//     inProgress==true, entry still present) still correctly LOSES -- no
+//     double-acquisition ever results, refuting the old doc comment's
+//     specific correctness claim.
+func TestFileGuardReleaseOrderingAffectsEvictionProgressNotCorrectness(t *testing.T) {
+	g := NewFileGuard()
+	const fileID = uint64(555_001)
+
+	if !g.TryAcquire(fileID) {
+		t.Fatalf("expected TryAcquire to win")
+	}
+
+	g.mu.Lock()
+	s, ok := g.guards[fileID]
+	g.mu.Unlock()
+	if !ok {
+		t.Fatalf("expected an entry for fileID after a winning TryAcquire")
+	}
+
+	// Reversed order: release the guard reference BEFORE clearing inProgress
+	// (the real Release always clears inProgress first; this manually
+	// reproduces what reversing it would do).
+	g.releaseGuard(fileID, s)
+
+	if g.guardRegistrySize() == 0 {
+		t.Fatalf("expected the entry to be RETAINED despite refs==0, because inProgress is still true -- eviction progress should break under reversed ordering, matching TestFileGuardRegistryBounded's finding")
+	}
+
+	// The critical claim under test: does a concurrent TryAcquire win here?
+	if g.TryAcquire(fileID) {
+		t.Fatalf("BUG: TryAcquire won during the reversed-order 'stuck' window -- this would be the double-acquisition the old doc comment claimed reversing the order could cause")
+	}
+
+	// Finish clearing the flag, exactly as the real (correct, unchanged)
+	// Release ordering does, and confirm the guard recovers normally.
+	s.inProgress.Store(false)
+	if !g.TryAcquire(fileID) {
+		t.Fatalf("expected TryAcquire to succeed once inProgress is cleared")
+	}
+	g.Release(fileID)
+}
+
+// TestFileGuardEvictionGateInProgressClauseIsolated isolates the !inProgress
+// clause of the eviction gate (refs == 0 && !inProgress.Load()) from the
+// refs == 0 clause, independent of TryAcquire's side effect of holding
+// refs>0 for as long as inProgress is true (which is what made the older
+// TestFileGuardRegistryRetainsInProgressEntries unable to isolate the two
+// clauses -- see fix-cycle-1 note on that test).
+//
+// It constructs the refs==0 && inProgress==true state directly via
+// acquireGuard/releaseGuard on a fileID whose inProgress flag was set
+// out-of-band (bypassing TryAcquire's CAS entirely), then flips inProgress
+// to false and repeats -- same refs transition (1 -> 0) both times, only
+// inProgress differs, so any eviction-status difference is attributable
+// solely to the !inProgress clause.
+func TestFileGuardEvictionGateInProgressClauseIsolated(t *testing.T) {
+	g := NewFileGuard()
+	const fileID = uint64(555_002)
+
+	// Manufacture the entry directly (bypassing TryAcquire) with
+	// inProgress == true.
+	s := &fileSplitState{}
+	s.inProgress.Store(true)
+	g.mu.Lock()
+	g.guards[fileID] = s
+	s.refs = 1
+	g.mu.Unlock()
+
+	// refs: 1 -> 0, inProgress still true.
+	g.releaseGuard(fileID, s)
+	if g.guardRegistrySize() != 1 {
+		t.Fatalf("expected entry retained at refs==0 while inProgress==true (isolated !inProgress clause), registry size = %d", g.guardRegistrySize())
+	}
+
+	// Re-acquire (refs 0 -> 1) via the real accessor, then flip inProgress to
+	// false and release again (refs 1 -> 0) -- same refs transition as
+	// above, only inProgress differs this time.
+	reacquired := g.acquireGuard(fileID)
+	if reacquired != s {
+		t.Fatalf("expected acquireGuard to find the same still-registered entry")
+	}
+	s.inProgress.Store(false)
+	g.releaseGuard(fileID, s)
+
+	if g.guardRegistrySize() != 0 {
+		t.Fatalf("expected entry evicted at refs==0 once inProgress==false (isolated !inProgress clause now satisfied), registry size = %d", g.guardRegistrySize())
 	}
 }

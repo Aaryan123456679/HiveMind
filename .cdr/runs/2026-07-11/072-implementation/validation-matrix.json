@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-072-implementation",
+  "matrix": [
+    {
+      "requirement": "Correct or prove the Release ordering 'load-bearing' claim",
+      "test": "TestFileGuardReleaseOrderingAffectsEvictionProgressNotCorrectness",
+      "covers": "Primary finding: reversed order does not cause double-acquisition (structurally unreachable); it does break eviction progress. Deterministic (no goroutine race needed -- manual sequencing on the same object reproduces the exact window).",
+      "mutation_check": "Reversing the real Release order should reproduce this test's own progress-broken assertion; verified manually during self-consistency, then reverted (production ordering is unchanged/kept as-is since it's still the one that lets eviction progress)."
+    },
+    {
+      "requirement": "Doc comment accuracy",
+      "test": "n/a (doc-only, reviewed by re-reading corrected guard.go)",
+      "covers": "Release's doc comment no longer makes an unproven/false correctness claim; states the real, test-backed behavior.",
+      "mutation_check": "n/a"
+    },
+    {
+      "requirement": "Isolate the !inProgress eviction-gate clause from refs==0",
+      "test": "TestFileGuardEvictionGateInProgressClauseIsolated",
+      "covers": "Secondary finding: directly constructs refs==0/inProgress states independent of TryAcquire's side effects.",
+      "mutation_check": "Removing the !inProgress clause from the gate (leaving only refs==0) must make this NEW test fail. Verified during self-consistency."
+    },
+    {
+      "requirement": "Existing TestFileGuardRegistryRetainsInProgressEntries's doc claim must match what it actually proves",
+      "test": "TestFileGuardRegistryRetainsInProgressEntries (doc comment corrected, behavior unchanged)",
+      "covers": "No longer overclaims 'verifies the eviction gate directly'; reframed as integration-level confirmation.",
+      "mutation_check": "Removing !inProgress clause: this test continues to PASS (documented as expected/known, matching verifier's finding) -- not a regression, a deliberately-kept demonstration of why the isolated test above was needed."
+    },
+    {
+      "requirement": "No regression to existing FileGuard behavior",
+      "test": "Full engine/split package suite",
+      "covers": "TestSplitInProgressCAS, TestAcquireReleaseReacquire, TestIndependentFileIDs, TestReleaseWithoutHoldingIsNoOp, TestFileGuardRegistryBounded, TestInProgressObservability, plus orchestrate_test.go's FileGuard-consuming tests",
+      "mutation_check": "go test ./engine/split/... -race -count=3 clean"
+    }
+  ]
+}
