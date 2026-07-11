@@ -63,16 +63,19 @@ Markdown-code-fence defensiveness -- shared helper, F1 now closed
 Real Ollama-backed models sometimes wrap JSON completions in markdown code fences
 despite being told not to. This module's parser proactively strips a single
 leading/trailing ``` ```(json)?...``` ``` fence (if present) before `json.loads`, via
-the shared `ingestion._json_fences.strip_code_fences` helper.
+the shared `json_fences.strip_code_fences` helper.
 
 Historical note: `agents/ingestion/segment.py` (3.4.3) originally lacked this
 guard -- an open, non-blocking finding (F1, `.cdr/index/regression.jsonl`) explicitly
 forwarded from this module's own defensiveness to `segment.py`'s missing equivalent.
 Subtask 3.4.6 closed F1 by extracting this module's original private
-`_strip_code_fences`/`_CODE_FENCE_RE` into the shared `ingestion._json_fences` module
-and wiring `segment.py` to use it too, rather than leaving `segment.py`'s gap open or
-letting a second independent copy of the same regex drift out of sync. This module's
-own behavior is unchanged by the extraction.
+`_strip_code_fences`/`_CODE_FENCE_RE` into a shared module and wiring `segment.py` to
+use it too, rather than leaving `segment.py`'s gap open or letting a second
+independent copy of the same regex drift out of sync. Subtask 4.5.17.2 (issue #55)
+later relocated that shared module from the private `ingestion._json_fences` to the
+top-level, public `json_fences` module so `query.intent_refiner` could import it
+without reaching into another package's private internals. This module's own
+behavior is unchanged by either extraction.
 
 Exception design
 -----------------
@@ -89,7 +92,7 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Sequence
 
-from ingestion._json_fences import strip_code_fences
+from json_fences import strip_code_fences
 
 if TYPE_CHECKING:
     from llm.client import LLMClient

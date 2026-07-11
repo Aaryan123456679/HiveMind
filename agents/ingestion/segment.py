@@ -112,7 +112,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Sequence
 
-from ingestion._json_fences import sanitize_control_chars_and_triple_quotes, strip_code_fences
+from json_fences import sanitize_control_chars_and_triple_quotes, strip_code_fences
 
 if TYPE_CHECKING:
     from llm.client import LLMClient

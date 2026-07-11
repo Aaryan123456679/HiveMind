@@ -65,8 +65,11 @@ against.
 
 Prompt-then-parse-JSON pattern / code-fence stripping / exception design
 ----------------------------------------------------------------------------
-Mirrors `intent_refiner.py` exactly: `strip_code_fences` (shared
-`ingestion._json_fences` helper) before `json.loads`; `SynthesizerError` is a *new* base
+Mirrors `intent_refiner.py` exactly: `strip_code_fences` (shared, top-level
+`json_fences` module -- issue #55 subtask 4.5.17.2 relocated it there from the
+private `ingestion._json_fences` so cross-package callers like this one and
+`intent_refiner.py` don't reach into another package's private internals) before
+`json.loads`; `SynthesizerError` is a *new* base
 exception (NOT a subclass of `llm.client.LLMError` -- `LLMError` means the provider call
 itself failed; this module's exceptions mean the call succeeded but its output could not be
 turned into a valid result); `SynthesizerParseError` covers every malformed-output case with
@@ -80,7 +83,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Sequence
 
-from ingestion._json_fences import strip_code_fences
+from json_fences import strip_code_fences
 
 if TYPE_CHECKING:
     from llm.client import LLMClient

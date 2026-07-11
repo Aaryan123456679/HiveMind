@@ -274,7 +274,7 @@ def test_markdown_code_fence_wrapped_json_is_parsed() -> None:
     Ollama-backed model that ignores the prompt's "no markdown code fences"
     instruction and wraps its otherwise well-formed JSON in a ```` ```json ... ``` ````
     fence must still parse successfully via the shared
-    `ingestion._json_fences.strip_code_fences` helper, not raise `SegmentParseError`.
+    `json_fences.strip_code_fences` helper, not raise `SegmentParseError`.
     """
     fenced = "```json\n" + json.dumps(_VALID_APPEND_PAYLOAD) + "\n```"
     client = _FakeLLMClient(response=fenced)

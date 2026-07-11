@@ -1,6 +1,16 @@
 """Shared helpers for cleaning up an LLM's raw JSON completion string before
 `json.loads` sees it.
 
+## Relocation to a top-level, public module (issue #55 subtask 4.5.17.2)
+
+Originally `agents/ingestion/_json_fences.py` (underscore-prefixed, private to the
+`ingestion` package). `query.intent_refiner` needed `strip_code_fences` too, which
+meant reaching into another package's private module -- a cross-package layering
+defect. Moved here, to a top-level `json_fences` module (a sibling of `ingestion`,
+`query`, and `llm`, matching `llm`'s own established precedent as a package shared by
+both `ingestion` and `query`), so both packages import a properly public symbol
+instead. This is a pure relocation: no behavior change.
+
 ## Markdown code-fence stripping (subtask 3.4.6, closed forwarded finding F1)
 
 Extracted (subtask 3.4.6, closing forwarded finding F1 --

@@ -171,6 +171,22 @@ def test_refine_intent_strips_code_fence() -> None:
     assert result.query_type == "factual_lookup"
 
 
+def test_refine_intent_empty_query() -> None:
+    """An empty raw query string is not special-cased anywhere in `refine_intent`/
+    `_build_prompt` -- it is simply embedded into the prompt like any other query text,
+    and parsing is driven entirely by the (mocked) LLM's response, not by the query
+    itself. This asserts that already-correct behavior: an empty query still produces a
+    valid `IntentRefinerResult` and is still rendered into the prompt sent to the LLM.
+    """
+    fake = _FakeLLMClient(response=_well_formed_json())
+
+    result = refine_intent("", [], fake)
+
+    assert isinstance(result, IntentRefinerResult)
+    assert len(fake.calls) == 1
+    assert "---\n\n---" in fake.calls[0]["prompt"]
+
+
 # ---------------------------------------------------------------------------
 # Malformed-output tests
 # ---------------------------------------------------------------------------
@@ -195,6 +211,20 @@ def test_refine_intent_missing_field_raises() -> None:
 def test_refine_intent_wrong_type_raises() -> None:
     payload = json.loads(_well_formed_json())
     payload["entities"] = "invoice 4521"  # should be a list
+    fake = _FakeLLMClient(response=json.dumps(payload))
+
+    with pytest.raises(IntentRefinerParseError, match="entities"):
+        refine_intent("query", [], fake)
+
+
+def test_refine_intent_non_string_entity_raises() -> None:
+    """A non-string item inside an otherwise well-formed `entities` list is already
+    rejected by `_parse_intent_json`'s per-item `isinstance(item, str)` check
+    (previously untested); this asserts that existing behavior explicitly.
+    """
+    payload = json.loads(_well_formed_json())
+    payload["entities"] = ["invoice 4521", 123]
+
     fake = _FakeLLMClient(response=json.dumps(payload))
 
     with pytest.raises(IntentRefinerParseError, match="entities"):

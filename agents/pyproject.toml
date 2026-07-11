@@ -32,3 +32,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["ingestion", "query", "llm", "eval"]
+# `json_fences` is a single-file, top-level shared module (issue #55 subtask
+# 4.5.17.2), not a directory package, hence `py-modules` rather than `packages`.
+py-modules = ["json_fences"]

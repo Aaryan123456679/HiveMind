@@ -39,10 +39,15 @@ Prompt-then-parse-JSON pattern
 --------------------------------
 This module mirrors `agents/ingestion/segment.py`'s established shape (itself following
 `agents/ingestion/propose_split.py`): build a prompt, call `LLMClient.complete()`, strip a
-markdown code fence via the shared `ingestion._json_fences.strip_code_fences` helper
-(proactively applied here -- this is a brand-new module and should not reintroduce the same
-"real models sometimes fence JSON despite instructions" gap that `segment.py` had to close
-as forwarded finding F1), then `json.loads` and validate.
+markdown code fence via the shared `json_fences.strip_code_fences` helper (proactively
+applied here -- this is a brand-new module and should not reintroduce the same "real models
+sometimes fence JSON despite instructions" gap that `segment.py` had to close as forwarded
+finding F1), then `json.loads` and validate.
+
+`strip_code_fences` lives in the top-level `json_fences` module (a sibling of `ingestion`,
+`query`, and `llm`), not inside `ingestion` itself -- issue #55 subtask 4.5.17.2 relocated it
+there from the private `ingestion._json_fences`, since this module importing a private,
+underscore-prefixed symbol from a different top-level package was itself a layering defect.
 
 Exception design -- disclosed choice
 ----------------------------------------
@@ -62,7 +67,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Sequence
 
-from ingestion._json_fences import strip_code_fences
+from json_fences import strip_code_fences
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
