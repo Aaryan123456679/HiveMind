@@ -1,0 +1,27 @@
+{
+  "checks": [
+    {
+      "cmd": "go test ./engine/graph/... -run TestLoadCSRRejectsUnknownEdgeType -v",
+      "result": "PASS",
+      "notes": "new required-name test passes"
+    },
+    {
+      "cmd": "go test ./engine/graph/... -race -v",
+      "result": "PASS",
+      "notes": "all engine/graph tests pass under -race, no regressions; valid EdgeType decode paths (TestCSRFormat, TestCSRLargeAdjacency, TestEdgeTypes, TestGraphNeighbors, TestCompaction*, TestCompactConcurrentAppendNotLost, etc.) all still green, confirming known EdgeType bytes still decode correctly"
+    },
+    {
+      "cmd": "go test ./engine/... -race",
+      "result": "PASS",
+      "notes": "full engine module suite green: engine, btree, catalog, graph, mvcc, rpc, split, wal"
+    },
+    {
+      "cmd": "go vet ./... (from engine/ module dir) && go build ./...",
+      "result": "PASS",
+      "notes": "no vet issues, builds clean"
+    }
+  ],
+  "build_status": "green",
+  "matrix_coverage": "all 4 validation-matrix.json criteria satisfied",
+  "note": "this is self-consistency only (build green + matrix covered), not verification (invariant I4); /cdr:verify must independently confirm"
+}

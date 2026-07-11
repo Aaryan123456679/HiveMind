@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"encoding/binary"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -155,6 +157,63 @@ func TestCSRTruncatedHeaderRejected(t *testing.T) {
 
 	if _, err := LoadCSR(path); err == nil {
 		t.Fatalf("LoadCSR on truncated header: got nil error, want an error")
+	}
+}
+
+// TestLoadCSRRejectsUnknownEdgeType is the test spec required by issue #49 subtask 4.5.11.3:
+// construct a graph.dat fixture whose on-disk EdgeType byte is out of range (simulating a
+// second write path into graph.dat, now that PutEdge exists, producing an unrecognized edge
+// type), and assert LoadCSR returns an explicit error rather than silently decoding it.
+//
+// The fixture is built by first writing a normal, valid graph via WriteCSR (so the header,
+// offsets, and CRC are all produced by the real code path), then patching the first edge's
+// on-disk Type byte to a value ValidEdgeType (edge.go) rejects and recomputing the payload CRC32
+// to match - this isolates the failure to decodeCSREdge's type-validation guard specifically,
+// distinct from TestCSRCorruptedPayloadDetected's CRC-mismatch case above. WriteCSR itself
+// already refuses to persist an invalid EdgeType (see its own ValidEdgeType check), so this
+// fixture must be hand-patched to exercise LoadCSR's defensive decode-time guard, matching
+// edge_append.go's decodeEdge convention of explicit-error-not-silent-decode.
+func TestLoadCSRRejectsUnknownEdgeType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "graph.dat")
+
+	adjacency := map[uint64][]CSREdge{
+		1: {{Target: 2, Type: EdgeSplitSibling, Weight: 3, LastUpdated: 42}},
+	}
+	built := BuildCSR(adjacency)
+	if err := WriteCSR(path, built); err != nil {
+		t.Fatalf("WriteCSR: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	nodeCount := uint64(built.NodeCount())
+	edgesStart := csrHeaderSize + nodeCount*8 + (nodeCount+1)*8
+	typeOffset := edgesStart + offCSREdgeType
+	if typeOffset >= uint64(len(data)) {
+		t.Fatalf("computed type byte offset %d out of range for %d-byte file", typeOffset, len(data))
+	}
+
+	const outOfRangeEdgeType = 99 // not EdgeTypeInvalid(0) nor any of the 4 ValidEdgeType values
+	if ValidEdgeType(EdgeType(outOfRangeEdgeType)) {
+		t.Fatalf("test fixture bug: chosen sentinel %d is unexpectedly a valid EdgeType", outOfRangeEdgeType)
+	}
+	data[typeOffset] = outOfRangeEdgeType
+
+	// Recompute the payload CRC32 so the failure below is attributable to the EdgeType
+	// validation guard, not the already-covered CRC-mismatch path.
+	payload := data[csrHeaderSize:]
+	binary.LittleEndian.PutUint32(data[offCSRPayloadCRC:], crc32.ChecksumIEEE(payload))
+
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile (patching EdgeType byte): %v", err)
+	}
+
+	if _, err := LoadCSR(path); err == nil {
+		t.Fatalf("LoadCSR on graph.dat with out-of-range EdgeType byte: got nil error, want an explicit error")
 	}
 }
 
