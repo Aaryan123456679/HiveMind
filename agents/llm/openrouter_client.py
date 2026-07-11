@@ -89,6 +89,22 @@ class OpenRouterClient(LLMClient):
         transport: Optional `httpx.BaseTransport` override, used by tests
             to inject `httpx.MockTransport` and avoid any real network
             call. Production callers should leave this `None`.
+
+    Client lifecycle -- disclosed design
+    --------------------------------------
+    A single `httpx.Client` is opened once, in `__init__`, and reused for
+    every `complete()` call made on this instance (rather than opening and
+    closing a fresh `httpx.Client`, and its connection pool, on every
+    call) -- this avoids re-paying TCP/TLS connection-setup cost on every
+    hosted-network-provider call. Because the client is now held for the
+    instance's lifetime instead of being closed automatically after each
+    call, callers that want deterministic cleanup should either call
+    `close()` explicitly or use this class as a context manager (`with
+    OpenRouterClient(...) as client: ...`), which calls `close()` on
+    exit. Not calling `close()` is not a hard error -- `httpx.Client`
+    itself only holds idle keep-alive connections, no OS resources
+    require synchronous cleanup -- but explicit closing is recommended
+    for any code that creates short-lived instances.
     """
 
     def __init__(
@@ -114,6 +130,26 @@ class OpenRouterClient(LLMClient):
         self._model = model
         self._timeout = timeout
         self._transport = transport
+        # Persistent client, reused across complete() calls -- see the
+        # "Client lifecycle" section of this class's docstring.
+        self._client = httpx.Client(
+            base_url=self._base_url, transport=self._transport
+        )
+
+    def close(self) -> None:
+        """Close the persistent underlying `httpx.Client`.
+
+        Safe to call multiple times (idempotent, per `httpx.Client.close`).
+        Not calling this is not a correctness bug, only a missed cleanup
+        opportunity -- see this class's docstring.
+        """
+        self._client.close()
+
+    def __enter__(self) -> "OpenRouterClient":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
     def complete(
         self,
@@ -136,16 +172,13 @@ class OpenRouterClient(LLMClient):
         request_timeout = timeout if timeout is not None else self._timeout
 
         try:
-            with httpx.Client(
-                base_url=self._base_url, transport=self._transport
-            ) as client:
-                response = client.post(
-                    "/chat/completions",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                    timeout=request_timeout,
-                )
-                response.raise_for_status()
+            response = self._client.post(
+                "/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=request_timeout,
+            )
+            response.raise_for_status()
         except httpx.HTTPError as exc:
             raise OpenRouterClientError(
                 f"OpenRouter request to {self._base_url}/chat/completions "

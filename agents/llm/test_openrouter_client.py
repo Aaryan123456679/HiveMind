@@ -304,3 +304,59 @@ def test_complete_raises_on_timeout() -> None:
 
 def test_openrouter_client_error_is_llm_error() -> None:
     assert issubclass(OpenRouterClientError, LLMError)
+
+
+# ---------------------------------------------------------------------------
+# Persistent client reuse (issue #54 subtask 4.5.16.2)
+# ---------------------------------------------------------------------------
+
+
+def test_complete_client_reuse_across_calls() -> None:
+    """`complete()` must reuse one persistent `httpx.Client`/transport for
+    the instance's lifetime rather than opening a fresh one per call."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    client = _client_with_handler(handler)
+    try:
+        client_before_first_call = client._client
+        client.complete("first call")
+        client_after_first_call = client._client
+
+        client.complete("second call")
+        client_after_second_call = client._client
+
+        assert client_before_first_call is client_after_first_call
+        assert client_after_first_call is client_after_second_call
+    finally:
+        client.close()
+
+
+def test_client_can_be_used_as_context_manager() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    with _client_with_handler(handler) as client:
+        result = client.complete("hi")
+
+    assert result == "ok"
+    assert client._client.is_closed
+
+
+def test_close_closes_underlying_client() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    client = _client_with_handler(handler)
+    assert not client._client.is_closed
+
+    client.close()
+
+    assert client._client.is_closed
