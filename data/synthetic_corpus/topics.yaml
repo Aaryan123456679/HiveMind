@@ -1,0 +1,81 @@
+# Synthetic policy/manual corpus topic-seed manifest (issue #26, subtask 5.1.2).
+#
+# Per docs/LLD/eval.md's "Dataset loaders" section: "Synthetic policy/manual PDFs, seeded
+# with ~30-50 predefined ground-truth topics and deliberate cross-topic references." This
+# file ships a smaller, demonstrative seed set (10 topics) to keep local live-Ollama
+# generation runs fast; `data/gen_synthetic_pdfs.py` places no assumption on topic count --
+# append more `topics` entries (following the same shape) to scale toward the LLD's full
+# ~30-50 target with zero code changes.
+#
+# Each topic:
+#   id:        slug, used as the manifest/doc-spec key and the generated PDF's filename stem.
+#               Must be unique and stable (subtask 5.1.3's ground-truth derivation will key
+#               off these ids via the generation manifest.json, not the PDF filenames alone).
+#   title:     human-readable topic title, embedded verbatim in the generation prompt and
+#               checked for (case-insensitively) in generated PDF text as the primary-topic
+#               and cross-topic-reference signal.
+#   key_facts: 2-3 short, distinctive factual strings woven into the prompt so generated
+#               documents have concrete, checkable-by-a-human content rather than generic
+#               filler. Not asserted verbatim by automated tests (LLM won't reliably echo
+#               exact phrasing) -- used as prompt content and for manual spot-check (OQ-2).
+
+topics:
+  - id: data-retention
+    title: "Data Retention Policy"
+    key_facts:
+      - "customer records must be retained for a minimum of 7 years"
+      - "the retention clock starts on the date of final account closure"
+
+  - id: expense-reimbursement
+    title: "Expense Reimbursement Procedure"
+    key_facts:
+      - "reimbursement requests must be submitted within 30 days of purchase"
+      - "any single expense over $500 requires manager pre-approval"
+
+  - id: remote-work-eligibility
+    title: "Remote Work Eligibility Guidelines"
+    key_facts:
+      - "employees must complete a 90-day probationary period before requesting remote status"
+      - "remote work agreements are reviewed annually every January"
+
+  - id: incident-response
+    title: "Security Incident Response Plan"
+    key_facts:
+      - "any suspected data breach must be reported to security within 1 hour of discovery"
+      - "the incident response team maintains an on-call rotation with a 15-minute response SLA"
+
+  - id: vendor-onboarding
+    title: "Vendor Onboarding Checklist"
+    key_facts:
+      - "all new vendors must complete a security questionnaire before contract signature"
+      - "vendor access credentials expire automatically after 12 months if not renewed"
+
+  - id: pto-accrual
+    title: "Paid Time Off Accrual Policy"
+    key_facts:
+      - "full-time employees accrue 1.5 PTO days per month worked"
+      - "a maximum of 10 unused PTO days may be carried over into the next calendar year"
+
+  - id: equipment-provisioning
+    title: "Employee Equipment Provisioning Policy"
+    key_facts:
+      - "new hires receive provisioned laptops within 5 business days of their start date"
+      - "all provisioned equipment must be returned within 14 days of employment end"
+
+  - id: travel-authorization
+    title: "Business Travel Authorization Procedure"
+    key_facts:
+      - "international travel requires director-level approval at least 2 weeks in advance"
+      - "per-diem meal allowances are capped at $75 per day domestically"
+
+  - id: whistleblower-protection
+    title: "Whistleblower Protection Policy"
+    key_facts:
+      - "reports may be filed anonymously through the third-party ethics hotline"
+      - "retaliation against a good-faith reporter is grounds for immediate termination"
+
+  - id: change-management
+    title: "IT Change Management Procedure"
+    key_facts:
+      - "all production changes require a documented rollback plan before deployment"
+      - "emergency changes still require retroactive change-board review within 48 hours"
