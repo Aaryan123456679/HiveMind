@@ -975,3 +975,130 @@ func TestCrabbingRetryCapSurfacesError(t *testing.T) {
 		}
 	})
 }
+
+// TestSplitPublishLastOrderingRegression deterministically pins down the
+// leaf-split "publish-last" write ordering fixed by the 2a.4.5 fix
+// (commit b31328f, bug 3): insertIntoLeafAndPropagate must fully write the
+// new right-half node BEFORE the write that publishes a pointer to it
+// (leafID's own rewritten content, whose NextLeaf now names the new node),
+// since Tree.Lookup's optimistic reads (lookup.go) are lock-free and can
+// follow that pointer the instant it becomes visible, with no latch of
+// their own to wait behind.
+//
+// Mirrors TestNodeLatchUnlockOrderingPreventsDoubleLock's (latch_test.go)
+// idiom: splitPublishHook (insert.go) pauses a real, concurrent Tree.Insert
+// exactly at the boundary between the two writes -- after the new node has
+// been written and unlocked, strictly before the publish write -- and this
+// test directly probes the invariant the ordering is supposed to guarantee
+// at that exact point: the new node must already be durably readable via an
+// ordinary store.ReadNode. Because splitPublishHook's call site sits
+// textually between the two write statements in insert.go, swapping which
+// write runs first (the actual historical bug) would move this same hook
+// invocation to before the new node's write, and the ReadNode probe below
+// would then genuinely fail -- exactly the EOF/decode-failure class of bug
+// bug 3 fixed -- catching a future accidental reversal instead of only
+// asserting the doc comment's claim on faith.
+func TestSplitPublishLastOrderingRegression(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	rootID, err := alloc.Next()
+	if err != nil {
+		t.Fatalf("alloc.Next(): unexpected error: %v", err)
+	}
+
+	keyAt := func(i int) string { return fmt.Sprintf("key%06d", i) }
+
+	// Fill the root leaf with as many sequential keys as fit under
+	// NodeSize, exactly like the real overflow check
+	// (leafEncodedSize(newLeaf) <= NodeSize) -- no hand-computed magic
+	// numbers -- so the next insert is guaranteed to overflow and split it.
+	var leaf LeafNode
+	i := 0
+	for {
+		candidate := LeafNode{
+			Keys:    append(append([]string(nil), leaf.Keys...), keyAt(i)),
+			FileIDs: append(append([]uint64(nil), leaf.FileIDs...), uint64(i+1)),
+		}
+		if leafEncodedSize(candidate) > NodeSize {
+			break
+		}
+		leaf = candidate
+		i++
+	}
+	if i == 0 {
+		t.Fatalf("test setup assumption violated: not even one key fits in a leaf under NodeSize=%d", NodeSize)
+	}
+	triggerKey := keyAt(i)
+	triggerFileID := uint64(i + 1)
+
+	if err := writeLeaf(store, rootID, leaf); err != nil {
+		t.Fatalf("writeLeaf(rootID): unexpected error: %v", err)
+	}
+
+	tree := NewTree(store, alloc, rootID)
+
+	var paused int32
+	var hookCalls int32
+	var newChildID uint64
+	var checkErr error
+	release := make(chan struct{})
+	var once sync.Once
+	prevHook := splitPublishHook
+	splitPublishHook = func(childID uint64) {
+		atomic.AddInt32(&hookCalls, 1)
+		once.Do(func() {
+			newChildID = childID
+			if _, _, _, rerr := store.ReadNode(childID); rerr != nil {
+				checkErr = fmt.Errorf("store.ReadNode(new right-half node %d) failed at the publish-boundary hook: %v (split write-ordering regression: the new node must already be durably written and readable by this exact point, strictly before it is published via the old node's rewritten pointer)", childID, rerr)
+			}
+			atomic.StoreInt32(&paused, 1)
+			<-release
+		})
+	}
+	t.Cleanup(func() { splitPublishHook = prevHook })
+
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- tree.Insert(triggerKey, triggerFileID)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&paused) == 0 {
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatalf("Tree.Insert(%q) never reached the forced split-publish-boundary pause within 2s", triggerKey)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	close(release)
+
+	select {
+	case err := <-insertDone:
+		if err != nil {
+			t.Fatalf("Tree.Insert(%q): unexpected error: %v", triggerKey, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Tree.Insert did not complete within 5s after the forced pause was released")
+	}
+
+	if atomic.LoadInt32(&hookCalls) == 0 {
+		t.Fatal("splitPublishHook was never invoked; test did not actually force the split")
+	}
+	if newChildID == 0 {
+		t.Fatal("splitPublishHook fired but never recorded the new child ID; test setup broken")
+	}
+	if checkErr != nil {
+		t.Fatal(checkErr)
+	}
+
+	finalRoot := tree.Root()
+	wantPresent := make(map[string]uint64, i+1)
+	for idx := 0; idx < i; idx++ {
+		wantPresent[keyAt(idx)] = uint64(idx + 1)
+	}
+	wantPresent[triggerKey] = triggerFileID
+
+	assertAllLookupable(t, store, finalRoot, wantPresent)
+	assertStructuralInvariants(t, store, finalRoot, len(wantPresent))
+}

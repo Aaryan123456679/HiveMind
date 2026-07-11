@@ -3,10 +3,14 @@ package catalog
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Aaryan123456679/HiveMind/engine/wal"
@@ -569,5 +573,225 @@ func TestAppendInvalidatesHeaderCache(t *testing.T) {
 	}
 	if !reflect.DeepEqual(after, wantAfter) {
 		t.Fatalf("ReadPartial (after Append) = %+v, want %+v (stale cache from before Append was not invalidated)", after, wantAfter)
+	}
+}
+
+// contentChunkHeaderLen is the fixed-width prefix makeContentChunk/
+// parseContentChunks agree on for each self-describing chunk: "<<" (2 bytes)
+// + a 4-digit decimal body length (4 bytes) + ":" (1 byte) = 7 bytes, before
+// the variable-length body itself.
+const contentChunkHeaderLen = 7
+
+// contentChunkFooter closes every chunk makeContentChunk produces. Its
+// presence (unmangled) immediately after exactly the declared body length is
+// what lets parseContentChunks distinguish a well-formed chunk boundary from
+// a torn/truncated one.
+const contentChunkFooter = ">>\n"
+
+// makeContentChunk returns the i-th self-describing test chunk: a 4-digit
+// decimal length prefix, a body of exactly that many 'Z' bytes, and a fixed
+// footer -- e.g. "<<0023:ZZZZZZZZZZZZZZZZZZZZZZZ>>\n". Varying the body
+// length by i keeps chunk sizes non-uniform (closer to real markdown
+// appends of varying size) without needing any cross-goroutine bookkeeping:
+// each chunk fully describes and validates itself (see parseContentChunks),
+// which is what makes TestContentAppendConcurrentRead's torn-read check
+// robust against not knowing the actual commit order concurrent Append
+// calls land in.
+func makeContentChunk(i int) []byte {
+	n := 20 + (i % 40)
+	body := strings.Repeat("Z", n)
+	return []byte(fmt.Sprintf("<<%04d:%s%s", n, body, contentChunkFooter))
+}
+
+// parseContentChunks reports whether content is exactly initial followed by
+// zero or more well-formed makeContentChunk-shaped chunks back-to-back, with
+// nothing left over. It is the empirical torn-read detector for
+// TestContentAppendConcurrentRead: content written via writeContentFile's
+// write-temp-then-rename technique must always be observed by a concurrent
+// Read as either fully-old or fully-new (see content.go's Read doc comment
+// and writeContentFile's doc comment) -- never a partial rename mid-flight,
+// never a mix of two different Append calls' bytes. Any of those failure
+// modes would corrupt one or more chunk headers/bodies/footers or leave a
+// truncated tail, which this parser rejects.
+//
+// This intentionally does NOT depend on knowing which chunks committed in
+// what order (concurrent Append calls interleave in an order this test does
+// not control and cannot know without racing its own bookkeeping against the
+// system under test) -- each chunk is self-validating in isolation, so this
+// can be called against ANY snapshot cs.Read returns at ANY point during the
+// concurrent phase.
+func parseContentChunks(content, initial []byte) error {
+	if !bytes.HasPrefix(content, initial) {
+		return fmt.Errorf("content does not start with the expected initial prefix %q (got %d bytes total)", initial, len(content))
+	}
+	rest := content[len(initial):]
+
+	for len(rest) > 0 {
+		if len(rest) < contentChunkHeaderLen {
+			return fmt.Errorf("truncated chunk header: only %d bytes left, want at least %d", len(rest), contentChunkHeaderLen)
+		}
+		if rest[0] != '<' || rest[1] != '<' {
+			return fmt.Errorf("malformed chunk header: want %q prefix, got %q", "<<", rest[:2])
+		}
+		if rest[6] != ':' {
+			return fmt.Errorf("malformed chunk header: want ':' at offset 6, got %q", rest[6])
+		}
+		n, err := strconv.Atoi(string(rest[2:6]))
+		if err != nil {
+			return fmt.Errorf("malformed chunk length field %q: %w", rest[2:6], err)
+		}
+		if n < 0 {
+			return fmt.Errorf("malformed chunk length field %q: negative", rest[2:6])
+		}
+
+		wantTotal := contentChunkHeaderLen + n + len(contentChunkFooter)
+		if len(rest) < wantTotal {
+			return fmt.Errorf("truncated chunk body/footer: declared body length %d needs %d total bytes, only %d left (torn read)", n, wantTotal, len(rest))
+		}
+
+		body := rest[contentChunkHeaderLen : contentChunkHeaderLen+n]
+		for _, b := range body {
+			if b != 'Z' {
+				return fmt.Errorf("corrupted chunk body: expected all 'Z' bytes, found %q within declared body of length %d (torn read)", b, n)
+			}
+		}
+
+		footer := rest[contentChunkHeaderLen+n : wantTotal]
+		if string(footer) != contentChunkFooter {
+			return fmt.Errorf("corrupted chunk footer: want %q, got %q (torn read)", contentChunkFooter, footer)
+		}
+
+		rest = rest[wantTotal:]
+	}
+
+	return nil
+}
+
+// TestContentAppendConcurrentRead covers subtask 4.5.5.3: a -race test that
+// interleaves ContentStore.Append and ContentStore.Read goroutines against
+// the SAME fileID, empirically pinning down ContentStore's no-torn-read
+// guarantee (writeContentFile's write-temp-then-rename technique, and
+// Append's content-write-ordered-before-cat.Put sequencing -- see
+// content.go's ContentStore/Read/Append doc comments) against future
+// refactors.
+//
+// This is deliberately a statistical/iteration-based race test, not a
+// hook-forced deterministic one (contrast with engine/btree's
+// optimisticReadHook/crabRetryHook seams): the guarantee under test is an
+// OS/filesystem-level atomicity property of os.Rename exercised across many
+// independent Append calls, not one narrow internal multi-step algorithm
+// window the way btree's latch-crabbing retries are, so there is no single
+// point a hook would usefully pin that many concurrent iterations under
+// -race don't already exercise directly. This mirrors
+// TestContentAppendConcurrentSameFileID's own docstring precedent, which
+// likewise settles for "just the logical outcome" over a hook-based
+// reproduction for a similar concurrency guarantee in this same file.
+//
+// Torn-read detection is done via parseContentChunks against
+// self-describing chunks (see makeContentChunk), deliberately avoiding any
+// external cross-goroutine "which Append committed when" bookkeeping in the
+// test itself: bookkeeping done AFTER cs.Append returns (as it necessarily
+// would be, from the calling goroutine) would itself race against
+// concurrent readers that can already observe the just-committed content,
+// which would produce false failures unrelated to the guarantee under test.
+// The content-write-before-cat.Put half of the guarantee is instead checked
+// via each reader observing cat.Get's SizeBytes immediately before its Read
+// and asserting the read content is never shorter than that just-observed
+// size (sizes are monotonically non-decreasing across Appends).
+func TestContentAppendConcurrentRead(t *testing.T) {
+	cs, cat, _ := newTestContentStore(t)
+
+	const fileID = uint64(55)
+	initial := []byte("# Concurrent Doc\n\n")
+	rec := testContentRecord(fileID)
+	rec.SizeBytes = uint64(len(initial))
+	if _, err := cs.Create(rec, initial); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const numChunks = 240
+	const numWriters = 6
+	const numReaders = 8
+
+	chunks := make([][]byte, numChunks)
+	for i := range chunks {
+		chunks[i] = makeContentChunk(i)
+	}
+
+	var nextChunkIdx int32 // atomic work-stealing cursor into chunks
+
+	var writersWG sync.WaitGroup
+	for w := 0; w < numWriters; w++ {
+		writersWG.Add(1)
+		go func() {
+			defer writersWG.Done()
+			for {
+				i := int(atomic.AddInt32(&nextChunkIdx, 1)) - 1
+				if i >= numChunks {
+					return
+				}
+				if _, err := cs.Append(fileID, chunks[i]); err != nil {
+					t.Errorf("Append(#%d): %v", i, err)
+					return
+				}
+			}
+		}()
+	}
+
+	stop := make(chan struct{})
+	var readersWG sync.WaitGroup
+	for r := 0; r < numReaders; r++ {
+		readersWG.Add(1)
+		go func() {
+			defer readersWG.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+
+				recBefore, err := cat.Get(fileID)
+				if err != nil {
+					t.Errorf("cat.Get: %v", err)
+					return
+				}
+
+				content, err := cs.Read(fileID)
+				if err != nil {
+					t.Errorf("Read: %v", err)
+					return
+				}
+
+				if uint64(len(content)) < recBefore.SizeBytes {
+					t.Errorf("ordering violated: Read observed %d content bytes, smaller than catalog SizeBytes %d seen just before the read (content write must be ordered strictly before cat.Put becomes visible)", len(content), recBefore.SizeBytes)
+					return
+				}
+
+				if err := parseContentChunks(content, initial); err != nil {
+					t.Errorf("torn read detected: %v", err)
+					return
+				}
+			}
+		}()
+	}
+
+	writersWG.Wait()
+	close(stop)
+	readersWG.Wait()
+
+	finalRec, err := cat.Get(fileID)
+	if err != nil {
+		t.Fatalf("final cat.Get: %v", err)
+	}
+	finalContent, err := cs.Read(fileID)
+	if err != nil {
+		t.Fatalf("final Read: %v", err)
+	}
+	if uint64(len(finalContent)) != finalRec.SizeBytes {
+		t.Fatalf("final content length = %d, want catalog SizeBytes %d", len(finalContent), finalRec.SizeBytes)
+	}
+	if err := parseContentChunks(finalContent, initial); err != nil {
+		t.Fatalf("final content failed to parse as well-formed chunks: %v", err)
 	}
 }

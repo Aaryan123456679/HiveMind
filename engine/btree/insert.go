@@ -467,6 +467,35 @@ var errRestartFromRoot = errors.New("btree: restart crabbing walk from root")
 // exercised; nil (no-op) otherwise, so it costs nothing in normal use.
 var crabRetryHook func(nodeID uint64)
 
+// splitPublishHook, if non-nil, is invoked synchronously by
+// insertIntoLeafAndPropagate/Tree.propagate immediately after a split's new
+// right-half node has been fully written and unlocked, but strictly BEFORE
+// the "publish" write that makes it reachable (leafID's/parentID's own
+// NextLeaf/NextSibling-updated content). newChildID is the just-written,
+// not-yet-published new node's ID. Used only by tests (see
+// TestSplitPublishLastOrderingRegression in insert_test.go) to
+// deterministically pin down that this write ordering -- proven load-bearing
+// by the 2a.4.5 fix referenced throughout this file -- is never silently
+// reversed by a future edit: at the moment this hook fires, newChildID must
+// already be durably readable via store.ReadNode, exactly mirroring
+// unlockOrderHook's (latch.go) and optimisticReadHook's (lookup.go) test-only,
+// nil-in-production shape. Costs nothing in normal use.
+var splitPublishHook func(newChildID uint64)
+
+// prePropagateHook, if non-nil, is invoked synchronously by
+// insertIntoLeafAndPropagate/Tree.propagate immediately after a split's
+// "publish" write has completed and every latch acquired for the split
+// itself has been released, but strictly BEFORE propagate is (re-)entered to
+// link the new node into its parent's Children/Keys. oldChildID is the
+// just-split node's ID (the one whose parent still needs updating). Used
+// only by tests (see TestRepairEmptyLeafOrphanRegression in delete_test.go)
+// to deterministically force a window in which a split has fully completed
+// and is durably visible on disk, but not yet linked into its parent --
+// exactly the race window the 2a.4.5 orphan fix in
+// repairEmptyLeafAtParent (delete.go) guards against. Costs nothing in
+// normal use.
+var prePropagateHook func(oldChildID uint64)
+
 // crabRetryBackoff sleeps a short, increasing, jittered delay before a
 // crabInsert/findParent retry attempt. Without this, goroutines that
 // collided once on the same node would tend to immediately collide again in
@@ -848,12 +877,18 @@ func (t *Tree) insertIntoLeafAndPropagate(leafID uint64, leaf LeafNode, path str
 	store.Lock(rightID)
 	werr := writeLeaf(store, rightID, right)
 	store.Unlock(rightID)
+	if splitPublishHook != nil {
+		splitPublishHook(rightID)
+	}
 	if werr == nil {
 		werr = writeLeaf(store, leafID, left)
 	}
 	store.Unlock(leafID)
 	if werr != nil {
 		return werr
+	}
+	if prePropagateHook != nil {
+		prePropagateHook(leafID)
 	}
 
 	return t.propagate(leafID, right.Keys[0], rightID, path)
@@ -1226,12 +1261,18 @@ func (t *Tree) propagate(childIDBeingReplaced uint64, promotedKey string, newChi
 		store.Lock(rightID)
 		werr := writeInternal(store, rightID, right)
 		store.Unlock(rightID)
+		if splitPublishHook != nil {
+			splitPublishHook(rightID)
+		}
 		if werr == nil {
 			werr = writeInternal(store, parentID, left)
 		}
 		store.Unlock(parentID)
 		if werr != nil {
 			return werr
+		}
+		if prePropagateHook != nil {
+			prePropagateHook(parentID)
 		}
 
 		childIDBeingReplaced = parentID

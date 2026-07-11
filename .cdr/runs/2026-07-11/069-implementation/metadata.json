@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-069-implementation",
+  "macro": "cdr-implementation",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "4.5.1.5",
+  "git_head": "b3aa8e2982fc1cf3100066b462e1bda248226bf4",
+  "run_key": "sha256:subtask-4.5.1.5-issue-38-b3aa8e29-btree-orphan-publish-last-regression-tests",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-11T06:00:00Z",
+  "ended_at": "2026-07-11T06:50:00Z",
+  "notes": "Run was interrupted mid-flow by a harness process restart after implementation/mutation-testing was already done but before CDR docs were written and before the commit. Resumed in place: verified no destructive state loss (git diff on the four btree files was intact, other concurrent agents' files untouched), re-ran full targeted + full-package test suites to reconfirm green, then completed the remaining CDR docs and proceeded to commit."
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "subtask": "4.5.1.5",
+  "build": "go build ./engine/btree/... -- clean",
+  "vet": "go vet ./engine/btree/... -- clean",
+  "targeted_tests": "go test ./engine/btree/... -race -run 'TestRepairEmptyLeafOrphanRegression|TestSplitPublishLastOrderingRegression' -v -count=5 -- all pass, stable",
+  "full_package_suite": "go test ./engine/btree/... -race -count=1 -- pass (73.8s), no regressions",
+  "mutation_testing": [
+    "Reverted delete.go's leftID/leafID unlock fix -> TestRepairEmptyLeafOrphanRegression reproduces 'fatal error: sync: unlock of unlocked mutex' deterministically; restored, verified byte-identical via diff against pre-mutation backup",
+    "Reversed insert.go's leaf-split write order -> TestSplitPublishLastOrderingRegression reproduces the exact EOF read failure deterministically; restored, verified byte-identical via diff against pre-mutation backup"
+  ],
+  "scope_check": "git diff --stat confirms only engine/btree/{delete,insert,delete_test,insert_test}.go touched; no other tracked files modified by this run",
+  "note": "This is internal sanity only (build green, matrix covered, mutation-tested); NOT independent verification (invariant I4) -- delegated to /cdr:verify."
+}

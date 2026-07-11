@@ -793,6 +793,24 @@ func (t *Tree) repairEmptyLeafAtParent(parentID, leafID uint64, path string) (re
 			// correct left candidate for leafID (the newly-linked node
 			// will be).
 			if left.NextLeaf != leafID {
+				// Bugfix (subtask 4.5.1.5, issue #38): this branch previously
+				// called store.Unlock(leftID) twice and never unlocked leafID
+				// at all -- a copy-paste error from the 2a.4.5 orphan-guard
+				// fix (commit b31328f) that shipped alongside this exact race
+				// check. In production this permanently leaked leafID's latch
+				// (any future Lock(leafID) call -- e.g. this very leaf's next
+				// repair attempt, or an unrelated concurrent Insert/Delete
+				// routed to it -- would block forever) and double-unlocked
+				// leftID's mutex, which panics ("sync: unlock of unlocked
+				// mutex", or NodeStore.Unlock's own "no outstanding
+				// Lock/TryLock" panic if leftID's latch entry had already been
+				// evicted in between). Found while writing
+				// TestRepairEmptyLeafOrphanRegression (delete_test.go), which
+				// deterministically forces this exact branch and reproduces
+				// the panic/deadlock against the pre-fix code. Fixed to
+				// unlock each of the three distinct latches held here
+				// (leftID, leafID, parentID) exactly once, matching every
+				// other return path in this function.
 				store.Unlock(leftID)
 				store.Unlock(leafID)
 				store.Unlock(parentID)

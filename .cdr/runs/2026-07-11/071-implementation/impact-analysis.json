@@ -1,0 +1,23 @@
+{
+  "subtask": "4.5.5.3",
+  "issue": 42,
+  "files_touched": [
+    "engine/catalog/content_test.go"
+  ],
+  "files_explicitly_not_touched": [
+    "engine/catalog/content.go",
+    "engine/engine_stress_test.go (stray untracked file, unrelated cleanup)",
+    "engine/btree/*",
+    "engine/split/*"
+  ],
+  "production_code_changes": false,
+  "new_symbols": [
+    "TestContentAppendConcurrentRead (test func)",
+    "makeContentChunk (test helper)",
+    "parseContentChunks (test helper)"
+  ],
+  "risk": "low — additive test-only file, no shared test helper renamed/removed, no changes to existing tests",
+  "concurrency_with_other_streams": "None: engine/catalog package is not touched by the btree or split streams per orchestrator's scope isolation; content_test.go is exclusively this subtask's file.",
+  "test_scope": "go test ./engine/catalog/... -race -run TestContentAppendConcurrentRead ; also full go test ./engine/catalog/... -race for regression safety",
+  "rollback_plan": "single commit touching only content_test.go; revertable with git revert without affecting any other file"
+}

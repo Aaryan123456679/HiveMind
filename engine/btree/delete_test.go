@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // assertNoOrphanedPointers walks the whole tree from rootID and asserts that
@@ -1220,4 +1222,198 @@ func TestDeleteSpliceGj0CrossGrandparentNoDangling(t *testing.T) {
 	if qbNode.NextSibling != anc2ID {
 		t.Fatalf("Qb.NextSibling = %d, want %d (anc2ID); got noSibling=%d, abandoned ancID=%d for reference", qbNode.NextSibling, anc2ID, noSibling, ancID)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Subtask 4.5.1.5 (issue #38): deterministic, hook-forced-interleaving
+// regression coverage for the 2a.4.5 orphan-guard fix (commit b31328f) in
+// repairEmptyLeafAtParent -- mirroring TestNodeLatchUnlockOrderingPreventsDoubleLock's
+// (latch_test.go) "pause a real operation exactly at the load-bearing
+// boundary via a package-level hook, then directly probe the invariant"
+// idiom, rather than TestOptimisticRead's forced-retry-and-observe-the-
+// result idiom (there is no analogous observable retry counter here, since
+// repairEmptyLeafAtParent's retry signal is a plain bool return value, not a
+// hook invocation).
+// ---------------------------------------------------------------------------
+
+// TestRepairEmptyLeafOrphanRegression deterministically forces the exact
+// race repairEmptyLeafAtParent's left-sibling borrow/merge branches guard
+// against (see delete.go's "2a.4.5 fix" doc comment above the
+// left.NextLeaf != leafID check): a same-parent left sibling that has
+// already been split (its new right-half successor durably written and
+// linked via the left sibling's own NextLeaf field) by a concurrent
+// Tree.Insert, but whose successor is NOT YET linked into the shared
+// parent's Children (propagate is blocked on the parent's latch, held by
+// this test's own direct repairEmptyLeafAtParent call).
+//
+// Construction (manual node writes via the allocator's own reserved IDs --
+// mirroring TestDeleteSpliceGj0CrossGrandparentNoDangling's fixed-node-ID
+// style -- rather than insertN, so leftID's leaf can be sized to exactly one
+// key below NodeSize overflow deterministically, with no guesswork):
+//   - rootID (internal): Keys=[sep], Children=[leftID, emptyID].
+//   - leftID (leaf): filled with as many fixed-format keys as fit under
+//     NodeSize, NextLeaf=emptyID.
+//   - emptyID (leaf): starts with zero keys -- already in the "just emptied
+//     by a delete" state repairEmptyLeafAtParent's own doc comment documents
+//     as its precondition, so this test does not need to also drive a real
+//     Tree.Delete to reach it.
+//
+// prePropagateHook (insert.go) pauses a real, concurrent Tree.Insert of one
+// more key -- chosen to be exactly the key that overflows leftID -- right
+// after its split has fully completed (the new right-half node, call it X,
+// is durably written and leftID has been rewritten/published with
+// NextLeaf=X) but strictly before propagate is entered to link X into
+// rootID's Children. While paused, this test calls the real
+// repairEmptyLeafAtParent directly and asserts:
+//  1. It returns (retry=true, err=nil) -- the benign-race signal -- rather
+//     than silently splicing emptyID's separator out from under X (which
+//     would permanently orphan X and everything under it).
+//  2. Every latch it touched (rootID, emptyID, leftID) is fully released
+//     afterward (probed via TryLock/Unlock) -- pinning down a second,
+//     previously-undetected bug this test uncovered in the same branch: a
+//     copy-paste error unlocked leftID twice and never unlocked emptyID at
+//     all, which leaked emptyID's latch forever and double-unlocked
+//     leftID's mutex (a guaranteed panic on the very next Lock/Unlock of
+//     either node). Fixed in the same commit as this test (see delete.go).
+//
+// After releasing the pause, the real Tree.Insert is allowed to complete
+// (linking X into rootID), and a real (retrying) repairEmptyLeaf finishes
+// emptyID's actual rebalancing against X. Final assertions confirm X (and
+// every key ever inserted) is reachable with no orphaned/aliased pointer.
+func TestRepairEmptyLeafOrphanRegression(t *testing.T) {
+	store, alloc := newTestStoreAndAllocator(t)
+
+	leftID, err := alloc.Next()
+	if err != nil {
+		t.Fatalf("alloc.Next() (leftID): unexpected error: %v", err)
+	}
+	emptyID, err := alloc.Next()
+	if err != nil {
+		t.Fatalf("alloc.Next() (emptyID): unexpected error: %v", err)
+	}
+	rootID, err := alloc.Next()
+	if err != nil {
+		t.Fatalf("alloc.Next() (rootID): unexpected error: %v", err)
+	}
+
+	keyAt := func(i int) string { return fmt.Sprintf("aaa%06d", i) }
+	const sep = "zzz000000"
+
+	// Fill leftID with as many sequential keys as fit under NodeSize,
+	// exactly like the real overflow check (leafEncodedSize(candidate) <=
+	// NodeSize) -- no hand-computed magic numbers.
+	var leftLeaf LeafNode
+	i := 0
+	for {
+		candidate := LeafNode{
+			Keys:     append(append([]string(nil), leftLeaf.Keys...), keyAt(i)),
+			FileIDs:  append(append([]uint64(nil), leftLeaf.FileIDs...), uint64(i+1)),
+			NextLeaf: emptyID,
+		}
+		if leafEncodedSize(candidate) > NodeSize {
+			break
+		}
+		leftLeaf = candidate
+		i++
+	}
+	if i == 0 {
+		t.Fatalf("test setup assumption violated: not even one key fits in a leaf under NodeSize=%d", NodeSize)
+	}
+	triggerKey := keyAt(i)
+	triggerFileID := uint64(i + 1)
+
+	if err := writeLeaf(store, leftID, leftLeaf); err != nil {
+		t.Fatalf("writeLeaf(leftID): unexpected error: %v", err)
+	}
+	if err := writeLeaf(store, emptyID, LeafNode{NextLeaf: noSibling}); err != nil {
+		t.Fatalf("writeLeaf(emptyID): unexpected error: %v", err)
+	}
+	if err := writeInternal(store, rootID, InternalNode{Keys: []string{sep}, Children: []uint64{leftID, emptyID}}); err != nil {
+		t.Fatalf("writeInternal(rootID): unexpected error: %v", err)
+	}
+
+	tree := NewTree(store, alloc, rootID)
+
+	var paused int32
+	release := make(chan struct{})
+	var once sync.Once
+	prevHook := prePropagateHook
+	prePropagateHook = func(oldChildID uint64) {
+		if oldChildID != leftID {
+			return
+		}
+		once.Do(func() {
+			atomic.StoreInt32(&paused, 1)
+			<-release
+		})
+	}
+	t.Cleanup(func() { prePropagateHook = prevHook })
+
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- tree.Insert(triggerKey, triggerFileID)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&paused) == 0 {
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatalf("Tree.Insert(%q) never reached the forced pre-propagate pause within 2s", triggerKey)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// At this exact, forced window: leftID has already split (a new
+	// right-half node exists, durably written, and leftID's own NextLeaf
+	// now points at it -- not at emptyID anymore), but propagate has not
+	// yet run, so rootID's Children still only lists [leftID, emptyID].
+	// Exercise the real fix directly.
+	retry, err := tree.repairEmptyLeafAtParent(rootID, emptyID, sep)
+	if err != nil {
+		close(release)
+		t.Fatalf("repairEmptyLeafAtParent: unexpected error: %v", err)
+	}
+	if !retry {
+		close(release)
+		t.Fatalf("repairEmptyLeafAtParent returned retry=false while leftID had already split but its successor was not yet linked into the parent -- want retry=true (orphan-guard regression: the left.NextLeaf != leafID race check did not fire)")
+	}
+
+	// Every latch touched by the call above must be fully released -- pins
+	// down the double-unlock/leaked-latch bug this test uncovered in the
+	// same branch (see this test's doc comment).
+	for _, id := range []uint64{rootID, emptyID, leftID} {
+		if !store.TryLock(id) {
+			close(release)
+			t.Fatalf("node %d's latch is still held after repairEmptyLeafAtParent returned (retry=true) -- leaked latch regression", id)
+		}
+		store.Unlock(id)
+	}
+
+	close(release)
+
+	select {
+	case err := <-insertDone:
+		if err != nil {
+			t.Fatalf("Tree.Insert(%q): unexpected error: %v", triggerKey, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Tree.Insert did not complete within 5s after the forced pause was released")
+	}
+
+	// propagate has now linked the split's right-half node into rootID.
+	// Finish emptyID's rebalancing for real via the retrying wrapper.
+	if err := tree.repairEmptyLeaf(emptyID, sep); err != nil {
+		t.Fatalf("repairEmptyLeaf: unexpected error: %v", err)
+	}
+
+	finalRoot := tree.Root()
+	wantPresent := make(map[string]uint64, i+1)
+	for idx := 0; idx < i; idx++ {
+		wantPresent[keyAt(idx)] = uint64(idx + 1)
+	}
+	wantPresent[triggerKey] = triggerFileID
+
+	assertAllLookupable(t, store, finalRoot, wantPresent)
+	assertStructuralInvariants(t, store, finalRoot, len(wantPresent))
+	assertNoOrphanedPointers(t, store, finalRoot)
 }
