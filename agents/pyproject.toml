@@ -8,6 +8,10 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "grpcio>=1.66",
     "grpcio-tools>=1.66",
+    # Pinned explicitly (issue #46): must stay >= the gencode baked into the committed
+    # hivemind_pb2*.py stubs (currently 6.33.5) to avoid VersionError at import time;
+    # <7.0.0 matches grpcio-tools 1.81.1's own protobuf compatibility range.
+    "protobuf>=6.33.5,<7.0.0",
     "pydantic>=2.9",
     "httpx>=0.27",
     "pymupdf>=1.24",
