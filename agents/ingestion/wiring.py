@@ -65,19 +65,22 @@ segment's file and each such other file -- then register this file under the ent
 future segments' lookups (`index_entity`). This is real cross-file co-occurrence
 tracking, consistent with the graph's actual (fileID-only) edge model.
 
-`new_topic_path` cannot be registered anywhere queryable today -- disclosed, out-of-scope gap
--------------------------------------------------------------------------------------------------
-`PutSegmentRequest` carries only `file_id` (uint64) + `content` (bytes) -- no path
-field at all. `engine/rpc/server.go`'s already-implemented `PutSegment` CREATE path
-never sets `catalog.CatalogRecord.PathHash` (the only path-shaped field in the entire
-catalog record) from any request field, and no btree-insert call is wired from
-`PutSegment` either. In other words, a file created via `PutSegment(file_id=0, ...)`
-today is **not discoverable by path** via `SearchCandidates` afterwards -- this is a
-real, pre-existing gap in already-committed engine code (task-3.2.2), not something in
-this subtask's impacted-module scope (`agents/ingestion/wiring.py` only, no Go/proto
-changes) to fix. `execute_segment` below calls `PutSegment` exactly per its real,
-current contract and does not invent a client-side workaround that pretends path
-registration works; flagged forward instead (see this run's handoff).
+`new_topic_path` discoverability -- resolved by issue #43 (3 commits)
+---------------------------------------------------------------------
+Historically `PutSegmentRequest` carried only `file_id` (uint64) + `content`
+(bytes) -- no path field at all, so a file created via
+`PutSegment(file_id=0, ...)` was never discoverable by path via
+`SearchCandidates` afterwards. This is now fixed end-to-end by GitHub issue
+#43's three commits: (1/3) added `string path = 3;` to `PutSegmentRequest` in
+`proto/hivemind.proto` and regenerated stubs; (2/3) `engine/rpc/server.go`'s
+`PutSegment` CREATE handler now computes `catalog.CatalogRecord.PathHash` and
+inserts the path into the same `pathIndex` B+Tree `SearchCandidates` reads
+from; (3/3, this module) `execute_segment` now passes the segment's real
+topic path (`new_topic_path` for `CREATE_NEW`, `target_topic` for
+`APPEND_EXISTING`) through `SegmentWiringClient.put_segment` into
+`GrpcPutSegmentClient`'s `PutSegmentRequest.path`, so real ingestion traffic
+actually exercises the server-side dedup/lookup machinery, not just Go-side
+tests.
 
 `target_topic` resolution -- disclosed choice, closes 3.4.3's forwarded F2
 -------------------------------------------------------------------------------
@@ -195,9 +198,17 @@ class SegmentWiringClient(Protocol):
     reason, not because any method still lacks a real implementation.
     """
 
-    def put_segment(self, file_id: int, content: bytes) -> PutSegmentResult:
+    def put_segment(self, file_id: int, content: bytes, path: str) -> PutSegmentResult:
         """Execute a segment's content write. `file_id=0` means create; non-zero means
-        append. Mirrors `proto/hivemind.proto`'s real `PutSegment` RPC exactly."""
+        append. Mirrors `proto/hivemind.proto`'s real `PutSegment` RPC exactly.
+
+        `path` is the segment's real topic path (`SegmentResult.new_topic_path` for
+        `CREATE_NEW`, `SegmentResult.target_topic` for `APPEND_EXISTING`). Used by the
+        server only when `file_id == 0` (create semantics) to compute
+        `catalog.CatalogRecord.PathHash` and index the file for discovery via
+        `SearchCandidates`; ignored on append. See `proto/hivemind.proto`'s
+        `PutSegmentRequest.path` field comment and issue #43.
+        """
         ...
 
     def lookup_entity_files(self, entity: str) -> Sequence[int]:
@@ -265,11 +276,13 @@ def execute_segment(
                 f"wiring: target_topic {segment_result.target_topic!r} "
                 "(topic_action=APPEND_EXISTING) does not resolve to a known fileID"
             )
+        path_arg = segment_result.target_topic
     else:
         file_id_arg = 0
+        path_arg = segment_result.new_topic_path
 
     put_result = rpc_client.put_segment(
-        file_id_arg, segment_result.content_markdown.encode("utf-8")
+        file_id_arg, segment_result.content_markdown.encode("utf-8"), path_arg
     )
     file_id = put_result.file_id
 
@@ -377,10 +390,12 @@ class GrpcPutSegmentClient:
 
         self._stub = hivemind_pb2_grpc.HiveMindStub(channel)
 
-    def put_segment(self, file_id: int, content: bytes) -> PutSegmentResult:
+    def put_segment(self, file_id: int, content: bytes, path: str) -> PutSegmentResult:
         hivemind_pb2, _ = _import_hivemind_grpc_modules()
 
-        request = hivemind_pb2.PutSegmentRequest(file_id=file_id, content=content)
+        request = hivemind_pb2.PutSegmentRequest(
+            file_id=file_id, content=content, path=path
+        )
         response = self._stub.PutSegment(request)
         return PutSegmentResult(
             file_id=response.file_id, new_version=response.new_version
@@ -478,8 +493,8 @@ class GrpcSegmentWiringClient:
         self._put_segment_client = GrpcPutSegmentClient(channel)
         self._entity_edge_client = GrpcEntityEdgeClient(channel)
 
-    def put_segment(self, file_id: int, content: bytes) -> PutSegmentResult:
-        return self._put_segment_client.put_segment(file_id, content)
+    def put_segment(self, file_id: int, content: bytes, path: str) -> PutSegmentResult:
+        return self._put_segment_client.put_segment(file_id, content, path)
 
     def lookup_entity_files(self, entity: str) -> list[int]:
         return self._entity_edge_client.lookup_entity_files(entity)

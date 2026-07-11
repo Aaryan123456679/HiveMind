@@ -1,0 +1,29 @@
+{
+  "run_id": "2026-07-11-163-implementation",
+  "files_to_modify": [
+    {
+      "path": "agents/ingestion/wiring.py",
+      "change": "Add path: str param to SegmentWiringClient.put_segment Protocol method; execute_segment computes path_arg (new_topic_path for CREATE_NEW, target_topic for APPEND_EXISTING) and passes it; GrpcPutSegmentClient.put_segment accepts path and passes to PutSegmentRequest(path=path); GrpcSegmentWiringClient.put_segment delegates path through. Update stale 'new_topic_path cannot be registered anywhere queryable today' module-docstring disclosure (now resolved)."
+    },
+    {
+      "path": "agents/ingestion/test_segment_wiring.py",
+      "change": "_FakeWiringClient.put_segment gains path param, records 3-tuples; update 5 put_segment_calls assertions; update GrpcPutSegmentClient direct test to pass path and assert PutSegmentRequest called with path=; update GrpcSegmentWiringClient tests to pass path; add new test asserting path is populated correctly from PutSegmentRequest for both CREATE_NEW and APPEND_EXISTING via execute_segment through GrpcSegmentWiringClient (mocked stub)."
+    },
+    {
+      "path": "agents/ingestion/test_segment_fixtures.py",
+      "change": "_FakeWiringClient.put_segment gains path param, records 3-tuples; update 1 put_segment_calls assertion."
+    }
+  ],
+  "files_not_touched_and_why": [
+    {"path": "proto/hivemind.proto", "why": "path field already added in commit 1/3 (107f982); no proto change needed here"},
+    {"path": "engine/rpc/gen/hivemind.pb.go", "why": "Go stub already regenerated in commit 1/3"},
+    {"path": "agents/hivemind_pb2.py", "why": "Python stub already regenerated in commit 1/3; PutSegmentRequest already accepts path= kwarg"},
+    {"path": "engine/rpc/server.go", "why": "PathHash compute + pathIndex.Insert already landed in commit 2/3"},
+    {"path": "docs/LLD/ingestion-agent.md", "why": "does not document put_segment at Python-parameter granularity; no LLD-level change required for this internal Protocol signature change"}
+  ],
+  "downstream_consumers": [
+    {"name": "agents/ingestion/execute_segment callers", "note": "grep confirms no other in-repo module calls execute_segment or SegmentWiringClient.put_segment besides the two test files listed above"}
+  ],
+  "risk": "low — confined to one module + its two test files; no proto/Go/wire changes; signature change is additive at the wire level (path already existed on PutSegmentRequest) and internal-only at the Python Protocol level (no external consumers of SegmentWiringClient found)",
+  "serialization_chain_note": "commit message of 107f982 references chain #43->#48->#45->#55->#44/#54 sharing agents/ingestion/wiring.py; this commit's signature change to put_segment should be flagged in handoff for those downstream issues' agents to be aware of"
+}

@@ -97,13 +97,13 @@ class _FakeWiringClient:
     """
 
     def __init__(self) -> None:
-        self.put_segment_calls: list[tuple[int, bytes]] = []
+        self.put_segment_calls: list[tuple[int, bytes, str]] = []
         self.put_edge_calls: list[tuple[int, int, str]] = []
         self.indexed_entities: list[tuple[str, int]] = []
         self._next_file_id = 100
 
-    def put_segment(self, file_id: int, content: bytes) -> PutSegmentResult:
-        self.put_segment_calls.append((file_id, content))
+    def put_segment(self, file_id: int, content: bytes, path: str) -> PutSegmentResult:
+        self.put_segment_calls.append((file_id, content, path))
         if file_id == 0:
             file_id = self._next_file_id
             self._next_file_id += 1
@@ -348,7 +348,11 @@ def test_pipeline_shortlist_segment_wiring_end_to_end() -> None:
 
     assert execution_result.file_id == top_candidate.file_id
     assert wiring_client.put_segment_calls == [
-        (top_candidate.file_id, segment_result.content_markdown.encode("utf-8"))
+        (
+            top_candidate.file_id,
+            segment_result.content_markdown.encode("utf-8"),
+            top_candidate.path,
+        )
     ]
     assert wiring_client.indexed_entities == [
         ("Priya Nair", top_candidate.file_id),

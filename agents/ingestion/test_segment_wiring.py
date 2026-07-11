@@ -79,13 +79,13 @@ class _FakeWiringClient:
         self._put_segment_error = put_segment_error
         self._put_edge_errors = put_edge_errors or {}
 
-        self.put_segment_calls: list[tuple[int, bytes]] = []
+        self.put_segment_calls: list[tuple[int, bytes, str]] = []
         self.lookup_entity_files_calls: list[str] = []
         self.index_entity_calls: list[tuple[str, int]] = []
         self.put_edge_calls: list[tuple[int, int, str, int]] = []
 
-    def put_segment(self, file_id: int, content: bytes) -> PutSegmentResult:
-        self.put_segment_calls.append((file_id, content))
+    def put_segment(self, file_id: int, content: bytes, path: str) -> PutSegmentResult:
+        self.put_segment_calls.append((file_id, content, path))
         if self._put_segment_error is not None:
             raise self._put_segment_error
         resolved_file_id = file_id if file_id != 0 else self._next_file_id
@@ -141,7 +141,7 @@ def test_create_new_calls_put_segment_with_zero_file_id():
 
     result = execute_segment(segment_result, client, resolve_topic_file_id=_no_resolver)
 
-    assert client.put_segment_calls == [(0, b"hello")]
+    assert client.put_segment_calls == [(0, b"hello", "a/b")]
     assert result.file_id == 99
     assert result.new_version == 1
 
@@ -157,7 +157,7 @@ def test_append_existing_calls_put_segment_with_resolved_file_id():
 
     result = execute_segment(segment_result, client, resolve_topic_file_id=resolver)
 
-    assert client.put_segment_calls == [(5, b"more")]
+    assert client.put_segment_calls == [(5, b"more", "billing/InvoiceDisputes")]
     assert result.file_id == 5
     assert result.new_version == 7
 
@@ -181,7 +181,9 @@ def test_put_segment_failure_propagates_and_skips_edges():
     with pytest.raises(RuntimeError, match="engine unavailable"):
         execute_segment(segment_result, client, resolve_topic_file_id=_no_resolver)
 
-    assert client.put_segment_calls == [(0, segment_result.content_markdown.encode("utf-8"))]
+    assert client.put_segment_calls == [
+        (0, segment_result.content_markdown.encode("utf-8"), "billing/InvoiceDisputes")
+    ]
     assert client.lookup_entity_files_calls == []
     assert client.put_edge_calls == []
     assert client.index_entity_calls == []
@@ -333,7 +335,9 @@ def test_full_fixture_segment_set():
 
     result = execute_segment(segment_result, client, resolve_topic_file_id=resolver)
 
-    assert client.put_segment_calls == [(0, segment_result.content_markdown.encode("utf-8"))]
+    assert client.put_segment_calls == [
+        (0, segment_result.content_markdown.encode("utf-8"), "billing/InvoiceDisputes")
+    ]
     assert set(client.put_edge_calls) == {
         (100, 1, ENTITY_COOCCUR, 1),
         (100, 2, ENTITY_COOCCUR, 1),
@@ -373,10 +377,12 @@ def test_grpc_put_segment_client_translates_request_response(monkeypatch):
 
     fake_channel = MagicMock()
     client = GrpcPutSegmentClient(fake_channel)
-    result = client.put_segment(0, b"content bytes")
+    result = client.put_segment(0, b"content bytes", "docs/new-topic.md")
 
     fake_pb2_grpc.HiveMindStub.assert_called_once_with(fake_channel)
-    fake_pb2.PutSegmentRequest.assert_called_once_with(file_id=0, content=b"content bytes")
+    fake_pb2.PutSegmentRequest.assert_called_once_with(
+        file_id=0, content=b"content bytes", path="docs/new-topic.md"
+    )
     fake_stub_instance.PutSegment.assert_called_once_with(request_marker)
     assert result == PutSegmentResult(file_id=42, new_version=3)
 
@@ -521,12 +527,15 @@ def test_grpc_segment_wiring_client_delegates_all_four_methods(monkeypatch):
     fake_channel = MagicMock()
     client = GrpcSegmentWiringClient(fake_channel)
 
-    put_result = client.put_segment(0, b"content")
+    put_result = client.put_segment(0, b"content", "docs/new-topic.md")
     lookup_result = client.lookup_entity_files("Acme Corp")
     client.index_entity("Acme Corp", 42)
     client.put_edge(42, 7, ENTITY_COOCCUR, occurrence_weight=1)
 
     assert put_result == PutSegmentResult(file_id=42, new_version=3)
+    fake_pb2.PutSegmentRequest.assert_called_once_with(
+        file_id=0, content=b"content", path="docs/new-topic.md"
+    )
     assert lookup_result == [7, 8]
     fake_stub_instance.PutEntity.assert_called_once()
     fake_stub_instance.PutEdge.assert_called_once()
@@ -534,8 +543,9 @@ def test_grpc_segment_wiring_client_delegates_all_four_methods(monkeypatch):
 
 def test_grpc_segment_wiring_client_satisfies_execute_segment_end_to_end(monkeypatch):
     """`execute_segment` works against a `GrpcSegmentWiringClient` exactly as it does
-    against the plain `_FakeWiringClient` used elsewhere in this file -- the Protocol
-    shape did not change, so nothing about `execute_segment` itself needed updating."""
+    against the plain `_FakeWiringClient` used elsewhere in this file, and (issue #43,
+    3/3) the real topic path flows all the way from `SegmentResult` into the
+    `PutSegmentRequest` sent over the (fake) wire."""
     fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
 
     fake_put_segment_response = MagicMock()
@@ -560,3 +570,44 @@ def test_grpc_segment_wiring_client_satisfies_execute_segment_end_to_end(monkeyp
     assert result.errors == ()
     assert fake_stub_instance.PutEdge.call_count == 2
     fake_stub_instance.PutEntity.assert_called_once()
+    # issue #43 (3/3): CREATE_NEW segments must send the real new_topic_path, not "".
+    fake_pb2.PutSegmentRequest.assert_called_once_with(
+        file_id=0,
+        content=segment_result.content_markdown.encode("utf-8"),
+        path=segment_result.new_topic_path,
+    )
+
+
+def test_grpc_segment_wiring_client_populates_path_for_append_existing(monkeypatch):
+    """issue #43 (3/3): `APPEND_EXISTING` segments must send `target_topic` as the
+    `PutSegmentRequest.path`, exercising the same end-to-end wiring for the append
+    case (server ignores `path` on append per the proto comment, but the client must
+    still send the real path consistently)."""
+    fake_pb2, fake_pb2_grpc = _install_fake_hivemind_modules(monkeypatch)
+
+    fake_put_segment_response = MagicMock()
+    fake_put_segment_response.file_id = 5
+    fake_put_segment_response.new_version = 4
+
+    fake_stub_instance = MagicMock()
+    fake_stub_instance.PutSegment.return_value = fake_put_segment_response
+    fake_pb2_grpc.HiveMindStub.return_value = fake_stub_instance
+
+    client = GrpcSegmentWiringClient(MagicMock())
+    segment_result = _segment(
+        topic_action="APPEND_EXISTING",
+        target_topic="billing/InvoiceDisputes",
+        entities=[],
+        related_topics=[],
+    )
+
+    result = execute_segment(
+        segment_result, client, resolve_topic_file_id=lambda p: 5
+    )
+
+    assert result.file_id == 5
+    fake_pb2.PutSegmentRequest.assert_called_once_with(
+        file_id=5,
+        content=segment_result.content_markdown.encode("utf-8"),
+        path="billing/InvoiceDisputes",
+    )

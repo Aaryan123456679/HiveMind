@@ -1,0 +1,41 @@
+{
+  "run_id": "2026-07-11-163-implementation",
+  "matrix": [
+    {
+      "id": "V1",
+      "requirement": "GrpcPutSegmentClient.put_segment populates PutSegmentRequest.path",
+      "test": "test_grpc_put_segment_client_translates_request_response (updated)",
+      "status": "covered"
+    },
+    {
+      "id": "V2",
+      "requirement": "execute_segment passes new_topic_path for CREATE_NEW segments",
+      "test": "new test: path populated from new_topic_path on CREATE_NEW, via GrpcSegmentWiringClient mocked stub",
+      "status": "covered"
+    },
+    {
+      "id": "V3",
+      "requirement": "execute_segment passes target_topic for APPEND_EXISTING segments",
+      "test": "new test: path populated from target_topic on APPEND_EXISTING, via GrpcSegmentWiringClient mocked stub",
+      "status": "covered"
+    },
+    {
+      "id": "V4",
+      "requirement": "Existing CREATE_NEW/APPEND_EXISTING/fail-fast/best-effort behavior unchanged (only path added)",
+      "test": "existing test_segment_wiring.py tests updated for new 3-tuple, all other assertions unchanged",
+      "status": "covered"
+    },
+    {
+      "id": "V5",
+      "requirement": "GrpcSegmentWiringClient still correctly delegates put_segment with path",
+      "test": "test_grpc_segment_wiring_client_delegates_all_four_methods (updated)",
+      "status": "covered"
+    },
+    {
+      "id": "V6",
+      "requirement": "No proto/Go/stub changes introduced in this commit",
+      "test": "git diff --stat scoped to agents/ingestion/*.py only (manual check in self-consistency step)",
+      "status": "covered"
+    }
+  ]
+}
