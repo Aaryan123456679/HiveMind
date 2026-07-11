@@ -104,8 +104,8 @@ func NewServer(cat *catalog.Catalog, cs *catalog.ContentStore, idAlloc *catalog.
 		return nil, fmt.Errorf("rpc: NewServer: idAlloc must not be nil")
 	}
 	return &Server{
-		cat:       cat,
-		cs:        cs,
+		cat:         cat,
+		cs:          cs,
 		idAlloc:     idAlloc,
 		g:           g,
 		pathIndex:   pathIndex,
