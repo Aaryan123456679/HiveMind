@@ -1,0 +1,27 @@
+{
+  "subtask": "4.5.3.4",
+  "build": {
+    "command": "go build ./engine/split/...",
+    "result": "PASS"
+  },
+  "vet": {
+    "command": "go vet ./engine/split/...",
+    "result": "PASS (no output)"
+  },
+  "targeted_tests": [
+    {
+      "command": "go test ./engine/split/... -run TestSplitBtreeKeyNormalization -v",
+      "result": "PASS (3/3 subtests)"
+    },
+    {
+      "command": "go test ./engine/split/... -run 'TestSplitBtreeRepoint|TestSplitAtomicCommit' -v -race",
+      "result": "PASS (all subtests, including RecoverSplitCommits crash-recovery subtests)"
+    }
+  ],
+  "full_package_test": {
+    "command": "go test ./engine/split/... -race",
+    "result": "PASS (49.4s, no failures, including TestReaderDuringSplit)"
+  },
+  "validation_matrix_coverage": "all 3 criteria in validation-matrix.json covered by the above test runs",
+  "note": "This is internal sanity only, not verification (invariant I4). A separate /cdr:verify pass is required before this is considered done."
+}

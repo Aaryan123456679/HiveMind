@@ -1,0 +1,40 @@
+{
+  "subtask": "4.5.3.4",
+  "issue": 40,
+  "milestone": 10,
+  "run_id": "2026-07-11-079-implementation",
+  "status": "completed",
+  "files_changed": [
+    {
+      "path": "engine/split/execute.go",
+      "pointers": [
+        "normalizeTopicPath function added, doc comment immediately above ExecuteSplitBtreeInsert (around the line range where 'ExecuteSplitBtreeInsert is subtask 2b.3.3's' comment begins)",
+        "ExecuteSplitBtreeInsert body updated to normalize oldPath and every newPath before tree.Insert, and to compare normalized forms for the 'new path must not equal oldPath' check",
+        "ExecuteSplitAtomic's apply closure updated at its tree.Insert(newPath, ...) / tree.Insert(oldPath, ...) call sites to normalize first",
+        "RecoverSplitCommits's replay loop updated at its tree.Insert(entry.NewPath, ...) / tree.Insert(payload.OldPath, ...) call sites to normalize first"
+      ]
+    },
+    {
+      "path": "engine/split/execute_test.go",
+      "pointers": [
+        "New TestSplitBtreeKeyNormalization function added immediately after TestSplitBtreeRepoint, with 3 subtests: equivalent_forms_resolve_to_same_canonical_key, normalized_new_path_equal_to_normalized_old_path_is_rejected, idempotent"
+      ]
+    }
+  ],
+  "acceptance_criteria_mapping": [
+    {
+      "criterion": "ExecuteSplitBtreeInsert inserts new/old topic paths via a defined normalization/canonicalization layer instead of raw, unnormalized path strings as direct B+Tree keys.",
+      "test": "go test ./engine/split/... -run TestSplitBtreeKeyNormalization -v",
+      "result": "PASS"
+    }
+  ],
+  "test_specs_run": [
+    "go test ./engine/split/... -run TestSplitBtreeKeyNormalization -v -> PASS (3/3 subtests)",
+    "go test ./engine/split/... -run 'TestSplitBtreeRepoint|TestSplitAtomicCommit' -v -race -> PASS (all subtests)",
+    "go test ./engine/split/... -race -> PASS (49.4s, full package, no failures, including TestReaderDuringSplit)"
+  ],
+  "not_verified_by_this_agent": true,
+  "scope_note": "engine/split/orchestrate.go appears locally modified (concurrent 4.5.3.3 fix-cycle agent's in-progress work); not touched, not staged, not committed by this run.",
+  "next_step": "subtask 4.5.3.5 will edit engine/split/execute_test.go next, after this commit lands.",
+  "commit": "PENDING_FILL_AFTER_COMMIT"
+}

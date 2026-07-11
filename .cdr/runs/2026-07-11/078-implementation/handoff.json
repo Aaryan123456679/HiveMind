@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-11-078-implementation",
+  "subtask": "4.5.5.4",
+  "issue": 42,
+  "commit": "189542e5dc73ddbe5946bf8470bfc32f95ef77cb",
+  "files_changed": [
+    {
+      "path": "engine/catalog/content.go",
+      "change": "doc-comment addition on ContentStore.Create only, no logic change",
+      "line_range_approx": "212-244"
+    },
+    {
+      "path": "engine/catalog/content_test.go",
+      "change": "added TestContentCreateDuplicateFileID and TestContentCreateEmptyAndLargeContent",
+      "line_range_approx": "190-329 (inserted before pre-existing TestContentRead)"
+    }
+  ],
+  "tests_added": [
+    "TestContentCreateDuplicateFileID",
+    "TestContentCreateEmptyAndLargeContent"
+  ],
+  "test_spec_commands": [
+    "go test ./engine/catalog/... -run TestContentCreateDuplicateFileID -race",
+    "go test ./engine/catalog/... -run TestContentCreateEmptyAndLargeContent -race",
+    "go test ./engine/catalog/... -race"
+  ],
+  "acceptance_criteria_pointers": [
+    "requirement.md",
+    "validation-matrix.json"
+  ],
+  "decision_path_chosen": "a (document existing overwrite as intentional legal semantics; no already-exists guard added)",
+  "regression_reference": ".cdr/index/regression.jsonl line 42 (2026-07-04/047-verification, subtask 1.4.1)",
+  "not_touched": [
+    "engine/catalog/file.go",
+    "engine/catalog/idalloc.go",
+    "engine/catalog/catalog.go",
+    "engine/split/*",
+    "engine/btree/*",
+    "engine/wal/*",
+    "engine/mvcc/*",
+    "engine/rpc/*"
+  ],
+  "next_step": "cdr:verify"
+}

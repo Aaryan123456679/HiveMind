@@ -574,6 +574,116 @@ func TestSplitBtreeRepoint(t *testing.T) {
 	})
 }
 
+// TestSplitBtreeKeyNormalization is subtask 4.5.3.4's ("Add topic-path key
+// normalization/namespace layer for B+Tree keys used by split execution")
+// dedicated test, per that subtask's test spec: insert paths with
+// equivalent-but-differently-formatted representations (e.g. trailing
+// separators), assert they normalize to the same canonical key.
+func TestSplitBtreeKeyNormalization(t *testing.T) {
+	const canonicalOldPath = "notes/fixture-original.md"
+	const fallbackOriginalFileID = uint64(1)
+
+	t.Run("equivalent_forms_resolve_to_same_canonical_key", func(t *testing.T) {
+		tree := newTestBtree(t)
+
+		originalFileID := uint64(10)
+		newFileIDA := uint64(11)
+		newFileIDB := uint64(12)
+
+		// oldPath supplied in a differently-formatted-but-equivalent form:
+		// backslash separator, a leading "./", and a trailing slash.
+		rawOldPath := `./notes\fixture-original.md/`
+
+		newPathFileIDs := map[string]uint64{
+			// Trailing separator (the test spec's explicit example).
+			"notes/a.md/": newFileIDA,
+			// Doubled slash, collapses to a single separator.
+			"notes//b.md": newFileIDB,
+		}
+
+		if err := ExecuteSplitBtreeInsert(tree, rawOldPath, originalFileID, newPathFileIDs); err != nil {
+			t.Fatalf("ExecuteSplitBtreeInsert: %v", err)
+		}
+
+		// The canonical form of oldPath resolves to originalFileID...
+		gotOldFileID, found, err := tree.Lookup(canonicalOldPath)
+		if err != nil {
+			t.Fatalf("tree.Lookup(%q): %v", canonicalOldPath, err)
+		}
+		if !found {
+			t.Fatalf("tree.Lookup(%q): found = false, want true", canonicalOldPath)
+		}
+		if gotOldFileID != originalFileID {
+			t.Errorf("tree.Lookup(%q) fileID = %d, want %d", canonicalOldPath, gotOldFileID, originalFileID)
+		}
+
+		// ...while the raw, differently-formatted form supplied to
+		// ExecuteSplitBtreeInsert was never itself used as a literal key: it
+		// was canonicalized before insertion, so looking it up VERBATIM does
+		// not resolve (btree.Tree.Lookup itself performs no normalization --
+		// only insertion, via normalizeTopicPath, does -- see that function's
+		// doc comment for why retrofitting Lookup is out of this subtask's
+		// scope).
+		if _, found, err := tree.Lookup(rawOldPath); err != nil {
+			t.Fatalf("tree.Lookup(rawOldPath): %v", err)
+		} else if found {
+			t.Errorf("tree.Lookup(rawOldPath) found = true for un-normalized raw key %q, want false (only the canonical form should be an actual B+Tree key)", rawOldPath)
+		}
+
+		wantNewFileIDs := map[string]uint64{
+			"notes/a.md": newFileIDA,
+			"notes/b.md": newFileIDB,
+		}
+		for canonicalNewPath, wantFileID := range wantNewFileIDs {
+			gotFileID, found, err := tree.Lookup(canonicalNewPath)
+			if err != nil {
+				t.Fatalf("tree.Lookup(%q): %v", canonicalNewPath, err)
+			}
+			if !found {
+				t.Fatalf("tree.Lookup(%q): found = false, want true", canonicalNewPath)
+			}
+			if gotFileID != wantFileID {
+				t.Errorf("tree.Lookup(%q) fileID = %d, want %d", canonicalNewPath, gotFileID, wantFileID)
+			}
+		}
+	})
+
+	t.Run("normalized_new_path_equal_to_normalized_old_path_is_rejected", func(t *testing.T) {
+		tree := newTestBtree(t)
+
+		// "notes/dup.md/" and "notes\\dup.md" both normalize to
+		// "notes/dup.md": inserting one as oldPath and the other as a
+		// newPath must still be rejected as "new path must not equal
+		// oldPath", even though the raw strings differ.
+		rawOldPath := "notes/dup.md/"
+		rawNewPath := `notes\dup.md`
+
+		if err := ExecuteSplitBtreeInsert(tree, rawOldPath, fallbackOriginalFileID, map[string]uint64{rawNewPath: 2}); err == nil {
+			t.Fatal("expected error when a new path normalizes to the same canonical key as oldPath, got nil")
+		}
+	})
+
+	t.Run("idempotent", func(t *testing.T) {
+		for _, p := range []string{
+			"a/b.md",
+			"a/b.md/",
+			`a\b.md`,
+			"./a/b.md",
+			"a//b.md",
+			"./a//b.md/",
+		} {
+			normalizedOnce := normalizeTopicPath(p)
+			normalizedTwice := normalizeTopicPath(normalizedOnce)
+			if normalizedOnce != normalizedTwice {
+				t.Errorf("normalizeTopicPath(%q) = %q, but normalizing it again gave %q, want idempotent", p, normalizedOnce, normalizedTwice)
+			}
+			if normalizedOnce != "a/b.md" {
+				t.Errorf("normalizeTopicPath(%q) = %q, want %q", p, normalizedOnce, "a/b.md")
+			}
+		}
+	})
+}
+
 // newTestEdgeAppender opens a fresh graph.EdgeAppender rooted at a
 // t.TempDir() subdirectory, for TestSplitGraphEdges's use.
 func newTestEdgeAppender(t *testing.T) *graph.EdgeAppender {

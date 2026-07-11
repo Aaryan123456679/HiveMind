@@ -1,0 +1,19 @@
+{
+  "subtask": "4.5.3.4",
+  "criteria": [
+    {
+      "criterion": "ExecuteSplitBtreeInsert inserts new/old topic paths via a defined normalization/canonicalization layer instead of raw, unnormalized path strings as direct B+Tree keys.",
+      "planned_check": "New normalizeTopicPath helper added and called on oldPath + every newPath inside ExecuteSplitBtreeInsert before tree.Insert; verified by reading the diff and by TestSplitBtreeKeyNormalization asserting differently-formatted-but-equivalent paths (trailing slash, backslash, double slash, leading ./) resolve to the same canonical fileID via tree.Lookup(canonicalForm)."
+    },
+    {
+      "criterion": "(Consistency, self-imposed) ExecuteSplitAtomic and RecoverSplitCommits must not diverge from ExecuteSplitBtreeInsert's canonicalization, since they perform the same logical operation inline.",
+      "planned_check": "Same normalizeTopicPath helper reused (not reimplemented) at both additional call sites; existing TestSplitAtomicCommit (including its RecoverSplitCommits subtests) continues to pass unchanged, proving no regression for already-canonical fixture paths."
+    },
+    {
+      "criterion": "Test spec: go test ./engine/split/... -run TestSplitBtreeKeyNormalization -- insert paths with equivalent-but-differently-formatted representations (e.g. trailing separators), assert they normalize to the same canonical key.",
+      "planned_check": "New TestSplitBtreeKeyNormalization function added to execute_test.go exercising exactly this scenario via ExecuteSplitBtreeInsert + tree.Lookup; run in isolation and as part of full package -race run."
+    }
+  ],
+  "build_check": "go build ./engine/split/... must succeed",
+  "regression_check": "go test ./engine/split/... -race must show no new failures attributable to this change (pre-existing TestReaderDuringSplit flake, if hit, to be triaged separately per instructions)"
+}

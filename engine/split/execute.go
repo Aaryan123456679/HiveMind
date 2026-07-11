@@ -361,6 +361,62 @@ func ExecuteSplitRedirectStub(
 	return updated, nil
 }
 
+// normalizeTopicPath is subtask 4.5.3.4's ("Add topic-path key
+// normalization/namespace layer for B+Tree keys used by split execution")
+// canonicalization layer. It is applied to every topic-path string
+// (oldPath and every newPath) immediately before that string is used as a
+// *btree.Tree key by ExecuteSplitBtreeInsert, ExecuteSplitAtomic's apply
+// closure, and RecoverSplitCommits's replay loop -- the three call sites in
+// this file that turn a topic path into a raw B+Tree key (see
+// .cdr/memory/pending.md's "Raw topic-path strings used directly as B+Tree
+// keys, no normalization/namespace layer" entry, forwarded from task-2b.3.3 /
+// issue #12).
+//
+// Rules applied, in order:
+//  1. Backslashes are converted to forward slashes, so a caller that types a
+//     Windows-style separator normalizes to the same key as one that types a
+//     forward slash.
+//  2. A leading "./" is stripped (repeatedly, in case of "././a").
+//  3. Runs of consecutive slashes are collapsed to a single slash ("a//b" ->
+//     "a/b").
+//  4. Trailing slashes are stripped ("a/b/" -> "a/b"), directly covering the
+//     test spec's explicit "trailing separators" example.
+//
+// normalizeTopicPath is deliberately narrow in scope: it does NOT case-fold
+// (topic paths are treated as case-sensitive, matching the Markdown filename
+// conventions used throughout this package's fixtures) and it does NOT
+// resolve ".." segments or otherwise attempt general filesystem-path
+// resolution -- this is a key-canonicalization layer for the B+Tree's opaque
+// string-key space, not a filesystem path resolver. It is idempotent:
+// normalizeTopicPath(normalizeTopicPath(p)) == normalizeTopicPath(p) for
+// every input p, and a no-op for already-canonical paths (the common case,
+// and the case every existing fixture in this package already uses).
+//
+// btree.Tree.Lookup itself is untouched by this subtask and does not
+// normalize its argument -- callers that look up a topic path must either
+// already know its canonical form (as every existing call site in this
+// package does) or normalize it themselves via this same function before
+// calling Lookup. Retrofitting normalization into engine/btree.Tree.Lookup
+// itself is out of scope here (a different package, not named in this
+// subtask's "Impacted modules").
+func normalizeTopicPath(path string) string {
+	normalized := strings.ReplaceAll(path, `\`, "/")
+
+	for strings.HasPrefix(normalized, "./") {
+		normalized = normalized[2:]
+	}
+
+	for strings.Contains(normalized, "//") {
+		normalized = strings.ReplaceAll(normalized, "//", "/")
+	}
+
+	if normalized != "/" {
+		normalized = strings.TrimRight(normalized, "/")
+	}
+
+	return normalized
+}
+
 // ExecuteSplitBtreeInsert is subtask 2b.3.3's ("Insert new topic paths into
 // B+Tree; repoint old path's entry to redirect stub") execution primitive.
 // It consumes newPathFileIDs -- typically the map ExecuteSplitAllocateAndWrite
@@ -420,16 +476,19 @@ func ExecuteSplitBtreeInsert(
 	}
 	sort.Strings(newPaths)
 
+	normalizedOldPath := normalizeTopicPath(oldPath)
+
 	for _, newPath := range newPaths {
 		if newPath == "" {
 			return fmt.Errorf("split: execute: btree insert: newPathFileIDs contains an empty path")
 		}
-		if newPath == oldPath {
+		normalizedNewPath := normalizeTopicPath(newPath)
+		if normalizedNewPath == normalizedOldPath {
 			return fmt.Errorf("split: execute: btree insert: new path %q must not equal oldPath", newPath)
 		}
 
-		if err := tree.Insert(newPath, newPathFileIDs[newPath]); err != nil {
-			return fmt.Errorf("split: execute: btree insert: inserting new path %q (fileID %d): %w", newPath, newPathFileIDs[newPath], err)
+		if err := tree.Insert(normalizedNewPath, newPathFileIDs[newPath]); err != nil {
+			return fmt.Errorf("split: execute: btree insert: inserting new path %q (normalized %q, fileID %d): %w", newPath, normalizedNewPath, newPathFileIDs[newPath], err)
 		}
 	}
 
@@ -437,8 +496,8 @@ func ExecuteSplitBtreeInsert(
 	// guaranteed upsert no-op when oldPath already maps to originalFileID
 	// (the common case, since 2b.3.2 reuses the fileID), and idempotently
 	// establishes that mapping otherwise.
-	if err := tree.Insert(oldPath, originalFileID); err != nil {
-		return fmt.Errorf("split: execute: btree insert: repointing old path %q (fileID %d): %w", oldPath, originalFileID, err)
+	if err := tree.Insert(normalizedOldPath, originalFileID); err != nil {
+		return fmt.Errorf("split: execute: btree insert: repointing old path %q (normalized %q, fileID %d): %w", oldPath, normalizedOldPath, originalFileID, err)
 	}
 
 	return nil
@@ -960,12 +1019,13 @@ func ExecuteSplitAtomic(
 			return err
 		}
 		for _, newPath := range newPaths {
-			if err := tree.Insert(newPath, newFileIDsByPath[newPath]); err != nil {
-				return fmt.Errorf("repointing new path %q (fileID %d): %w", newPath, newFileIDsByPath[newPath], err)
+			normalizedNewPath := normalizeTopicPath(newPath)
+			if err := tree.Insert(normalizedNewPath, newFileIDsByPath[newPath]); err != nil {
+				return fmt.Errorf("repointing new path %q (normalized %q, fileID %d): %w", newPath, normalizedNewPath, newFileIDsByPath[newPath], err)
 			}
 		}
-		if err := tree.Insert(oldPath, originalFileID); err != nil {
-			return fmt.Errorf("repointing old path %q (fileID %d): %w", oldPath, originalFileID, err)
+		if err := tree.Insert(normalizeTopicPath(oldPath), originalFileID); err != nil {
+			return fmt.Errorf("repointing old path %q (normalized %q, fileID %d): %w", oldPath, normalizeTopicPath(oldPath), originalFileID, err)
 		}
 
 		if err := runAtomicCommitHook("after_btree_before_graph"); err != nil {
@@ -1108,13 +1168,15 @@ func RecoverSplitCommits(walDir string, cat *catalog.Catalog, tree *btree.Tree, 
 			if err := cat.Put(newRec); err != nil {
 				return fmt.Errorf("replaying catalog Put for new fileID %d (%q): %w", entry.FileID, entry.NewPath, err)
 			}
-			if err := tree.Insert(entry.NewPath, entry.FileID); err != nil {
-				return fmt.Errorf("replaying B+Tree insert for %q (fileID %d): %w", entry.NewPath, entry.FileID, err)
+			normalizedNewPath := normalizeTopicPath(entry.NewPath)
+			if err := tree.Insert(normalizedNewPath, entry.FileID); err != nil {
+				return fmt.Errorf("replaying B+Tree insert for %q (normalized %q, fileID %d): %w", entry.NewPath, normalizedNewPath, entry.FileID, err)
 			}
 			newFileIDs = append(newFileIDs, entry.FileID)
 		}
-		if err := tree.Insert(payload.OldPath, payload.OriginalFileID); err != nil {
-			return fmt.Errorf("replaying B+Tree repoint of old path %q (fileID %d): %w", payload.OldPath, payload.OriginalFileID, err)
+		normalizedOldPath := normalizeTopicPath(payload.OldPath)
+		if err := tree.Insert(normalizedOldPath, payload.OriginalFileID); err != nil {
+			return fmt.Errorf("replaying B+Tree repoint of old path %q (normalized %q, fileID %d): %w", payload.OldPath, normalizedOldPath, payload.OriginalFileID, err)
 		}
 
 		if err := appendSplitGraphEdges(appender, payload.OriginalFileID, newFileIDs); err != nil {
