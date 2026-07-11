@@ -10,14 +10,15 @@
   "max_attempts": 3,
   "responding_to": ".cdr/runs/2026-07-11/077-verification/verification.json",
   "verdict_responded_to": "CHANGES_REQUESTED",
-  "git_head": "8d9dc813a73fed5748e0169ab80e666c413958b5",
+  "git_head_at_start": "8d9dc813a73fed5748e0169ab80e666c413958b5",
+  "git_head_at_end": "78a18180bf6e611b212a9ba4cba29af0904c1f5f",
   "run_key": "sha256:58693403b6cb0e7f704b6ed5504008ab4955a42812d0c1b23b18da8f2dcd01e2",
   "scope": [
     "engine/split/orchestrate.go",
     "engine/split/orchestrate_test.go"
   ],
-  "status": "in_progress",
-  "last_completed_step": "requirement",
+  "status": "completed",
+  "last_completed_step": "handoff",
   "started_at": "2026-07-11T12:50:00Z",
-  "ended_at": null
+  "ended_at": "2026-07-11T12:55:00Z"
 }
