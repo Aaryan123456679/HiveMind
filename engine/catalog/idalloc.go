@@ -74,6 +74,19 @@ type IDAllocator struct {
 // fm's underlying catalog file, and restores the in-memory high-water-mark from
 // whatever was last durably persisted there (0 for a brand-new catalog, so the
 // first Next() call returns 1).
+//
+// Before returning, it cross-checks that restored high-water-mark against the
+// max CatalogRecord.FileID actually present in fm's catalog.dat (see
+// maxFileIDInCatalog): if catalog.dat contains a fileID higher than the
+// sidecar's high-water-mark, the sidecar cannot be trusted — it was likely
+// deleted/lost and recreated fresh, independently restored from a stale
+// backup, or simply never created against a catalog.dat that was not itself
+// fresh — and NewIDAllocator returns an explicit error rather than silently
+// risking a subsequent Next() call handing out a fileID that collides with one
+// already recorded on disk. (The reverse case — the sidecar's high-water-mark
+// higher than any fileID currently in catalog.dat — is normal and not an error:
+// it just means some previously allocated fileIDs were never Put, or were Put
+// and later deleted.)
 func NewIDAllocator(fm *FileManager) (*IDAllocator, error) {
 	path := fm.file.Name() + idAllocSuffix
 
@@ -105,7 +118,69 @@ func NewIDAllocator(fm *FileManager) (*IDAllocator, error) {
 		return nil, fmt.Errorf("catalog: idalloc: %s has invalid size %d bytes: want 0 (fresh) or %d", path, info.Size(), idAllocStateSize)
 	}
 
+	maxFileID, err := maxFileIDInCatalog(fm)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("catalog: idalloc: cross-checking high-water-mark against catalog.dat: %w", err)
+	}
+	if maxFileID > next {
+		f.Close()
+		return nil, fmt.Errorf("catalog: idalloc: sidecar %s high-water-mark (%d) is behind the max fileID actually present in catalog.dat (%d): sidecar is lost, was independently restored to a stale value, or was never created against a non-fresh catalog.dat; refusing to hand out fileIDs that could collide with ones already in use", path, next, maxFileID)
+	}
+
 	return &IDAllocator{next: next, stateFile: f}, nil
+}
+
+// maxFileIDInCatalog scans every currently-allocated page of fm's underlying
+// catalog file and returns the largest CatalogRecord.FileID found among all
+// non-tombstoned slots (0 if the catalog has no pages yet, i.e. a brand-new,
+// never-written-to catalog.dat). NewIDAllocator uses this to cross-check the
+// sidecar's persisted high-water-mark against what is actually durably present
+// on disk: if the sidecar's high-water-mark is behind this value, the sidecar
+// cannot be trusted (it may have been deleted/lost, independently restored to a
+// stale copy, or simply never created against a catalog.dat that already has
+// records in it), and blindly trusting it would let Next() hand out a fileID
+// that collides with one already recorded in catalog.dat. This closes the gap
+// flagged by 1.1.4's verification and cross-referenced in catalog.go's "Known
+// gap" doc comment on NewCatalog.
+//
+// This performs a full scan of every allocated page, but only once per
+// NewIDAllocator call (i.e. once per process startup/catalog reopen), not on
+// every CRUD call — the acceptance criteria for this subtask is a cross-check
+// "on first CRUD use" via NewIDAllocator, not a per-call cost.
+func maxFileIDInCatalog(fm *FileManager) (uint64, error) {
+	fm.mu.Lock()
+	highest := fm.highestAllocated
+	fm.mu.Unlock()
+
+	var maxFileID uint64
+	for pageID := uint64(1); pageID <= highest; pageID++ {
+		page, err := fm.ReadPage(pageID)
+		if err != nil {
+			return 0, fmt.Errorf("reading page %d: %w", pageID, err)
+		}
+
+		for slotID := 0; slotID < page.SlotCount(); slotID++ {
+			data, err := page.ReadSlot(slotID)
+			if err != nil {
+				// ReadSlot errors on a tombstoned/deleted slot; that's expected (it just
+				// means this slot has no live record to consider) and not a real error
+				// here. Any other error can't actually occur since slotID is always
+				// within [0, page.SlotCount()).
+				continue
+			}
+
+			rec, err := Decode(data)
+			if err != nil {
+				return 0, fmt.Errorf("decoding page %d slot %d: %w", pageID, slotID, err)
+			}
+			if rec.FileID > maxFileID {
+				maxFileID = rec.FileID
+			}
+		}
+	}
+
+	return maxFileID, nil
 }
 
 // Next atomically allocates and returns the next fileID: strictly greater than
