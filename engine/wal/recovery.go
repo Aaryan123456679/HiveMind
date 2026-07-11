@@ -154,13 +154,20 @@ func isValidRecordType(t RecordType) bool {
 // readSegmentFrom parses the segment file at path starting at byte offset
 // startOffset, returning the payload of every record from that point,
 // applying this package's crash-tolerant parsing rule (see writer.go's
-// ReadSegment doc comment for the torn-tail-vs-CRC-corruption distinction):
-// a torn tail (truncated header or truncated payload at the end of the
-// file) stops parsing cleanly and is reported via tornTail=true with a nil
-// error; a CRC mismatch on a full-length record is a hard error.
-// readSegmentFrom differs from ReadSegment only in accepting an arbitrary
-// starting offset, needed so recovery can skip records already covered by a
-// checkpoint that lands partway through a segment.
+// parseSegmentRecords doc comment for the torn-tail-vs-CRC-corruption
+// distinction): a torn tail (truncated header or truncated payload at the
+// end of the file) stops parsing cleanly and is reported via tornTail=true
+// with a nil error; a CRC mismatch on a full-length record is a hard error.
+//
+// writer.go's ReadSegment is a thin wrapper around this function
+// (readSegmentFrom(path, 0)), so that the two no longer duplicate the
+// read-file-then-parse logic that previously lived separately in each
+// (subtask 4.5.14.4). readSegmentFrom's only reason to exist as a distinct,
+// lower-level function is accepting an arbitrary starting offset, needed so
+// Replay can skip records already covered by a checkpoint that lands
+// partway through a segment; ReadSegment's callers only ever need to read a
+// segment from its start and don't need the tornTail flag, so ReadSegment
+// discards it.
 //
 // startOffset must land exactly on a record boundary (as every
 // CheckpointPointer.OffsetInSegment does, by construction: it is always one

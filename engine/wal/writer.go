@@ -436,14 +436,24 @@ func (w *Writer) Close() error {
 // ReadSegment parses a single segment file at path in full, returning the
 // payload of every record in on-disk order.
 //
+// It is a thin wrapper around recovery.go's readSegmentFrom(path, 0): the
+// two functions previously duplicated the same read-file-then-parse logic
+// (subtask 4.5.14.4 eliminated that duplication), and ReadSegment now simply
+// delegates, discarding the tornTail flag its callers don't need — a torn
+// tail is reported to them the same way a full segment's worth of records
+// always has been, via a nil error with every record parsed strictly before
+// the torn bytes.
+//
 // Subtask 1.3.5 (crash-injection recovery) establishes this package's
-// crash-tolerant parsing rule, applied here via parseSegmentRecords: a
-// truncated header or truncated payload at the tail of the file — exactly
-// what a crash mid-Append produces, since Append only ever writes a header
-// then its payload, in that order, and nothing else is ever appended after
-// them until the next record — is treated as an incomplete write, NOT an
-// error: parsing stops cleanly at that point and the records parsed so far
-// are returned with a nil error. This directly implements the literal 1.3.5
+// crash-tolerant parsing rule, applied via parseSegmentRecords (see that
+// function's doc comment below for the full torn-tail-vs-CRC-corruption
+// distinction) and inherited here through readSegmentFrom: a truncated
+// header or truncated payload at the tail of the file — exactly what a
+// crash mid-Append produces, since Append only ever writes a header then
+// its payload, in that order, and nothing else is ever appended after them
+// until the next record — is treated as an incomplete write, NOT an error:
+// parsing stops cleanly at that point and the records parsed so far are
+// returned with a nil error. This directly implements the literal 1.3.5
 // acceptance criterion ("the torn record is detected and discarded, and
 // recovery proceeds from the last valid record").
 //
@@ -455,16 +465,8 @@ func (w *Writer) Close() error {
 // CRC-corruption-through-Replay test existed): ReadSegment/Replay must never
 // silently treat genuine corruption as if it were just a torn tail.
 func ReadSegment(path string) ([][]byte, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("wal: reading segment %s: %w", path, err)
-	}
-
-	records, _, _, err := parseSegmentRecords(data, 0)
-	if err != nil {
-		return nil, fmt.Errorf("wal: segment %s: %w", path, err)
-	}
-	return records, nil
+	records, _, err := readSegmentFrom(path, 0)
+	return records, err
 }
 
 // parseSegmentRecords parses records from data starting at byte offset
@@ -483,10 +485,10 @@ func ReadSegment(path string) ([][]byte, error) {
 //   - Reaching len(data) exactly (off == len(data)) ends the loop normally:
 //     records, validEnd=len(data), tornTail=false, err=nil.
 //
-// Shared by ReadSegment (starts at offset 0) and recovery.go's
-// readSegmentFrom (starts at an arbitrary checkpoint-relative offset), so
-// both this package's own tests and 1.3.4's recovery replay observe
-// identical torn-tail/corruption semantics.
+// Shared by recovery.go's readSegmentFrom, which is in turn called both by
+// ReadSegment (starts at offset 0) and by Replay (starts at an arbitrary
+// checkpoint-relative offset), so this package's own tests and 1.3.4's
+// recovery replay observe identical torn-tail/corruption semantics.
 func parseSegmentRecords(data []byte, startOffset int) (records [][]byte, validEnd int, tornTail bool, err error) {
 	off := startOffset
 	for off < len(data) {
