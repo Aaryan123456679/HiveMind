@@ -45,6 +45,17 @@ No code outside `agents/llm/` may call a provider SDK directly. `agents/ingestio
 - None unique to this module; it is the seam other modules' risks (cost, latency) are measured
   through, per [eval.md](eval.md).
 
+## Security note: Gemini API key redaction (subtask 4.5.16.3)
+
+`GeminiClient` (`agents/llm/gemini_client.py`) sends its API key as a `?key=` query parameter
+on every request, per Gemini's REST convention — unlike `OllamaClient`/`OpenRouterClient`, which
+authenticate via headers (or no auth, for local Ollama). No HTTP logging/tracing/interceptor
+layer exists at this seam yet (see the `agents/eval/` per-call latency/cost interceptors above as
+the most likely place one would eventually be added), but if/when one is built it **must redact
+the full query string for Gemini requests specifically**, not merely an `Authorization` header —
+redacting only headers would still leak the Gemini API key in any logged/traced request URL, log
+line, or span attribute. See the corresponding docstring note in `agents/llm/gemini_client.py`.
+
 ## Cross-references
 
 - [HLD.md](../HLD.md)

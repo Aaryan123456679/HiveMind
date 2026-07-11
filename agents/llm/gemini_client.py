@@ -26,6 +26,18 @@ has to account for:
 - The API key is passed as a `?key=` query parameter, not an
   `Authorization: Bearer ...` header.
 
+Logging/tracing redaction requirement -- forward-looking note
+------------------------------------------------------------------
+Because the API key rides in the URL's query string rather than a
+header, any future HTTP logging/tracing/interceptor layer added at the
+`agents/llm/` seam (see `docs/LLD/llm-provider.md`) MUST redact the
+*full query string* for Gemini requests specifically -- not merely the
+`Authorization` header, which would be sufficient for `OllamaClient`/
+`OpenRouterClient` but leaves the Gemini API key exposed in plaintext in
+any logged/traced URL, request line, or span attribute. This is subtask
+4.5.16.3 (issue #20 follow-up): documented ahead of any logging/tracing
+layer existing, since none does yet.
+
 Request/response shape -- disclosed design
 ----------------------------------------------
 Gemini's `generateContent` request body nests the prompt as
@@ -153,6 +165,15 @@ class GeminiClient(LLMClient):
             with httpx.Client(
                 base_url=self._base_url, transport=self._transport
             ) as client:
+                # NOTE: the API key travels in the URL query string here
+                # (Gemini's REST convention), not an Authorization header.
+                # Any future HTTP logging/tracing layer wrapping this call
+                # (or this httpx.Client) must redact the full query string
+                # for Gemini requests specifically -- redacting only an
+                # Authorization header, as would suffice for
+                # OllamaClient/OpenRouterClient, would still leak this key.
+                # See module docstring "Logging/tracing redaction
+                # requirement" and docs/LLD/llm-provider.md.
                 response = client.post(
                     endpoint,
                     params={"key": self._api_key},
