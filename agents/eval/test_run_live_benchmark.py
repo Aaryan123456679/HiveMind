@@ -93,13 +93,15 @@ def test_resilient_client_returns_first_valid_json_attempt():
 
 
 def test_resilient_client_returns_last_attempt_if_never_valid():
-    inner = _ScriptedLLMClient(["not json", "still not json", "nope either"])
+    inner = _ScriptedLLMClient(
+        ["not json", "still not json", "nope either", "nope again", "final nope"]
+    )
     client = ResilientLLMClient(inner)
 
     result = client.complete("prompt")
 
-    assert result == "nope either"
-    assert len(inner.calls) == 3
+    assert result == "final nope"
+    assert len(inner.calls) == 5
 
 
 def test_resilient_client_single_valid_first_attempt_no_retry():

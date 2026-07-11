@@ -128,9 +128,12 @@ DEFAULT_CORPUS_DIR = DEFAULT_MANIFEST_PATH.parent
 _FREE_PROVIDERS = frozenset({"ollama"})
 
 #: Retry budget for `ResilientLLMClient` -- see constraint (c) in the module docstring.
-_RESILIENT_MAX_ATTEMPTS = 3
+_RESILIENT_MAX_ATTEMPTS = 5
 #: Temperature used on retry attempts (attempt index >= 1), per constraint (c).
 _RESILIENT_RETRY_TEMPERATURE = 0.3
+#: Base backoff (seconds) between retries after a transport-level error (e.g. Ollama's proxy
+#: still swapping the target model in), scaled linearly by attempt index.
+_RESILIENT_RETRY_BACKOFF_SECONDS = 1.5
 
 
 class LiveBenchmarkError(Exception):
@@ -207,8 +210,11 @@ class ResilientLLMClient(LLMClient):
                 )
             except Exception as exc:  # noqa: BLE001 - transient local Ollama errors (e.g. a
                 # 404 from /api/generate observed under concurrent model-swap load) are retried
-                # here rather than aborting the whole live run over one flaky local call.
+                # here rather than aborting the whole live run over one flaky local call. A short
+                # backoff gives Ollama's proxy time to finish swapping the target model in --
+                # back-to-back immediate retries were observed to hit the same 404 repeatedly.
                 last_error = exc
+                time.sleep(_RESILIENT_RETRY_BACKOFF_SECONDS * (attempt + 1))
                 continue
             last_error = None
             if _looks_like_bare_json(last_text):
@@ -247,6 +253,7 @@ class ResilientLLMClient(LLMClient):
                 )
             except Exception as exc:  # noqa: BLE001 - see complete()'s matching comment
                 last_error = exc
+                time.sleep(_RESILIENT_RETRY_BACKOFF_SECONDS * (attempt + 1))
                 continue
             last_error = None
             if _looks_like_bare_json(last_result.text):
