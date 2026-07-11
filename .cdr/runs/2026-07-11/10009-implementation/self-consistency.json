@@ -1,0 +1,39 @@
+{
+  "subtask": "5.2.1",
+  "build_status": "green",
+  "ruff": "clean (agents/eval/baselines/vector_rag.py, agents/eval/test_vector_rag_baseline.py, agents/eval/baselines/__init__.py)",
+  "target_test_run": {
+    "command": "cd agents && python -m pytest eval/test_vector_rag_baseline.py -v",
+    "result": "12 passed in 6.85s",
+    "notes": "Live tests (test_live_embeddings_are_real_nonzero_vectors, test_retrieve_documents_reasonable_recall_on_fixture_queries, test_top_hit_for_unambiguous_query_is_the_correct_document, test_select_chunk_config_grid_search_matches_shipped_defaults) ran against a real local Ollama server (ollama pull nomic-embed-text executed in this session, 274MB, model confirmed present via `ollama list`) -- NOT mocked. test_live_embeddings_are_real_nonzero_vectors explicitly asserts two different sentences produce different, non-all-zero vectors, directly confirming real embeddings (not a stub) were used."
+  },
+  "whole_repo_regression_run": {
+    "command": "cd agents && python -m pytest -q",
+    "result": "386 passed, 5 warnings in 227.34s",
+    "notes": "Confirms zero regressions to any pre-existing test (including the real live-Ollama+real-engine test_e2e_smoke.py::test_full_pipeline_smoke, which also passed as part of this full run). This is a pure-addition subtask -- 386 = pre-existing test count + this subtask's 12 new tests (0 modified/deleted tests)."
+  },
+  "chunk_tuning_sweep": {
+    "method": "select_chunk_config(_FIXTURE_DOCS, _FIXTURE_QUERIES, real OllamaEmbeddingClient(), top_k=3), run standalone against the real local Ollama server before finalizing DEFAULT_CHUNK_SIZE_WORDS/DEFAULT_OVERLAP_WORDS",
+    "grid": "chunk_size in {80, 150, 220} words x overlap_fraction in {0.0, 0.15, 0.30}",
+    "results_mean_recall_at_3": {
+      "(80,0)": 1.0,
+      "(80,12)": 1.0,
+      "(80,24)": 1.0,
+      "(150,0)": 1.0,
+      "(150,22)": 1.0,
+      "(150,45)": 1.0,
+      "(220,0)": 1.0,
+      "(220,66)": 1.0,
+      "(220,33)": 0.9
+    },
+    "winning_config": "(80, 0)",
+    "tie_break_rule": "Among configs tied at the maximum mean recall, prefer the smaller chunk size, then the smaller overlap (leaner index, no accuracy cost observed at this fixture scale).",
+    "disclosed_limitation": "Most candidates tied at perfect recall@3 on this small (5-doc, 5-query) fixture corpus; only (220, 33) showed a measurable recall drop (0.9), consistent with architecture-discovery.md's disclosure that a genuinely discriminating tuning sweep needs a larger/harder corpus than a fixture can practically provide. The fixture corpus was deliberately built as multi-section 'handbook' documents (not one-topic-per-doc) specifically to create some real discrimination rather than a trivial universal tie, and this is confirmed to have worked (the one non-1.0 result). A future real-corpus-scale benchmark subtask (5.3.4-style) is expected to re-run this same select_chunk_config sweep against the real combined corpus, where discrimination between candidates is expected to be much sharper; this subtask's chosen defaults are an honest, reproducible, non-arbitrary starting point given the explicitly fixture-scoped self-test, not a claim that (80,0) is the globally optimal config at production scale.",
+    "shipped_defaults_match_sweep": true
+  },
+  "constraint_compliance_recheck": {
+    "local_ollama_only": "confirmed -- grep for 'openrouter'/'gemini' across the 3 new files returns matches only inside disclosure prose (module docstring text explicitly stating neither is used); no import, URL, or API-key reference to either provider exists in any new file",
+    "no_new_pip_dependency": "confirmed -- agents/pyproject.toml untouched (git diff shows no changes to it)",
+    "no_live_large_scale_benchmark_execution": "confirmed -- grep for 'datasets'/'synthetic_corpus' across the 2 new eval/ files returns matches only inside docstring/comment prose (disclosing the scope boundary); neither new file contains an `import` statement referencing agents.eval.datasets or a file-read of data/synthetic_corpus/"
+  }
+}
