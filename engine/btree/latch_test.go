@@ -3,6 +3,7 @@ package btree
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestNodeLatchRegistryBounded is this subtask's (4.5.1.3) primary acceptance
@@ -184,4 +185,128 @@ func TestNodeLatchTryLockFailureDoesNotLeakReference(t *testing.T) {
 	if got := store.latchRegistrySize(); got != 0 {
 		t.Fatalf("latchRegistrySize() = %d after releasing the only held/never-written node, want 0 (failed TryLock attempts must not leak outstanding references)", got)
 	}
+}
+
+// TestNodeLatchUnlockOrderingPreventsDoubleLock is a deterministic
+// (non-probabilistic) regression test for the exact hazard Unlock's doc
+// comment calls "load-bearing": Unlock must fully unlock nodeID's mutex
+// (l.mu.Unlock()) BEFORE releasing its acquireLatch reference (releaseLatch),
+// never the reverse. TestNodeLatchNoDoubleLockAcrossEviction already stresses
+// this with many uncoordinated goroutines, but that test is timing-dependent
+// -- it did not fail even when 047-verification mechanically reversed the two
+// statements in Unlock and ran it repeatedly under -race, because
+// uncoordinated scheduling essentially never lands inside the (narrow) race
+// window. This test uses unlockOrderHook to force a concurrent Lock(nodeID)
+// call into that exact window every time, deterministically, instead of
+// hoping to get lucky.
+//
+// How this test distinguishes the two orderings:
+//   - It captures l1, the nodeLatch object backing an initial Lock(nodeID).
+//   - It pauses a real Unlock(nodeID) call (goroutine A) exactly between its
+//     two internal steps via unlockOrderHook.
+//   - While paused, it races a second, real Lock(nodeID) call (goroutine B)
+//     into that window and waits for it to complete.
+//   - If goroutine B ends up holding the SAME object (l1), that's a safe
+//     reacquisition (the entry was never evicted) -- nothing to check.
+//   - If goroutine B ends up holding a DIFFERENT object (l2 != l1, meaning
+//     nodeID's entry was evicted and recreated), that is only safe if l1's
+//     mutex was already unlocked when this happened. The test proves this by
+//     probing l1.mu.TryLock() directly: it must succeed (mu.Unlock() already
+//     ran) under the correct ordering.
+//
+// Mutation-test confirmation (performed manually during this fix-cycle, NOT
+// committed): temporarily swapping Unlock's two statements so that
+// releaseLatch(nodeID, l) runs before l.mu.Unlock() makes this test FAIL --
+// l1.mu.TryLock() returns false (l1.mu is still actually locked) while a
+// brand-new, already-locked l2 exists for the same nodeID, i.e. two
+// goroutines simultaneously "holding" nodeID's latch on two different mutex
+// objects: a genuine, reproduced double-lock. Restoring the correct ordering
+// makes the test pass again. This confirms the doc comment's claim is real,
+// not merely asserted.
+func TestNodeLatchUnlockOrderingPreventsDoubleLock(t *testing.T) {
+	store := newLatchTestStore(t)
+	const nodeID = 1
+
+	store.Lock(nodeID)
+
+	l1, ok := store.peekLatch(nodeID)
+	if !ok {
+		t.Fatalf("peekLatch(%d) found no entry immediately after Lock", nodeID)
+	}
+
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	defer closeRelease() // always let any still-paused goroutine finish, even on t.Fatalf's Goexit
+
+	prevHook := unlockOrderHook
+	unlockOrderHook = func(id uint64) {
+		if id != nodeID {
+			return
+		}
+		close(reached)
+		<-release
+	}
+	defer func() { unlockOrderHook = prevHook }()
+
+	unlockDone := make(chan struct{})
+	go func() {
+		store.Unlock(nodeID)
+		close(unlockDone)
+	}()
+
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Unlock(%d) never reached its ordering hook", nodeID)
+	}
+
+	// Race a concurrent Lock(nodeID) into the exact window between Unlock's
+	// two steps.
+	lockDone := make(chan struct{})
+	go func() {
+		store.Lock(nodeID)
+		close(lockDone)
+	}()
+
+	select {
+	case <-lockDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("concurrent Lock(%d) never completed while the first Unlock was paused mid-way", nodeID)
+	}
+
+	l2, ok := store.peekLatch(nodeID)
+	if !ok {
+		t.Fatalf("peekLatch(%d) found no entry after the second Lock completed", nodeID)
+	}
+
+	if l2 != l1 {
+		// A different latch object was handed to the second Lock -- nodeID's
+		// entry was evicted and recreated. This is safe ONLY if l1's mutex
+		// was already unlocked by the time l2 was created and locked.
+		if l1.mu.TryLock() {
+			// Confirmed already unlocked; undo this probe (releaseLatch never
+			// touches mu, so this doesn't disturb the store's bookkeeping).
+			l1.mu.Unlock()
+		} else {
+			t.Fatalf("double-lock detected for node %d: the original latch (l1) is still locked while a second, different latch object (l2) was concurrently locked for the same node ID -- Unlock must fully unlock the mutex (l.mu.Unlock()) before releasing its acquireLatch reference (releaseLatch), never the reverse", nodeID)
+		}
+	}
+
+	closeRelease()
+
+	select {
+	case <-unlockDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("first Unlock(%d) never completed after its hook was released", nodeID)
+	}
+
+	// Restore the hook before the final cleanup Unlock below, so it doesn't
+	// pause again (the deferred restore only runs when this function
+	// returns, which is after this call).
+	unlockOrderHook = prevHook
+
+	// Balance the second Lock's outstanding acquireLatch reference.
+	store.Unlock(nodeID)
 }

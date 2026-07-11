@@ -209,6 +209,18 @@ func (s *NodeStore) Lock(nodeID uint64) {
 	l.mu.Lock()
 }
 
+// unlockOrderHook, if non-nil, is invoked synchronously by Unlock immediately
+// after l.mu.Unlock() but before s.releaseLatch(nodeID, l) -- i.e. exactly at
+// the boundary between this function's two steps, regardless of which order
+// they run in (see the ordering discussion below). This is the one
+// deterministic window in which a test can pause an Unlock call and race a
+// concurrent Lock(nodeID) call into it, to empirically prove the ordering
+// claim below rather than relying on probabilistic contention. Used only by
+// TestNodeLatchUnlockOrderingPreventsDoubleLock in latch_test.go; nil (a
+// no-op) in production, mirroring optimisticReadHook's shape in lookup.go and
+// crabRetryHook's in insert.go.
+var unlockOrderHook func(nodeID uint64)
+
 // Unlock releases nodeID's write latch previously acquired via Lock. Unlock must not
 // be called on a nodeID whose latch is not currently held by the caller.
 //
@@ -223,13 +235,21 @@ func (s *NodeStore) Lock(nodeID uint64) {
 // its mutex is already unlocked, so any later Lock call -- whether it reuses this
 // object (not yet evicted) or creates a fresh replacement (already evicted) -- is
 // acquiring an unlocked mutex either way: behaviorally identical, no lost wakeup,
-// no double-lock.
+// no double-lock. This is not merely asserted: TestNodeLatchUnlockOrderingPreventsDoubleLock
+// (latch_test.go) deterministically forces a concurrent Lock(nodeID) call into
+// the exact window between these two steps (via unlockOrderHook above) and
+// fails if the resulting state is ever a genuine double-lock -- manually
+// reversing these two statements makes that test fail, confirming the claim
+// (see that test's doc comment for the full mutation-test writeup).
 func (s *NodeStore) Unlock(nodeID uint64) {
 	l, ok := s.peekLatch(nodeID)
 	if !ok {
 		panic(fmt.Sprintf("btree: Unlock called for node %d with no outstanding Lock/TryLock", nodeID))
 	}
 	l.mu.Unlock()
+	if unlockOrderHook != nil {
+		unlockOrderHook(nodeID)
+	}
 	s.releaseLatch(nodeID, l)
 }
 

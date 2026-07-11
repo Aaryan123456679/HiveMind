@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "subtask": "task-4.5.1.3-fix1",
+  "build": "go vet ./engine/btree/... -> clean, no issues",
+  "targeted_new_test_isolated": {
+    "command": "go test ./engine/btree/... -race -run TestNodeLatchUnlockOrderingPreventsDoubleLock -v -count=5",
+    "result": "PASS x5 (correct ordering, committed code)"
+  },
+  "mutation_test": {
+    "procedure": "Manually swapped Unlock's two statements in engine/btree/latch.go (s.releaseLatch(nodeID, l) moved before l.mu.Unlock(), unlockOrderHook call kept textually between them), ran the new test, then restored the original (correct) ordering. The swap was never committed -- verified via `git status`/`git diff` showing latch.go clean of this swap at commit time.",
+    "reversed_ordering_result": "go test ./engine/btree/... -race -run TestNodeLatchUnlockOrderingPreventsDoubleLock -v -count=3 -> FAIL x3, each with the explicit diagnostic: 'double-lock detected for node 1: the original latch (l1) is still locked while a second, different latch object (l2) was concurrently locked for the same node ID...'",
+    "restored_ordering_result": "same command after restoring correct order -> PASS x5",
+    "conclusion": "the new test has real teeth: it deterministically fails under the reversed ordering and deterministically passes under the correct ordering, on every run (no flakiness observed in either direction)."
+  },
+  "full_suite_self_consistency": {
+    "command": "go test ./engine/btree/... -race -v -count=5",
+    "result": "PASS -- all tests including the 6 pre-existing TestNodeLatch* tests and the new TestNodeLatchUnlockOrderingPreventsDoubleLock, plus the rest of the package (insert/delete/lookup/serialization/prefix-scan tests). Total run time ~355s (dominated by pre-existing TestCrabbingInsert/VeryDeepOverlappingSubtree, unrelated to this change).",
+    "regressions": "none"
+  },
+  "validation_matrix_covered": true,
+  "scope_check": "git status --short engine/btree/ shows only latch.go and latch_test.go modified; no files outside engine/btree/ touched by this run's implementation changes"
+}
