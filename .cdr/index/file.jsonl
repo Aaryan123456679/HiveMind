@@ -49,3 +49,5 @@
 {"path": "agents/query/wiring.py", "module": "agents/query", "features": ["grpc-search-candidates-client", "grpc-graph-neighbors-client", "grpc-get-file-client", "real-engine-rpc-wiring"], "last_change_run": "2026-07-11-097-implementation"}
 {"path": "agents/query/test_wiring.py", "module": "agents/query", "features": ["grpc-client-translation-test", "mocked-hivemind-stub", "test"], "last_change_run": "2026-07-11-097-implementation"}
 {"path": "agents/query/pipeline.py", "module": "agents/query", "features": ["query-pipeline-orchestration", "getfilefn-proto-shape-fix", "path-by-id-sourcing", "run-query-pipeline"], "last_change_run": "2026-07-11-097-implementation"}
+{"path": ".cdr/tools/reserve-run-dir.sh", "module": ".cdr/tools", "features": ["atomic-run-dir-reservation", "mkdir-eexist-retry-loop", "cdr-tooling"], "last_change_run": "2026-07-11-6300-implementation"}
+{"path": ".cdr/tools/test-reserve-run-dir.sh", "module": ".cdr/tools", "features": ["concurrency-collision-test", "cdr-tooling", "test"], "last_change_run": "2026-07-11-6300-implementation"}
