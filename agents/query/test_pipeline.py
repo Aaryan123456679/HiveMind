@@ -81,10 +81,13 @@ def _make_candidates() -> list[TopicCandidate]:
     ]
 
 
+#: `file_id -> content` only, matching `GetFileFn`'s real (post-4.6.3.1) shape -- path is no
+#: longer part of this fixture's return value, mirroring `GetFileResponse`'s real shape
+#: (`content`/`version`, no `path`). See `pipeline.py`'s `GetFileFn` proto-shape fix disclosure.
 _FILE_CONTENT = {
-    1: ("billing/InvoiceDisputes.md", "Invoice 4521 was disputed for a duplicate charge."),
-    2: ("billing/PaymentDelays.md", "Payment for invoice 4521 was delayed."),
-    3: ("billing/RefundPolicy.md", "Refunds are issued within 5 business days."),
+    1: "Invoice 4521 was disputed for a duplicate charge.",
+    2: "Payment for invoice 4521 was delayed.",
+    3: "Refunds are issued within 5 business days.",
 }
 
 
@@ -103,7 +106,7 @@ def test_run_query_pipeline_calls_agents_in_order() -> None:
         call_log.append(("graph_neighbors", (file_id, hops)))
         return [GraphNeighbor(file_id=3, edge_type="ENTITY_COOCCUR", weight=1, hop=1)]
 
-    def fake_get_file(file_id: int) -> tuple[str, str]:
+    def fake_get_file(file_id: int) -> str:
         call_log.append(("get_file", (file_id,)))
         return _FILE_CONTENT[file_id]
 
@@ -161,7 +164,7 @@ def test_run_query_pipeline_response_shape() -> None:
     def fake_graph_neighbors(file_id: int, hops: int) -> list[GraphNeighbor]:
         return [GraphNeighbor(file_id=3, edge_type="ENTITY_COOCCUR", weight=1, hop=1)]
 
-    def fake_get_file(file_id: int) -> tuple[str, str]:
+    def fake_get_file(file_id: int) -> str:
         return _FILE_CONTENT[file_id]
 
     llm_client = _FakeLLMClient([_INTENT_RESPONSE, _SYNTHESIS_RESPONSE])
@@ -191,7 +194,10 @@ def test_run_query_pipeline_response_shape() -> None:
     # The prompt sent to the synthesis LLM call must embed both resolved files' headers.
     synthesis_prompt = llm_client.calls[1]["prompt"]
     assert "## File: billing/InvoiceDisputes.md" in synthesis_prompt
-    assert "## File: billing/RefundPolicy.md" in synthesis_prompt
+    # file_id=3 is reachable only via the graph_neighbors expansion (never present in
+    # select_top_k's output), so no TopicCandidate.path exists for it -- see pipeline.py's
+    # GetFileFn proto-shape fix disclosure for why this falls back to a placeholder path.
+    assert "## File: (path unknown; file_id=3)" in synthesis_prompt
 
 
 def test_run_query_pipeline_raises_on_empty_selection() -> None:
@@ -204,7 +210,7 @@ def test_run_query_pipeline_raises_on_empty_selection() -> None:
     def fake_graph_neighbors(file_id: int, hops: int) -> list[GraphNeighbor]:
         raise AssertionError("graph_neighbors should not be called with no selected topics")
 
-    def fake_get_file(file_id: int) -> tuple[str, str]:
+    def fake_get_file(file_id: int) -> str:
         raise AssertionError("get_file should not be called with no selected file_ids")
 
     llm_client = _FakeLLMClient([_INTENT_RESPONSE])

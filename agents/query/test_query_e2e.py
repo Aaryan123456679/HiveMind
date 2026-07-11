@@ -12,12 +12,13 @@ Scope: what "end-to-end" means here -- disclosed
 --------------------------------------------------
 Per subtask 4.6.1 (`agents/query/pipeline.py`), `run_query_pipeline()` takes
 `search_candidates`/`graph_neighbors`/`get_file` as injected callables plus an
-`LLMClient` -- a disclosed, accepted DI seam; there is no real gRPC wiring in
-`agents/query/` today (no `wiring.py` analogue, unlike `agents/ingestion/`). This module
-does NOT stand up a real engine subprocess or a real Ollama server (contrast
-`agents/ingestion/test_e2e_smoke.py`, which does exactly that for the ingestion side) --
-that remains future work (see this run's handoff.json). "End-to-end" in this module
-means: every non-LLM, non-gRPC step of the real pipeline (`select_top_k`,
+`LLMClient` -- a disclosed, accepted DI seam. Issue #56 subtask 4.6.3.1 has since added a
+real `wiring.py` analogue (`agents/query/wiring.py`, mirroring `agents/ingestion/`'s own),
+but this module still injects plain on-disk fakes rather than `wiring.py`'s gRPC-backed
+clients: standing up a real running engine process for this test to dial is out of scope
+here (contrast `agents/ingestion/test_e2e_smoke.py`, which does exactly that for the
+ingestion side) -- that remains future work (see this run's handoff.json). "End-to-end" in
+this module means: every non-LLM, non-gRPC step of the real pipeline (`select_top_k`,
 `expand_insufficient_topics`, `combine_and_cap`, `_build_selected_markdown`, and
 `synthesizer.py`'s own citation-resolution logic) runs for real and unmocked, against a
 real, small corpus of files genuinely written to and read back from disk -- only the LLM
@@ -77,13 +78,14 @@ def _seed_corpus(tmp_path: Path) -> dict[str, int]:
 
 
 def _make_get_file(tmp_path: Path, id_to_path: dict[int, str]):
-    """Return a `GetFileFn` that reads the real seeded file off disk on every call
-    (genuine I/O against the corpus, not a canned in-memory dict)."""
+    """Return a `GetFileFn` that reads the real seeded file's content off disk on every call
+    (genuine I/O against the corpus, not a canned in-memory dict). `file_id -> content` only,
+    matching `GetFileFn`'s real (post-4.6.3.1) shape -- see `pipeline.py`'s `GetFileFn`
+    proto-shape fix disclosure for why path is no longer part of this callable's contract."""
 
-    def get_file(file_id: int) -> tuple[str, str]:
+    def get_file(file_id: int) -> str:
         path = id_to_path[file_id]
-        content = (tmp_path / path).read_text()
-        return path, content
+        return (tmp_path / path).read_text()
 
     return get_file
 
