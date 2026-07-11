@@ -1,0 +1,30 @@
+{
+  "subtask": "4.5.1.1",
+  "acceptance_criteria": [
+    {
+      "criterion": "spliceOutDegenerateAncestor patches the true left-neighbor NextSibling even when gj == 0 (cross-grandparent case)",
+      "covered_by": "existing shipped fix (findLeftNeighborAtSameLevel, commit f949d54) + new TestDeleteSpliceGj0CrossGrandparentNoDangling exercising levelsUp==2 nested case",
+      "status": "pass"
+    },
+    {
+      "criterion": "no dangling NextSibling remains after the splice",
+      "covered_by": "new test's independent re-walk of the level-3 NextSibling chain post-delete",
+      "status": "pass"
+    },
+    {
+      "criterion": "no silent misrouting under concurrent descent",
+      "covered_by": "new test's concurrent Lookup-vs-Delete race section under -race",
+      "status": "pass"
+    },
+    {
+      "criterion": "test spec name matches issue #38 exactly (TestDeleteSpliceGj0CrossGrandparentNoDangling)",
+      "covered_by": "new test function literally named this",
+      "status": "pass"
+    },
+    {
+      "criterion": "zero regressions to existing engine/btree and engine suites",
+      "covered_by": "full go test ./engine/btree/... -race -v and go test ./engine/... -race runs",
+      "status": "pending_self_consistency_run"
+    }
+  ]
+}
