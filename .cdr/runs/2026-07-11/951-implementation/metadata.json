@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "951-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "4.5.18.4",
+  "git_head": "90e54fb1cbc1c6cad6bc81ba41ff59caffa035a1",
+  "run_key": "issue57-4.5.18.4-90e54fb1-pending.md-attribution-correction",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-11T11:15:10Z",
+  "ended_at": "2026-07-11T11:30:00Z"
+}
