@@ -16,6 +16,7 @@ internals and no real sockets opened.
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -313,7 +314,23 @@ def test_openrouter_client_error_is_llm_error() -> None:
 
 def test_complete_client_reuse_across_calls() -> None:
     """`complete()` must reuse one persistent `httpx.Client`/transport for
-    the instance's lifetime rather than opening a fresh one per call."""
+    the instance's lifetime rather than opening a fresh one per call.
+
+    Object-identity checks on `client._client` alone are too weak: they
+    would still pass if `complete()` mutated `self._client` in place, or
+    if some other per-call-constructed object happened to be assigned
+    back to the same attribute. To genuinely prove the *same underlying
+    transport is used to make every request*, this test spies on the
+    `post` method bound to the specific `httpx.Client` instance held
+    before any `complete()` call, and asserts that spy -- and only that
+    spy -- is invoked once per `complete()` call.
+
+    If `complete()` were changed to construct a fresh `httpx.Client` per
+    call (the mutation this test guards against), the outgoing request
+    would go through that new instance's own (unpatched) `post` method
+    instead, so `post_spy.call_count` would stay at `0` and this test
+    would fail.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -322,15 +339,20 @@ def test_complete_client_reuse_across_calls() -> None:
 
     client = _client_with_handler(handler)
     try:
-        client_before_first_call = client._client
-        client.complete("first call")
-        client_after_first_call = client._client
+        original_client = client._client
 
-        client.complete("second call")
-        client_after_second_call = client._client
+        with patch.object(
+            original_client, "post", wraps=original_client.post
+        ) as post_spy:
+            client.complete("first call")
+            client.complete("second call")
+            client.complete("third call")
 
-        assert client_before_first_call is client_after_first_call
-        assert client_after_first_call is client_after_second_call
+            assert post_spy.call_count == 3
+
+        # The instance attribute itself must still point at the very same
+        # object the spy was bound to -- i.e. nothing was swapped in.
+        assert client._client is original_client
     finally:
         client.close()
 
