@@ -49,6 +49,12 @@ import re
 from dataclasses import dataclass
 
 from eval.baselines.vector_rag import OllamaEmbeddingClient, VectorRagIndex, retrieve_documents
+#: Re-exported from `eval.metrics` (subtask 5.3.1, issue #28) -- `eval.metrics` is now the
+#: canonical home for this function; it is imported here (not reimplemented) so every existing
+#: caller of `vector_rag_rerank.precision_at_k` (`test_vector_rag_rerank.py`) keeps working
+#: unmodified. See `eval/metrics.py`'s module docstring for the full duplication-resolution
+#: rationale.
+from eval.metrics import precision_at_k  # noqa: F401
 from llm.client import LLMClient
 
 #: Default extra candidates pulled beyond `top_k` when reranking is enabled, before the reranker
@@ -61,21 +67,6 @@ DEFAULT_EXTRA_CANDIDATES = 2
 #: the prompt small and fast on local CPU-bound generation. Fixture-scale documents are short
 #: enough that this rarely truncates in practice.
 MAX_CANDIDATE_CHARS_IN_PROMPT = 600
-
-
-def precision_at_k(retrieved_doc_ids: list[str], relevant_doc_ids: set[str], k: int) -> float:
-    """Fraction of the top `k` of `retrieved_doc_ids` that are in `relevant_doc_ids`.
-
-    Returns `1.0` if `k <= 0` (vacuously satisfied -- no slots to get wrong), matching
-    `vector_rag.recall_at_k`'s vacuous-case convention style but for the precision denominator.
-    """
-    if k <= 0:
-        return 1.0
-    top_k_ids = retrieved_doc_ids[:k]
-    if not top_k_ids:
-        return 0.0
-    hits = sum(1 for doc_id in top_k_ids if doc_id in relevant_doc_ids)
-    return hits / len(top_k_ids)
 
 
 @dataclass(frozen=True)

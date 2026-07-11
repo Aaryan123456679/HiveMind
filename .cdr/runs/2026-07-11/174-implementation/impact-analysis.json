@@ -1,0 +1,34 @@
+{
+  "subtask": "5.3.1",
+  "issue": 28,
+  "new_files": [
+    "agents/eval/metrics.py",
+    "agents/eval/test_metrics_recall_precision.py"
+  ],
+  "modified_files": [
+    {
+      "path": "agents/eval/baselines/vector_rag.py",
+      "change": "Replace in-place `recall_at_k` definition with a re-export from `eval.metrics`. No signature/behavior change.",
+      "risk": "low"
+    },
+    {
+      "path": "agents/eval/baselines/vector_rag_rerank.py",
+      "change": "Replace in-place `precision_at_k` definition with a re-export from `eval.metrics`. No signature/behavior change.",
+      "risk": "low"
+    }
+  ],
+  "untouched_but_depended_on": [
+    "agents/eval/ground_truth.py (RelevantDoc, QueryLabel, RelevanceLabel -- imported, not modified)",
+    "agents/eval/baselines/graphrag_lite.py (unchanged; its retrieve_documents output shape is what metrics.py's arm-level helpers consume, but no import needed there since its own test file already imports recall_at_k/precision_at_k from the baselines modules, which still work post-refactor)"
+  ],
+  "downstream_consumers_checked_for_breakage": [
+    "agents/eval/test_vector_rag_baseline.py (imports recall_at_k from eval.baselines.vector_rag)",
+    "agents/eval/test_vector_rag_rerank.py (imports precision_at_k from eval.baselines.vector_rag_rerank)",
+    "agents/eval/test_graphrag_baseline.py (imports recall_at_k from eval.baselines.vector_rag)",
+    "agents/eval/baselines/vector_rag.py::select_chunk_config (internal use of recall_at_k)"
+  ],
+  "dependencies_added": "none (agents/pyproject.toml untouched)",
+  "llm_calls_introduced": "none (pure computation)",
+  "test_command": "cd agents && uv run pytest eval/test_metrics_recall_precision.py eval/test_vector_rag_baseline.py eval/test_vector_rag_rerank.py eval/test_graphrag_baseline.py eval/test_ground_truth.py -q",
+  "backward_compatibility_strategy": "metrics.py is the single canonical implementation; vector_rag.py and vector_rag_rerank.py import and re-bind the same function objects (not copies), so identity and behavior are preserved for all existing callers and tests."
+}

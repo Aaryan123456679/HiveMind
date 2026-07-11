@@ -1,0 +1,24 @@
+{
+  "subtask": "5.3.1",
+  "rows": [
+    {"case": "recall_at_k perfect overlap", "expected": "1.0", "covered_by": "test_recall_at_k_matches_hand_computed_fixture"},
+    {"case": "recall_at_k partial overlap", "expected": "hand-computed fraction", "covered_by": "test_recall_at_k_matches_hand_computed_fixture"},
+    {"case": "recall_at_k zero overlap", "expected": "0.0", "covered_by": "test_recall_at_k_matches_hand_computed_fixture"},
+    {"case": "recall_at_k empty relevant set (vacuous)", "expected": "1.0", "covered_by": "test_recall_at_k_empty_relevant_set_is_vacuous"},
+    {"case": "recall_at_k k cutoff smaller than list", "expected": "hand-computed, only first k considered", "covered_by": "test_recall_at_k_respects_k_cutoff"},
+    {"case": "precision_at_k perfect", "expected": "1.0", "covered_by": "test_precision_at_k_matches_hand_computed_fixture"},
+    {"case": "precision_at_k partial", "expected": "hand-computed fraction", "covered_by": "test_precision_at_k_matches_hand_computed_fixture"},
+    {"case": "precision_at_k none relevant", "expected": "0.0", "covered_by": "test_precision_at_k_matches_hand_computed_fixture"},
+    {"case": "precision_at_k k<=0 (vacuous)", "expected": "1.0", "covered_by": "test_precision_at_k_zero_k_is_vacuous"},
+    {"case": "precision_at_k empty retrieved list", "expected": "0.0", "covered_by": "test_precision_at_k_empty_retrieved_list"},
+    {"case": "relevant_doc_id_set include_cross_reference=True", "expected": "primary + cross_reference doc_ids", "covered_by": "test_relevant_doc_id_set_include_cross_reference"},
+    {"case": "relevant_doc_id_set include_cross_reference=False", "expected": "primary-only doc_ids", "covered_by": "test_relevant_doc_id_set_primary_only"},
+    {"case": "score_query against fixture QueryLabel", "expected": "exact recall+precision matching hand computation", "covered_by": "test_score_query_against_fixture_query_label"},
+    {"case": "score_arm mean recall/precision across multiple queries, one arm", "expected": "exact hand-computed means", "covered_by": "test_score_arm_computes_mean_recall_and_precision"},
+    {"case": "score_arm across three distinct arm result sets, same ground truth", "expected": "each arm scored correctly and independently", "covered_by": "test_score_arm_distinguishes_three_arms"},
+    {"case": "score_arm missing query in retrieved_by_query", "expected": "scored as empty retrieval, no KeyError", "covered_by": "test_score_arm_missing_query_scored_as_empty"},
+    {"case": "no duplication: vector_rag.recall_at_k is eval.metrics.recall_at_k", "expected": "same object (is)", "covered_by": "test_vector_rag_recall_at_k_reexports_metrics"},
+    {"case": "no duplication: vector_rag_rerank.precision_at_k is eval.metrics.precision_at_k", "expected": "same object (is)", "covered_by": "test_vector_rag_rerank_precision_at_k_reexports_metrics"},
+    {"case": "no regression: existing vector_rag/vector_rag_rerank/graphrag_lite test suites still pass", "expected": "all green, no assertion changes needed", "covered_by": "pytest run of pre-existing test files, not modified"}
+  ]
+}

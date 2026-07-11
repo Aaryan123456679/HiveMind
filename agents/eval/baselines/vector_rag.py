@@ -64,6 +64,13 @@ from dataclasses import dataclass
 
 import httpx
 
+#: Re-exported from `eval.metrics` (subtask 5.3.1, issue #28) -- `eval.metrics` is now the
+#: canonical home for this function; it is imported here (not reimplemented) so every existing
+#: caller of `vector_rag.recall_at_k` (this module's own `select_chunk_config`,
+#: `test_vector_rag_baseline.py`, `test_graphrag_baseline.py`) keeps working unmodified. See
+#: `eval/metrics.py`'s module docstring for the full duplication-resolution rationale.
+from eval.metrics import recall_at_k  # noqa: F401
+
 #: Ollama's standard local-server default address (same server `agents/llm/ollama_client.py`
 #: talks to, just a different HTTP endpoint -- see module docstring).
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -331,19 +338,6 @@ def retrieve_documents(
         best_score_by_doc, key=lambda doc_id: best_score_by_doc[doc_id], reverse=True
     )
     return ranked_doc_ids[:top_k]
-
-
-def recall_at_k(retrieved_doc_ids: list[str], relevant_doc_ids: set[str], k: int) -> float:
-    """Fraction of `relevant_doc_ids` present in the top `k` of `retrieved_doc_ids`.
-
-    Returns `1.0` if `relevant_doc_ids` is empty (vacuously satisfied -- no relevant docs to
-    miss), matching the standard IR-metric convention for an empty ground-truth set.
-    """
-    if not relevant_doc_ids:
-        return 1.0
-    top_k_ids = set(retrieved_doc_ids[:k])
-    hits = len(top_k_ids & relevant_doc_ids)
-    return hits / len(relevant_doc_ids)
 
 
 def select_chunk_config(

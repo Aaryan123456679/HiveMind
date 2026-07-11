@@ -1,0 +1,14 @@
+{
+  "subtask": "5.3.1",
+  "note": "Internal sanity check only -- NOT independent verification (delegated to /cdr:verify per invariant I4).",
+  "build_green": true,
+  "commands_run": [
+    "cd agents && uv run pytest eval/test_metrics_recall_precision.py eval/test_vector_rag_baseline.py eval/test_vector_rag_rerank.py eval/test_graphrag_baseline.py eval/test_ground_truth.py -q  -> 94 passed",
+    "cd agents && uv run pytest eval/ -q  -> 105 passed, 0 failed, 0 skipped (full agents/eval/ suite, including live-Ollama tiers which ran and passed since a local Ollama server was reachable in this environment)",
+    "cd agents && uv run ruff check eval/metrics.py eval/test_metrics_recall_precision.py eval/baselines/vector_rag.py eval/baselines/vector_rag_rerank.py  -> All checks passed"
+  ],
+  "validation_matrix_coverage": "All 19 rows in validation-matrix.json map to a passing test in eval/test_metrics_recall_precision.py or to the unmodified pre-existing suites (test_vector_rag_baseline.py, test_vector_rag_rerank.py, test_graphrag_baseline.py) which still pass unchanged post-refactor.",
+  "no_dependency_added": "agents/pyproject.toml not modified (verified via git diff --stat)",
+  "no_llm_calls_in_new_code": "eval/metrics.py has zero imports of eval.llm/httpx/network; pure computation over lists/sets/dataclasses",
+  "duplication_resolved": "vector_rag.py::recall_at_k and vector_rag_rerank.py::precision_at_k now re-export (import, same object identity) from eval.metrics, confirmed by dedicated identity-assertion tests (test_vector_rag_recall_at_k_reexports_metrics, test_vector_rag_rerank_precision_at_k_reexports_metrics), both passing"
+}
