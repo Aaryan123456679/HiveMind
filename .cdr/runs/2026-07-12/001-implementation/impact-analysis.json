@@ -1,0 +1,32 @@
+{
+  "subtask": "5.3.2",
+  "issue": 28,
+  "new_files": [
+    "agents/eval/llm_judge.py",
+    "agents/eval/test_llm_judge.py",
+    "agents/eval/calibrate_judge.py"
+  ],
+  "modified_files": [],
+  "dependencies_read_only": [
+    "agents/llm/interceptor.py (LLMInterceptor.call, InterceptedCompletion)",
+    "agents/llm/client.py (LLMClient, CompletionResult, TokenUsage)",
+    "agents/llm/factory.py (create_llm_client, for calibrate_judge.py's CLI-only real-client path)",
+    "agents/eval/cost_latency.py (StageRecord shape produced by LLMInterceptor.call)",
+    "agents/eval/metrics.py (dataclass/scoring-structure precedent, not imported)",
+    "agents/eval/pipeline.py (shared-function precedent, not imported)"
+  ],
+  "downstream_consumers": [
+    "agents/eval/run_benchmark.py (future subtask 5.3.4 -- not yet built; will call llm_judge.score_answer/score_arm_answers per corpus-growth checkpoint)"
+  ],
+  "no_edits_to": [
+    "docs/LLD/eval.md (rubric detail is an in-module disclosed design choice, not an LLD change; LLD already names 'LLM-judge answer quality + manual spot-check calibration' as a metric)",
+    "agents/pyproject.toml (no new dependency -- stdlib only: dataclasses, json, argparse, statistics)",
+    "agents/llm/interceptor.py, agents/llm/client.py, agents/eval/cost_latency.py, agents/eval/metrics.py, agents/eval/pipeline.py (read-only precedent/integration points, no changes needed)"
+  ],
+  "risk_notes": [
+    "Judge LLM call must go through LLMInterceptor.call(), not client.complete()/complete_with_usage() directly, so cost/latency rolls into cost_latency.py per the launching agent's binding instruction.",
+    "No live OpenRouter/Gemini calls permitted this pass -- all tests use a stub LLMClient (matching test_shared_final_llm.py's _SpyLLMClient convention) plus, for the interceptor integration test, an httpx.MockTransport-backed OllamaClient/OpenRouterClient (matching test_interceptor.py's convention) -- both fully offline.",
+    "Judge-response parsing must raise loudly (JudgeError) rather than silently invent a score on malformed/missing judge output, mirroring cost_latency.py's 'refuse to invent data' convention.",
+    "calibrate_judge.py's CLI main() constructs a real LLMClient via llm.factory.create_llm_client only when actually invoked as a script; the test suite never calls main() with a real provider -- it exercises the pure run_calibration() function with an injected stub client, and a separate CLI-smoke test monkeypatches the client construction to avoid any network."
+  ]
+}

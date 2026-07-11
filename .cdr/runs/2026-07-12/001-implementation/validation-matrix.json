@@ -1,0 +1,70 @@
+{
+  "subtask": "5.3.2",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "text": "An LLM-judge scoring pass rates answer quality on a defined rubric.",
+      "covered_by": [
+        "llm_judge.JUDGE_RUBRIC_CRITERIA (defined rubric constant)",
+        "test_llm_judge.py::test_build_judge_prompt_includes_rubric_criteria",
+        "test_llm_judge.py::test_score_answer_returns_expected_score_structure",
+        "test_llm_judge.py::test_score_arm_answers_scores_every_query"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Manual spot-check harness allowing a human to compare judge scores against a sample of manually-rated answers for calibration.",
+      "covered_by": [
+        "calibrate_judge.ManualRating / CalibrationSample / CalibrationReport / run_calibration",
+        "test_llm_judge.py::test_run_calibration_report_structure_hand_verified",
+        "test_llm_judge.py::test_load_manual_ratings_and_write_report_round_trip",
+        "test_llm_judge.py::test_calibrate_judge_main_cli_smoke_produces_report"
+      ]
+    },
+    {
+      "id": "AC-3 (test spec)",
+      "text": "pytest agents/eval/test_llm_judge.py (LLM-judge call mocked): scoring pipeline produces expected score structure.",
+      "covered_by": [
+        "test_llm_judge.py::test_parse_judge_response_valid",
+        "test_llm_judge.py::test_score_answer_returns_expected_score_structure",
+        "test_llm_judge.py::test_score_answer_via_intercepted_ollama_mock_transport"
+      ]
+    },
+    {
+      "id": "AC-4 (test spec)",
+      "text": "a manual calibration script is runnable and produces a comparison report.",
+      "covered_by": [
+        "test_llm_judge.py::test_calibrate_judge_main_cli_smoke_produces_report"
+      ]
+    },
+    {
+      "id": "AC-5 (binding scoping constraint)",
+      "text": "No live calls to OpenRouter/Gemini; all tests use mocked LLM clients.",
+      "covered_by": [
+        "All test_llm_judge.py tests use _StubLLMClient(LLMClient) or httpx.MockTransport-backed OllamaClient -- zero real network, zero .env read",
+        "self-consistency.json's explicit grep-for-live-call-absence check"
+      ]
+    },
+    {
+      "id": "AC-6 (reuse guidance)",
+      "text": "Judge calls routed through LLMInterceptor.call(), not complete()/complete_with_usage() directly.",
+      "covered_by": [
+        "llm_judge.score_answer's sole call path is interceptor.call(...)",
+        "test_llm_judge.py::test_score_answer_via_intercepted_ollama_mock_transport (asserts a real StageRecord is produced and is aggregate_by_stage-compatible)"
+      ]
+    },
+    {
+      "id": "AC-7 (malformed-output safety)",
+      "text": "Judge response parsing never silently invents a score.",
+      "covered_by": [
+        "test_llm_judge.py::test_parse_judge_response_missing_criterion_raises",
+        "test_llm_judge.py::test_parse_judge_response_out_of_range_score_raises",
+        "test_llm_judge.py::test_parse_judge_response_invalid_json_raises"
+      ]
+    }
+  ],
+  "explicitly_deferred": [
+    "Live calibration run against real OpenRouter/Gemini judge-model outputs -- deferred to a separate cost-estimated run, per binding scoping constraint.",
+    "Wiring score_arm_answers into agents/eval/run_benchmark.py (subtask 5.3.4, not yet built)."
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "note": "Internal sanity only (build green, validation-matrix covered). This is NOT verification (invariant I4) -- verification is dispatched separately via /cdr:verify.",
+  "build_green": {
+    "command": "cd agents && python -m pytest eval/ llm/ -q",
+    "result": "230 passed, 5 warnings, 0 failed",
+    "new_file_test_result": {
+      "command": "cd agents && python -m pytest eval/test_llm_judge.py -q",
+      "result": "23 passed"
+    },
+    "lint": {
+      "command": "cd agents && python -m ruff check eval/llm_judge.py eval/calibrate_judge.py eval/test_llm_judge.py",
+      "result": "All checks passed!"
+    }
+  },
+  "validation_matrix_coverage": {
+    "AC-1_defined_rubric": "covered -- JUDGE_RUBRIC_CRITERIA + test_build_judge_prompt_includes_rubric_criteria + test_score_answer_returns_expected_score_structure",
+    "AC-2_manual_spot_check_harness": "covered -- ManualRating/CalibrationSample/CalibrationReport/run_calibration + test_run_calibration_report_structure_hand_verified + round-trip test",
+    "AC-3_test_spec_score_structure": "covered -- test_parse_judge_response_valid, test_score_answer_returns_expected_score_structure, test_score_answer_via_intercepted_ollama_mock_transport",
+    "AC-4_test_spec_runnable_calibration_script": "covered -- test_calibrate_judge_main_cli_smoke_produces_report (invokes calibrate_judge.main() end-to-end, asserts written report.json structure)",
+    "AC-5_no_live_calls_mocked_clients": "covered -- every test in test_llm_judge.py uses _StubLLMClient or httpx.MockTransport-backed OllamaClient; grep below confirms no real network/env access in new modules",
+    "AC-6_interceptor_wiring": "covered -- score_answer's only call path is interceptor.call(); test_score_answer_record_is_aggregate_by_stage_compatible proves the produced StageRecord feeds cost_latency.aggregate_by_stage with no adaptation",
+    "AC-7_malformed_output_safety": "covered -- test_parse_judge_response_missing_criterion_raises, test_parse_judge_response_out_of_range_score_raises, test_parse_judge_response_invalid_json_raises, test_parse_judge_response_non_int_score_raises, test_parse_judge_response_non_object_json_raises, test_parse_judge_response_missing_scores_key_raises"
+  },
+  "zero_live_call_confirmation": {
+    "method": "grep for real client construction / .env reads in new modules and test file",
+    "findings": [
+      "agents/eval/llm_judge.py: imports only eval.cost_latency.StageRecord + TYPE_CHECKING-only llm.client.LLMClient/llm.interceptor.LLMInterceptor references -- never constructs a provider client or reads .env",
+      "agents/eval/calibrate_judge.py: llm.factory.create_llm_client / llm.interceptor.LLMInterceptor are imported ONLY inside main(), which the test suite never calls un-monkeypatched",
+      "agents/eval/test_llm_judge.py: only _StubLLMClient(LLMClient) and OllamaClient(transport=httpx.MockTransport(...)) are used; the one CLI-smoke test monkeypatches llm.factory.create_llm_client to return the stub client before calling calibrate_judge.main()",
+      "no test imports OpenRouterClient or GeminiClient, and no .env file is read anywhere in this pass"
+    ],
+    "confirmed": true
+  },
+  "deferred_disclosed": [
+    "Live calibration run against real OpenRouter/Gemini judge-model outputs -- deferred to a separate, deliberately-scoped run with explicit cost estimation, per binding scoping constraint.",
+    "Wiring score_arm_answers into agents/eval/run_benchmark.py (subtask 5.3.4, not yet built)."
+  ]
+}
