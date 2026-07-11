@@ -95,7 +95,9 @@ direct callers of the raw `Insert`/`Delete` functions.
   right-clamp/over-route one. This is an intentional, accepted consequence of B-link-tree-style
   leaf-chain traversal, not a defect; it means lookup is robust to some but not all classes of
   routing mistakes, which is worth keeping in mind when reasoning about routing-path test coverage
-  (see `.cdr/index/regression.jsonl`'s 4.5.12.3 finding).
+  (see `.cdr/index/regression.jsonl`'s 4.5.12.3 finding, run `114-verification`,
+  originally logged only in that run's `verification.json` and retroactively
+  appended to `regression.jsonl` by subtask 4.5.18.2).
 
 ## Interactions with other modules
 
