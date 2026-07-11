@@ -1,0 +1,40 @@
+{
+  "subtask": "4.5.14.2",
+  "acceptance_criteria": [
+    {
+      "criterion": "A test exercises appending a record that lands exactly at maxSegmentBytes' boundary",
+      "covered_by": "TestExactBoundarySegmentRolloverResume: record2's Append brings w.size to exactly maxSegmentBytes (64); asserts SegmentNum()==0 and Offset()==maxSegmentBytes immediately after, then separately asserts on-disk segment 0 file size == maxSegmentBytes and ReadSegment returns exactly [record1, record2]",
+      "status": "covered"
+    },
+    {
+      "criterion": "Resuming (OpenWriter) with more than one pre-existing segment present",
+      "covered_by": "Test creates exactly 2 pre-existing segment files (wal-0.log, wal-1.log) before calling OpenWriter a second time; explicitly asserts len(listSegmentFiles(dir)) == 2 before resume as a precondition check",
+      "status": "covered"
+    },
+    {
+      "criterion": "Confirming correct segment selection/continuation",
+      "covered_by": "Asserts resumed w2.SegmentNum() == 1 (highest-numbered, not 0, not a new segment 2) and w2.Offset() == segment 1's true restored size; appends record4 and confirms it lands in segment 1 (not a new segment); confirms segment 0 remains byte-for-byte unchanged; confirms exactly 2 segment files exist after resume+append (no stray extra segment)",
+      "status": "covered"
+    },
+    {
+      "criterion": "Test spec: go test ./engine/wal/... -run TestExactBoundarySegmentRolloverResume",
+      "covered_by": "Ran directly; PASS (0.03s), no other tests in the package match this -run filter",
+      "status": "verified_by_implementer_as_self_consistency_only"
+    }
+  ],
+  "regression_safety": [
+    {
+      "check": "go vet ./engine/wal/...",
+      "result": "clean"
+    },
+    {
+      "check": "gofmt -l engine/wal/",
+      "result": "clean (no output)"
+    },
+    {
+      "check": "go test ./engine/wal/... -race",
+      "result": "PASS, all existing + new tests, no regressions"
+    }
+  ],
+  "note": "This validation matrix is internal self-consistency only, per invariant I4 -- the implementing agent does not verify its own work. Independent verification is deferred to /cdr:verify."
+}

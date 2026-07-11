@@ -176,6 +176,137 @@ func TestOpenWriterResumesExistingSegments(t *testing.T) {
 	}
 }
 
+// TestExactBoundarySegmentRolloverResume closes the gap flagged in subtask
+// 1.3.1's verification (regression.jsonl): no test previously exercised (a)
+// a record whose total encoded size (header+payload) lands EXACTLY at
+// maxSegmentBytes, asserting it stays in the current segment rather than
+// triggering a spurious rotation (Append's rotate condition is a strict
+// w.size+total > w.maxSegmentBytes, so an exact-equal total must NOT
+// rotate), and (b) OpenWriter resuming with MORE THAN ONE pre-existing
+// segment file present, asserting it selects the highest-numbered segment
+// (not segment 0, and not a new one) and continues appending from its
+// correctly restored size.
+func TestExactBoundarySegmentRolloverResume(t *testing.T) {
+	dir := t.TempDir()
+
+	const maxSegmentBytes = 64 // recordHeaderSize (8) + 24-byte payloads divides evenly for an exact-boundary total
+
+	w1, err := OpenWriter(dir, maxSegmentBytes)
+	if err != nil {
+		t.Fatalf("OpenWriter (first): %v", err)
+	}
+
+	// record1 + record2 each total recordHeaderSize+24 = 32 bytes, so after
+	// both, w.size == 64 == maxSegmentBytes exactly: the exact-boundary case.
+	record1 := bytes.Repeat([]byte("a"), 24)
+	record2 := bytes.Repeat([]byte("b"), 24)
+	if _, err := w1.Append(record1); err != nil {
+		t.Fatalf("Append(record1): %v", err)
+	}
+	if _, err := w1.Append(record2); err != nil {
+		t.Fatalf("Append(record2): %v", err)
+	}
+
+	if got := w1.SegmentNum(); got != 0 {
+		t.Fatalf("after two exact-fitting records, SegmentNum() = %d, want 0 (no rotation should have happened yet)", got)
+	}
+	if got := w1.Offset(); got != maxSegmentBytes {
+		t.Fatalf("after two exact-fitting records, Offset() = %d, want exactly maxSegmentBytes (%d)", got, int64(maxSegmentBytes))
+	}
+
+	// A third record must rotate into segment 1, since segment 0 is already
+	// exactly full (size(64) + total(> 0) > maxSegmentBytes(64)).
+	record3 := []byte("seg1-first")
+	if _, err := w1.Append(record3); err != nil {
+		t.Fatalf("Append(record3): %v", err)
+	}
+	if got := w1.SegmentNum(); got != 1 {
+		t.Fatalf("after third record, SegmentNum() = %d, want 1 (exact-boundary-full segment 0 must rotate, not overflow)", got)
+	}
+
+	if err := w1.Close(); err != nil {
+		t.Fatalf("Close (first writer): %v", err)
+	}
+
+	// Confirm segment 0's on-disk size is exactly maxSegmentBytes (the
+	// boundary record was NOT split or spilled into a new segment) and that
+	// it parses back to exactly [record1, record2].
+	seg0Path := segmentPath(dir, 0)
+	info, err := os.Stat(seg0Path)
+	if err != nil {
+		t.Fatalf("Stat(segment 0): %v", err)
+	}
+	if info.Size() != maxSegmentBytes {
+		t.Fatalf("segment 0 on-disk size = %d, want exactly maxSegmentBytes (%d)", info.Size(), int64(maxSegmentBytes))
+	}
+	seg0Records, err := ReadSegment(seg0Path)
+	if err != nil {
+		t.Fatalf("ReadSegment(segment 0): %v", err)
+	}
+	if len(seg0Records) != 2 || !bytes.Equal(seg0Records[0], record1) || !bytes.Equal(seg0Records[1], record2) {
+		t.Fatalf("segment 0 records = %v, want exactly [record1, record2] (boundary record must not have rotated prematurely)", seg0Records)
+	}
+
+	// Precondition for the resume half of this test: more than one segment
+	// file must actually be present on disk before we resume.
+	segFilesBeforeResume := listSegmentFiles(t, dir)
+	if len(segFilesBeforeResume) != 2 {
+		t.Fatalf("expected exactly 2 pre-existing segment files before resume, got %d: %v", len(segFilesBeforeResume), segFilesBeforeResume)
+	}
+
+	// Resume: OpenWriter must select segment 1 (the highest-numbered
+	// existing segment), not segment 0 and not a freshly rotated segment 2,
+	// and must restore its correct current size.
+	w2, err := OpenWriter(dir, maxSegmentBytes)
+	if err != nil {
+		t.Fatalf("OpenWriter (resume): %v", err)
+	}
+	defer w2.Close()
+
+	if got := w2.SegmentNum(); got != 1 {
+		t.Fatalf("resumed SegmentNum() = %d, want 1 (highest of the 2 pre-existing segments)", got)
+	}
+	wantResumeOffset := int64(recordHeaderSize + len(record3))
+	if got := w2.Offset(); got != wantResumeOffset {
+		t.Fatalf("resumed Offset() = %d, want %d (segment 1's restored size)", got, wantResumeOffset)
+	}
+
+	record4 := []byte("seg1-second")
+	if _, err := w2.Append(record4); err != nil {
+		t.Fatalf("Append(record4): %v", err)
+	}
+	if got := w2.SegmentNum(); got != 1 {
+		t.Fatalf("after resumed append, SegmentNum() = %d, want 1 (record4 fits well within maxSegmentBytes, no rotation expected)", got)
+	}
+
+	// Segment 0 must remain completely untouched by the resume+append.
+	seg0RecordsAfter, err := ReadSegment(seg0Path)
+	if err != nil {
+		t.Fatalf("ReadSegment(segment 0) after resume: %v", err)
+	}
+	if len(seg0RecordsAfter) != 2 || !bytes.Equal(seg0RecordsAfter[0], record1) || !bytes.Equal(seg0RecordsAfter[1], record2) {
+		t.Fatalf("segment 0 records after resume = %v, want unchanged [record1, record2]", seg0RecordsAfter)
+	}
+
+	// Segment 1 must now contain record3 (pre-existing) followed by record4
+	// (appended after resume), proving the resumed writer continued
+	// appending onto the correct (highest-numbered) segment rather than
+	// overwriting it or starting a new one.
+	seg1Records, err := ReadSegment(segmentPath(dir, 1))
+	if err != nil {
+		t.Fatalf("ReadSegment(segment 1): %v", err)
+	}
+	if len(seg1Records) != 2 || !bytes.Equal(seg1Records[0], record3) || !bytes.Equal(seg1Records[1], record4) {
+		t.Fatalf("segment 1 records = %v, want exactly [record3, record4]", seg1Records)
+	}
+
+	// No third segment file should have been created.
+	segFilesAfter := listSegmentFiles(t, dir)
+	if len(segFilesAfter) != 2 {
+		t.Fatalf("expected exactly 2 segment files after resume+append, got %d: %v", len(segFilesAfter), segFilesAfter)
+	}
+}
+
 // TestOpenWriterResumeTornTailDiscardsAndTruncates closes the gap flagged in
 // subtask 1.3.1's verification (regression.jsonl): OpenWriter's resume path
 // previously did not validate a resumed segment's tail for torn/incomplete
