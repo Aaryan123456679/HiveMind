@@ -1,0 +1,35 @@
+{
+  "subtask": "4.5.12.4",
+  "criteria": [
+    {
+      "id": "AC1",
+      "text": "NewNodeAllocator cross-checks restored high-water-mark against highest node ID actually present in the index file.",
+      "check": "maxNodeIDInStore() computed and compared to restored next inside NewNodeAllocator; covered by both subtests of TestNodeAllocatorCrossChecksExistingNodes."
+    },
+    {
+      "id": "AC2",
+      "text": "Sidecar high-water-mark behind actual on-disk max -> non-nil descriptive error, no silent Next() collision.",
+      "check": "TestNodeAllocatorCrossChecksExistingNodes/StaleSidecarErrors: writes a node at an ID beyond the sidecar's persisted next, asserts NewNodeAllocator returns non-nil error whose message names both values."
+    },
+    {
+      "id": "AC3",
+      "text": "Sidecar high-water-mark >= actual max -> not an error (normal case).",
+      "check": "TestNodeAllocatorCrossChecksExistingNodes/ConsistentReopenSucceeds: allocate+write real nodes via Next()+WriteNode, close, reopen -- must succeed and Next() must continue from correct value."
+    },
+    {
+      "id": "AC4",
+      "text": "New test named exactly TestNodeAllocatorCrossChecksExistingNodes exists in engine/btree/insert_test.go.",
+      "check": "go test ./engine/btree/... -run TestNodeAllocatorCrossChecksExistingNodes -v"
+    },
+    {
+      "id": "AC5",
+      "text": "No regression to existing engine/btree suite (full + -race).",
+      "check": "go test ./engine/btree/... and go test -race ./engine/btree/..."
+    },
+    {
+      "id": "AC6",
+      "text": "No duplication/regression of 4.5.12.3's TestLookupInternalNodeMultiKeyRouting or issue #41's TestCrashBetweenInsertAndSaveRootRecovers.",
+      "check": "git diff --stat confirms lookup_test.go and btree_test.go untouched; full suite run includes both tests passing."
+    }
+  ]
+}

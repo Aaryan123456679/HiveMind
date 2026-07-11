@@ -48,12 +48,35 @@ type NodeAllocator struct {
 
 	// stateFile is the open sidecar file backing durable persistence of next.
 	stateFile *os.File
+
+	// store is the NodeStore this allocator hands out IDs for. Used only by
+	// Next()'s durability/consistency cross-check (subtask 4.5.12.4, issue
+	// #50; see Next's doc comment) to detect a stale/lost sidecar before it
+	// can reissue an already-used node ID; never used for any other purpose
+	// (NodeAllocator otherwise only touches its own stateFile).
+	store *NodeStore
 }
 
 // NewNodeAllocator opens (creating if necessary) a sidecar state file
 // alongside store's underlying index file, and restores the in-memory
 // high-water-mark from whatever was last durably persisted there (0 for a
 // brand-new index file, so the first Next() returns 1).
+//
+// NewNodeAllocator itself does not cross-check the restored high-water-mark
+// against store's on-disk content (unlike, superficially,
+// engine/catalog/idalloc.go's NewIDAllocator/maxFileIDInCatalog, which
+// performs its equivalent cross-check eagerly at construction time): a
+// NodeAllocator can legitimately be constructed against a NodeStore that
+// already has real node content written directly (bypassing the allocator
+// entirely) purely for read-only use, e.g. lookup_test.go's
+// hand-constructed-fixture-plus-Tree.Lookup-only test pattern, and an eager
+// check here would reject that legitimate case indistinguishably from an
+// actually-lost/stale sidecar. Instead, the cross-check that matters --
+// preventing an already-used node ID from ever actually being reissued -- is
+// performed lazily, at the point where reissuing one would actually cause
+// corruption: see Next()'s doc comment for the full rationale (subtask
+// 4.5.12.4, issue #50; closes the residual risk flagged during subtask
+// 1.2.3's verification, see .cdr/index/regression.jsonl).
 func NewNodeAllocator(store *NodeStore) (*NodeAllocator, error) {
 	path := store.f.Name() + nodeAllocSuffix
 
@@ -85,7 +108,43 @@ func NewNodeAllocator(store *NodeStore) (*NodeAllocator, error) {
 		return nil, fmt.Errorf("btree: nodealloc: state file %s has unexpected size %d (want 0 or %d)", path, info.Size(), nodeAllocStateSize)
 	}
 
-	return &NodeAllocator{next: next, stateFile: f}, nil
+	return &NodeAllocator{next: next, stateFile: f, store: store}, nil
+}
+
+// maxNodeIDInStore returns the highest node ID that has ever actually been
+// durably written to store's underlying index file (0 if the file contains
+// no node slots at all yet). NewNodeAllocator uses this to cross-check the
+// sidecar's persisted high-water-mark against what is actually durably
+// present on disk (see NewNodeAllocator's doc comment for the full
+// rationale, mirroring engine/catalog/idalloc.go's maxFileIDInCatalog).
+//
+// Unlike catalog.FileManager, NodeStore keeps no free-list or in-memory
+// "highest allocated" bookkeeping of its own (see NodeStore's doc comment in
+// lookup.go), and encoded node content carries no self-identifying "my node
+// ID" field to decode and compare (unlike CatalogRecord.FileID). Instead,
+// this relies on two invariants NodeStore/NodeAllocator already guarantee
+// together: node ID N is always written at exact byte offset N * NodeSize
+// (see ReadNode/WriteNode), and node IDs are handed out strictly
+// monotonically with no gaps and no reuse (Next() always returns next+1, and
+// every WriteNode call site in this package writes only at an ID it just
+// received from Next() or was previously returned by it). Consequently the
+// index file's on-disk size is a reliable proxy for "the highest node ID
+// ever durably written": each WriteNode call implicitly grows the file (via
+// the underlying WriteAt writing past the prior EOF) to at least
+// (nodeID+1)*NodeSize bytes, so size/NodeSize - 1 is exactly that highest
+// node ID, for any index file produced by this package's own
+// allocator+WriteNode pair.
+func maxNodeIDInStore(store *NodeStore) (uint64, error) {
+	info, err := store.f.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("btree: nodealloc: stat index file: %w", err)
+	}
+
+	slots := uint64(info.Size()) / uint64(NodeSize)
+	if slots == 0 {
+		return 0, nil
+	}
+	return slots - 1, nil
 }
 
 // Next durably allocates and returns the next node ID, starting at 1 (0 is
@@ -93,6 +152,26 @@ func NewNodeAllocator(store *NodeStore) (*NodeAllocator, error) {
 // (WriteAt + Sync) before Next returns successfully, so a subsequent reopen
 // of the same index file will never hand out a colliding, already-used node
 // ID.
+//
+// Durability/consistency cross-check (subtask 4.5.12.4, issue #50; closes the
+// residual risk flagged during subtask 1.2.3's verification -- see
+// .cdr/index/regression.jsonl's "NodeAllocator ... reintroduces the same
+// sidecar-state-file-loss/ID-reuse residual risk ... as engine/catalog/
+// idalloc.go" entry -- and mirrors that package's NewIDAllocator/
+// maxFileIDInCatalog cross-check pattern, just performed lazily here instead
+// of eagerly at construction time; see NewNodeAllocator's doc comment for why):
+// before persisting/handing out candidate, Next checks maxNodeIDInStore(a.store),
+// the highest node ID actually durably written in the underlying index file. If
+// candidate would collide with (be less than or equal to) that on-disk max,
+// the allocator's high-water-mark cannot be trusted -- the sidecar was likely
+// deleted/lost and recreated fresh, independently restored from a stale
+// backup, or never created against a non-fresh index file -- and Next returns
+// a descriptive error instead of reissuing an already-used node ID, which
+// would otherwise let a subsequent WriteNode silently overwrite and corrupt
+// an existing, still-referenced node. This check runs on every Next() call
+// (not just the first after construction), so it also catches the case where
+// the index file gains unexpected content between two Next() calls on the
+// same live allocator.
 //
 // If the durable persist fails, Next returns a non-nil error and does not
 // advance the in-memory counter, so the allocator's in-memory state never
@@ -102,6 +181,14 @@ func (a *NodeAllocator) Next() (uint64, error) {
 	defer a.mu.Unlock()
 
 	candidate := a.next + 1
+
+	maxPresent, err := maxNodeIDInStore(a.store)
+	if err != nil {
+		return 0, fmt.Errorf("btree: nodealloc: cross-checking candidate node ID %d against index file %s: %w", candidate, a.store.f.Name(), err)
+	}
+	if candidate <= maxPresent {
+		return 0, fmt.Errorf("btree: nodealloc: refusing to allocate node ID %d: a node is already present at that ID in index file %s (highest present: %d); the allocator's high-water-mark is stale/lost relative to the index file's actual on-disk content, or was never created against a non-fresh index file", candidate, a.store.f.Name(), maxPresent)
+	}
 
 	var buf [nodeAllocStateSize]byte
 	binary.LittleEndian.PutUint64(buf[:], candidate)

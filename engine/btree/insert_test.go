@@ -2,6 +2,7 @@ package btree
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -1229,4 +1230,136 @@ func stringOfLen(n int) string {
 		b[i] = 'x'
 	}
 	return string(b)
+}
+
+// ---------------------------------------------------------------------------
+// Subtask 4.5.12.4 (issue #50): NodeAllocator durability/consistency
+// cross-check against nodes actually present on disk. Appended at the end of
+// this file, own section header, so later subtasks (e.g. 4.5.12.6's planned
+// SaveRoot-absent regression test) can append after this one without
+// colliding. Mirrors engine/catalog/idalloc_test.go's equivalent coverage of
+// IDAllocator/maxFileIDInCatalog.
+// ---------------------------------------------------------------------------
+
+// TestNodeAllocatorCrossChecksExistingNodes exercises NewNodeAllocator's
+// cross-check (added by this subtask) between the ".nodealloc" sidecar's
+// restored high-water-mark and the highest node ID actually durably written
+// in the underlying index file.
+func TestNodeAllocatorCrossChecksExistingNodes(t *testing.T) {
+	t.Run("consistent reopen succeeds and continues from the correct high-water-mark", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "name.idx")
+		f, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile: %v", err)
+		}
+
+		store := NewNodeStore(f)
+		alloc, err := NewNodeAllocator(store)
+		if err != nil {
+			t.Fatalf("NewNodeAllocator (first open): %v", err)
+		}
+
+		// Allocate and actually write 3 real nodes via the normal
+		// Next()+WriteNode path, so the sidecar's high-water-mark and the
+		// index file's actual on-disk content agree (the normal case).
+		var lastID uint64
+		for i := 0; i < 3; i++ {
+			id, err := alloc.Next()
+			if err != nil {
+				t.Fatalf("Next(): %v", err)
+			}
+			leaf := LeafNode{Keys: []string{fmt.Sprintf("k%d", i)}, FileIDs: []uint64{uint64(i)}, NextLeaf: noSibling}
+			if err := writeLeaf(store, id, leaf); err != nil {
+				t.Fatalf("writeLeaf(%d): %v", id, err)
+			}
+			lastID = id
+		}
+
+		if err := alloc.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("f.Close: %v", err)
+		}
+
+		// Reopen the same index file + sidecar from scratch (simulating a
+		// process restart), exactly as NewNodeAllocator is meant to support.
+		f2, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile (reopen): %v", err)
+		}
+		defer f2.Close()
+		store2 := NewNodeStore(f2)
+
+		alloc2, err := NewNodeAllocator(store2)
+		if err != nil {
+			t.Fatalf("NewNodeAllocator (reopen) returned an unexpected error for a consistent sidecar/index-file pair: %v", err)
+		}
+		defer alloc2.Close()
+
+		nextID, err := alloc2.Next()
+		if err != nil {
+			t.Fatalf("Next() after reopen: %v", err)
+		}
+		if nextID != lastID+1 {
+			t.Fatalf("Next() after reopen = %d, want %d (high-water-mark must be preserved across reopen)", nextID, lastID+1)
+		}
+	})
+
+	t.Run("stale sidecar behind actual on-disk nodes is rejected", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "name.idx")
+		f, err := OpenIndexFile(path)
+		if err != nil {
+			t.Fatalf("OpenIndexFile: %v", err)
+		}
+
+		store := NewNodeStore(f)
+		alloc, err := NewNodeAllocator(store)
+		if err != nil {
+			t.Fatalf("NewNodeAllocator (first open): %v", err)
+		}
+
+		// Allocate and write node IDs 1..5, but only via the allocator so
+		// the sidecar's high-water-mark is 5.
+		var highID uint64
+		for i := 0; i < 5; i++ {
+			id, err := alloc.Next()
+			if err != nil {
+				t.Fatalf("Next(): %v", err)
+			}
+			leaf := LeafNode{Keys: []string{fmt.Sprintf("k%d", i)}, FileIDs: []uint64{uint64(i)}, NextLeaf: noSibling}
+			if err := writeLeaf(store, id, leaf); err != nil {
+				t.Fatalf("writeLeaf(%d): %v", id, err)
+			}
+			highID = id
+		}
+		if err := alloc.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		// Simulate a lost/stale sidecar: delete the ".nodealloc" sidecar so
+		// that a brand-new one is created next to an index file that
+		// already has real, referenced nodes (1..5) written into it.
+		// NewNodeAllocator itself does not eagerly reject this (see its doc
+		// comment: a NodeAllocator can legitimately be constructed
+		// read-only against a store with pre-existing content, e.g.
+		// lookup_test.go's hand-built-fixture pattern), but the very next
+		// Next() call -- the point at which blindly starting fresh (next=0)
+		// would actually reissue node ID 1, already in use by a real node --
+		// must refuse to proceed.
+		if err := os.Remove(path + nodeAllocSuffix); err != nil {
+			t.Fatalf("removing sidecar to simulate loss: %v", err)
+		}
+
+		store2 := NewNodeStore(f)
+		alloc2, err := NewNodeAllocator(store2)
+		if err != nil {
+			t.Fatalf("NewNodeAllocator (reopen with lost sidecar) returned an unexpected error at construction time: %v", err)
+		}
+		defer alloc2.Close()
+
+		if id, err := alloc2.Next(); err == nil {
+			t.Fatalf("Next() after a lost/stale sidecar succeeded and returned node ID %d, colliding with a real node already present (highest present: %d); want a non-nil error", id, highID)
+		}
+	})
 }

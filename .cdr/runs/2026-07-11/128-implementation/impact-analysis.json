@@ -1,0 +1,39 @@
+{
+  "subtask": "4.5.12.4",
+  "issue": 50,
+  "files_to_change": [
+    {
+      "path": "engine/btree/insert.go",
+      "change": "Add unexported maxNodeIDInStore helper; call it from NewNodeAllocator to cross-check restored high-water-mark against nodes actually present on disk; return descriptive error on mismatch.",
+      "risk": "low"
+    },
+    {
+      "path": "engine/btree/insert_test.go",
+      "change": "Append TestNodeAllocatorCrossChecksExistingNodes (new, own doc-comment header, appended at end of file).",
+      "risk": "low"
+    }
+  ],
+  "files_not_touched": [
+    "engine/btree/lookup.go",
+    "engine/btree/lookup_test.go (owned by already-merged 4.5.12.3)",
+    "engine/btree/persist.go",
+    "engine/btree/btree_test.go (owned by issue #41's bc08c0a and future 4.5.12.6)",
+    "engine/catalog/idalloc.go (reference only, not modified)",
+    "docs/LLD/btree.md (left to separate 4.5.12.7 LLD-sync subtask)"
+  ],
+  "callers_affected": [
+    {
+      "symbol": "NewNodeAllocator",
+      "callers": "engine/btree package-internal only (Tree constructors / test scaffolding); no engine/split, engine/rpc, or api/ callers construct NodeAllocator directly per grep",
+      "behavior_change": "NewNodeAllocator now returns a non-nil error in the new stale-sidecar-vs-nodes-present case; previously succeeded (incorrectly) in that case. All existing passing call sites (fresh sidecar co-created with a fresh/consistent index file) are unaffected since maxPresent <= next always held for them already."
+    }
+  ],
+  "concurrency_scope_check": {
+    "engine/btree_touched_by_other_in_flight_agents": false,
+    "note": "Per dispatcher's concurrency note: other agents this session work engine/rpc, api/main.go, agents/query, docs/LLD/*.md, engine/wal -- none overlap engine/btree/*.go. Confirmed via git status: no other uncommitted engine/btree changes present at run start."
+  },
+  "regression_risk_closed": {
+    "source": ".cdr/index/regression.jsonl subtask 1.2.3 entry (2026-07-04, run 024-verification)",
+    "summary": "NodeAllocator sidecar-loss/ID-reuse residual risk, explicitly recommended to be closed before persist/reload subtask locks in on-disk contract; this subtask closes it."
+  }
+}
