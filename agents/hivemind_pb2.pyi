@@ -21,12 +21,14 @@ SPLIT_SIBLING: EdgeType
 REDIRECT: EdgeType
 
 class PutSegmentRequest(_message.Message):
-    __slots__ = ("file_id", "content")
+    __slots__ = ("file_id", "content", "path")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     CONTENT_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
     file_id: int
     content: bytes
-    def __init__(self, file_id: _Optional[int] = ..., content: _Optional[bytes] = ...) -> None: ...
+    path: str
+    def __init__(self, file_id: _Optional[int] = ..., content: _Optional[bytes] = ..., path: _Optional[str] = ...) -> None: ...
 
 class PutSegmentResponse(_message.Message):
     __slots__ = ("file_id", "new_version")

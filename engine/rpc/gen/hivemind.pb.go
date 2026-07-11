@@ -117,8 +117,16 @@ type PutSegmentRequest struct {
 	// new file (create semantics); if non-zero, the server appends to the
 	// existing file (append semantics) -- mirrors
 	// engine/catalog.ContentStore's Create/Append split.
-	FileId        uint64 `protobuf:"varint,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	Content       []byte `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	FileId  uint64 `protobuf:"varint,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
+	Content []byte `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	// path is the topic file's path (e.g. "docs/beta/graph-database.md"), used only
+	// when file_id == 0 (create semantics) to compute catalog.CatalogRecord.PathHash
+	// and index the file for discovery via SearchCandidates. Ignored on append
+	// (file_id != 0): an existing file's path/index entry is not mutated by
+	// PutSegment. Added by GitHub issue #43 -- see that issue for why the original
+	// {file_id, content}-only shape left newly created files undiscoverable via
+	// SearchCandidates.
+	Path          string `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -165,6 +173,13 @@ func (x *PutSegmentRequest) GetContent() []byte {
 		return x.Content
 	}
 	return nil
+}
+
+func (x *PutSegmentRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
 }
 
 type PutSegmentResponse struct {
@@ -1326,10 +1341,11 @@ var File_proto_hivemind_proto protoreflect.FileDescriptor
 
 const file_proto_hivemind_proto_rawDesc = "" +
 	"\n" +
-	"\x14proto/hivemind.proto\x12\vhivemind.v1\"F\n" +
+	"\x14proto/hivemind.proto\x12\vhivemind.v1\"Z\n" +
 	"\x11PutSegmentRequest\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\x04R\x06fileId\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\fR\acontent\"N\n" +
+	"\acontent\x18\x02 \x01(\fR\acontent\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\"N\n" +
 	"\x12PutSegmentResponse\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\x04R\x06fileId\x12\x1f\n" +
 	"\vnew_version\x18\x02 \x01(\x04R\n" +

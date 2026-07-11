@@ -53,6 +53,14 @@ message PutSegmentRequest {
   // engine/catalog.ContentStore's Create/Append split.
   uint64 file_id = 1;
   bytes content = 2;
+  // path is the topic file's path (e.g. "docs/beta/graph-database.md"), used only
+  // when file_id == 0 (create semantics) to compute catalog.CatalogRecord.PathHash
+  // and index the file for discovery via SearchCandidates. Ignored on append
+  // (file_id != 0): an existing file's path/index entry is not mutated by
+  // PutSegment. Added by GitHub issue #43 -- see that issue for why the original
+  // {file_id, content}-only shape left newly created files undiscoverable via
+  // SearchCandidates.
+  string path = 3;
 }
 
 message PutSegmentResponse {
