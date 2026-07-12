@@ -173,6 +173,9 @@ results will vary run to run.
 There is no publicly hosted live demo yet — "Running the full stack locally" above is the current
 way to try it end-to-end.
 
+See [Hypothesis.md](Hypothesis.md) for an engineer's diagnosis of why recall trails vector RAG,
+plus a real follow-up experiment (loosening the topic-selector's `k`) and its result.
+
 ## Docs
 
 - [docs/HLD.md](docs/HLD.md) — high-level system design (the authoritative description of the
