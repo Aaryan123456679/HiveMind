@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "030-verification",
+  "macro": "CDR",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "7.2.1",
+  "git_head": "d7be3aee41c26c42e68f4c05bcea838f1c114383",
+  "run_key": "issue35-subtask7.2.1-d7be3ae-docs-writeup",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-12T00:00:00Z",
+  "ended_at": "2026-07-12T00:00:00Z"
+}

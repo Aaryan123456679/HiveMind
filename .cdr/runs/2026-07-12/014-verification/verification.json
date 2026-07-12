@@ -1,0 +1,54 @@
+{
+  "subtask": "6.1.2",
+  "issue": 30,
+  "milestone": "Phase 6: Demo + deployment + load tests",
+  "commit": "71cb1bb89c11555d096eb36589766b9620f8ff21",
+  "base_commit": "b8c188b4e10b841a9e81edba0d8f76d5eff9ecfd",
+  "verdict": "PASS_WITH_COMMENTS",
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass_with_comment",
+      "evidence": "QueryView.tsx's handleSubmit does POST /query with {query} body and renders result.answer (data-testid=query-answer) and result.citations as a <ul> of react-router-dom <Link> (data-testid=query-citations), matching the literal acceptance criteria 'calls the /query API and renders the returned answer with clickable/visible cited file paths'. However the citation Link target `/files?path=<citation>` resolves to a real client-side route (App.tsx registers `/files` -> FilesView), so it is not a 404/dead route, but ui/src/routes/FilesView.tsx (unchanged by this diff) is still subtask 6.1.1's placeholder that only calls fetchFilesCatalog() on mount and never reads useSearchParams()/the `path` query param at all. So the link is technically 'clickable' and navigates without error, but functionally it is a dead end today -- clicking a citation never surfaces the cited file's content or even acknowledges which file was clicked. This is consistent with the issue's own subtask boundary (6.1.4 is explicitly where FilesAdminView.tsx / catalog browsing lands), so it is not a scope violation, but it means the 'clickable ... cited file paths' criterion is only partially satisfied in spirit -- worth flagging, not blocking."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "api/routes/query.go's QueryRequest is {query, history?} and QueryResult is {answer, citations[]}, matching QueryView.tsx's fetch body (JSON.stringify({query: trimmed})) and its response typing/parsing (QueryResult interface {answer, citations}) exactly. docs/LLD/query-agent.md confirms synthesizer.py produces 'answer with inline file-path citations' consistent with this shape. Request is same-origin relative fetch('/query'), consistent with query.go's mux.HandleFunc(\"/query\", ...) having no path prefix; no invented base-URL/client convention introduced, matching architecture-discovery's disclosed reasoning."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "App.test.tsx's /query row change (query-status -> query-form) correctly reflects that QueryView no longer auto-fetches on mount via mockClient; it is not papering over a real regression since QueryView.tsx's rewrite deliberately removes the useEffect(fetchQueryResult) call and mockClient.ts (api/mockClient) is untouched/still used by the other 4 placeholder views. Ran `npm install && npm run build && npm test` directly (not trusting handoff): build exit 0 (tsc -b + vite build succeeded, 39 modules transformed), test exit 0, 2 files / 9 tests passed, matching the self-reported '9 vitest tests (2 files) pass'."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comment",
+      "evidence": "3 new tests cover: (1) happy path submit+render answer/citations with a Link href assertion, (2) HTTP error path (ok:false) rendering query-error text, (3) empty-query guard not calling fetch. Gaps: no test asserts the `query-loading` state actually renders while the fetch promise is pending (status transitions straight from mock resolution, so 'loading' text is never observed live -- an easy real gap since fetch is mocked to resolve immediately, no deferred-promise test), no test for the citations.length === 0 branch (query-no-citations testid is dead code as far as tests go), and no test for a thrown/network-level fetch rejection (the catch block's err instanceof Error branch is unexercised -- only the !response.ok branch is tested, not a genuine network failure)."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "Answer and citations are rendered via JSX text interpolation ({result.answer}, {citation} as Link children) -- no dangerouslySetInnerHTML or raw DOM injection anywhere in the diff. React escapes by default, so no XSS risk from an LLM-controlled answer/citation string. citation is also encodeURIComponent-encoded before being interpolated into the href, avoiding query-string injection into the Link target."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Component is a single well-commented file with a clear wire-contract doc comment referencing the exact source of truth (api/routes/query.go). Status is modeled as a discriminated union (idle/loading/error/success) rather than ad hoc booleans. No dead abstractions introduced."
+    },
+    "test_coverage": {
+      "verdict": "pass_with_comment",
+      "evidence": "Meets the literal test spec ('component test mocking the /query response, asserting answer text and citation list render correctly') plus 2 extra tests (error path, empty-query guard) beyond the minimum spec. See edge_cases for the loading-state and no-citations gaps."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "Directly ran npm install/build/test myself rather than trusting the handoff's self-reported results, and independently diffed api/routes/query.go against QueryView.tsx's fetch call/response typing -- all matched. package-lock.json diff is minimal and scoped to the single new devDependency."
+    },
+    "possible_improvements": [
+      "Add a deferred-promise test asserting query-loading actually renders before the fetch resolves, and a test for the citations-empty branch (query-no-citations).",
+      "Consider a code comment or TODO on the citation Link noting that /files?path= is not yet consumed by FilesView.tsx (6.1.4), so a reader doesn't assume the navigation is fully wired.",
+      "Consider surfacing a network-level fetch rejection (not just non-ok response) in a test, since the catch block's Error-message branch is currently unexercised."
+    ]
+  },
+  "missing_context": false,
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "Citation Link target /files?path=<citation> is a real route (no 404) but FilesView.tsx does not yet read the `path` query param -- clicking a citation is a functional dead end until subtask 6.1.4 lands. In-scope-boundary per the issue, but acceptance-criteria wording ('clickable ... cited file paths') is only literally, not functionally, satisfied.",
+    "query-loading and query-no-citations testids are unexercised by any test.",
+    "No test for a genuine fetch-level network rejection (only HTTP non-ok response is tested)."
+  ]
+}

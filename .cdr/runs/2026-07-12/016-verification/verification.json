@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-verification",
+  "subtask": "6.1.3",
+  "issue": 30,
+  "milestone": 8,
+  "commit": "7bb8af4677ba20181bd3e4dc75236e1d739e5669",
+  "base_commit": "71cb1bb89c11555d096eb36589766b9620f8ff21",
+  "verdict": "PASS_WITH_COMMENTS",
+  "commands_run": {
+    "npm_install": {"cwd": "ui/", "exit_code": 0},
+    "npm_run_build": {"cwd": "ui/", "exit_code": 0, "note": "tsc -b && vite build succeeded, dist/ produced, no type errors"},
+    "npm_test": {"cwd": "ui/", "exit_code": 0, "note": "vitest run: 3 test files, 14 tests, all passed (App.test.tsx 6, QueryView.test.tsx 3, GraphView.test.tsx 5)"}
+  },
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "Selecting/submitting a file path via the graph-form triggers a real fetch('/graph?path=<encoded path>') and renders a genuine adjacency view: an SVG connector column (one <line> per neighbor) plus a DOM list (one <li data-testid=graph-neighbor> per neighbor) showing path/edgeType/hop/weight. This is more than a plain text list -- it is a real, testable visual adjacency structure, satisfying the literal acceptance criteria wording without adding a third-party graph library (justified: none exists in ui/package.json)."
+    },
+    "architecture_conformance": {
+      "verdict": "pass_with_comment",
+      "evidence": "Confirmed myself via `grep -rn graph -i api/routes/` that no /graph Go HTTP handler exists anywhere in api/routes/ (only query.go/query_test.go) -- the implementer's disclosure is accurate. The invented wire contract {path, neighbors:[{path, edgeType, weight, hop}]} is a reasonable, well-justified adaptation of proto/hivemind.proto's GraphNeighborsRequest/Neighbor/GraphNeighborsResponse (verified proto lines 116-136: target_file_id, type, weight, hop) -- keying by path instead of target_file_id is internally consistent with every other UI-visible file identifier in this codebase (QueryView.tsx citation links use /files?path=...).",
+      "comment": "The disclosure understates the size of the future integration gap it creates. I checked engine/catalog and proto/hivemind.proto myself: there is currently NO path->file_id resolution RPC or exposed lookup anywhere in the proto contract (only CatalogRecord.PathHash, an internal 64-bit hash used at ingestion time, not a queryable path->fileID lookup service). This means the eventual real Go /graph handler cannot simply wrap engine.GraphNeighbors(fileID,...) with a REST layer -- it will need net-new plumbing (a path->fileID lookup RPC or catalog query) that doesn't exist yet. The commit message and GraphView.tsx header comment disclose 'no Go handler exists yet' and the fileID-vs-path naming choice, but do not explicitly flag that path resolution is an additional, non-trivial backend gap beyond wiring the existing GraphNeighbors RPC. Recommend the next backend subtask that implements /graph explicitly track this as a distinct disclosed gap, not just a field-renaming exercise."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "App.test.tsx's one-line graph-status -> graph-form change is the same disclosed pattern 6.1.2 established for query-status -> query-form (both because the view is now user-triggered instead of an on-mount async status fetch). Ran the full suite myself: App.test.tsx's 6 tests (one per route + presumably a combined test) all pass with the updated testid. No other file references the old graph-status testid (grep confirmed). fetchGraphNeighbors in ui/src/api/mockClient.ts is now dead code (only referenced by App.test.tsx's vi.mock stub), mirroring the same already-accepted pattern from fetchQueryResult after 6.1.2 -- not a new regression introduced by this diff."
+    },
+    "edge_cases": {
+      "verdict": "pass_with_comment",
+      "evidence": "Tests cover: 3-neighbor render + exact count assertion, ?path= deep-link auto-fetch (1 neighbor), zero-neighbors state (graph-no-neighbors), fetch error/404 state (graph-error), and empty-path submit guard (fetch not called). All 5 pass.",
+      "comment": "No test asserts the graph-loading indicator's actual presence during an in-flight fetch (all mocks resolve/reject synchronously via mockResolvedValueOnce/mockRejectedValueOnce-style promises), and no test exercises a genuine network-level fetch() rejection (only response.ok===false is tested, not fetch() itself throwing) -- both are low-severity coverage gaps, same category already logged against QueryView.test.tsx in the 6.1.2 regression log."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "Read GraphView.tsx in full: neighbor.path and neighbor.edgeType are rendered via plain JSX text interpolation ({neighbor.path}, {neighbor.edgeType}) -- no dangerouslySetInnerHTML, no innerHTML, no unescaped template injection anywhere in the component. React's default text-node escaping neutralizes any XSS risk from a malicious /graph response."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Clear header comment disclosing the invented wire contract and rationale, typed GraphNeighbor/GraphResult interfaces, consistent data-testid naming convention matching QueryView's precedent, no dead-code paths beyond the pre-existing mockClient.ts pattern."
+    },
+    "test_coverage": {
+      "verdict": "pass",
+      "evidence": "The primary test ('renders the expected number of neighbor nodes after selecting a file') mocks a 3-neighbor /graph response via global fetch and asserts screen.findAllByTestId('graph-neighbor') has length exactly 3, plus content spot-checks on the first neighbor -- this is a literal, direct satisfaction of the issue's test-spec wording ('component test mocking a /graph response, asserting the expected number of neighbor nodes render')."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "Verified independently (not trusting handoff.json's self-reported results): npm install (exit 0), npm run build (exit 0, dist/ produced), npm test (exit 0, 14/14 tests across 3 files passed). Read GraphView.tsx and GraphView.test.tsx in full (not just diff hunks). Confirmed via grep that no /graph Go handler exists in api/routes/, and confirmed via proto/hivemind.proto and engine/catalog that no path->fileID resolution mechanism currently exists, supporting the architecture_conformance comment above."
+    },
+    "possible_improvements": [
+      "Explicitly track the path->fileID resolution gap (no such RPC/lookup exists yet in proto or engine/catalog) as its own disclosed follow-up item for the eventual real /graph Go handler subtask, distinct from the fileID-vs-path naming choice.",
+      "Add a test asserting the graph-loading indicator renders during an in-flight (not-yet-resolved) fetch promise, and a test for a genuine fetch() network-level rejection (not just response.ok===false), matching the same gap already logged for QueryView.",
+      "Consider removing now-dead fetchGraphNeighbors/fetchQueryResult exports from ui/src/api/mockClient.ts (or documenting why they're kept for the vi.mock stub) in a future cleanup pass."
+    ]
+  },
+  "missing_context": false,
+  "last_completed_step": "verdict_written",
+  "status": "completed"
+}

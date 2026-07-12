@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-12-029-implementation",
+  "agent": "implementation",
+  "subtask": "7.2.1",
+  "issue": 35,
+  "status": "completed",
+  "commit_sha": "d7be3ae",
+  "commit_branch": "main",
+  "pushed": false,
+  "files_changed": [
+    {
+      "path": "docs/WRITEUP.md",
+      "change_type": "new_file",
+      "sections": [
+        "1. System architecture (lines ~9-49)",
+        "2. Novelty vs. prior art (lines ~51-63)",
+        "3. Benchmark results (lines ~65-89)",
+        "4. Lessons learned / known limitations (lines ~91-112)",
+        "Sources (lines ~114-121)"
+      ]
+    }
+  ],
+  "acceptance_criteria": [
+    "AC1: Document covers the system architecture",
+    "AC2: Document covers novelty vs. GraphRAG/RAPTOR/MemGPT per HLD.md section 6",
+    "AC3: Document covers summarized benchmark results (real numbers, not placeholders)",
+    "AC4: Document covers lessons learned / known limitations"
+  ],
+  "test_spec": "Manual review: document covers all four required sections and accurately reflects the implemented system and actual benchmark numbers (not aspirational placeholders).",
+  "real_benchmark_numbers_source": {
+    "primary": "results/run-001/live_benchmark_results.json",
+    "metadata": "results/run-001/run-metadata.json",
+    "cross_checked_against": "README.md '#benchmark-results' table (verbatim match confirmed)",
+    "run_id": "run-001",
+    "actual_spend_usd": 0.1677,
+    "corpus_total_docs": 32,
+    "checkpoints_pct": [20, 50, 100]
+  },
+  "other_source_pointers": {
+    "architecture": "docs/HLD.md sections 3, 3.1, 3.2",
+    "novelty": "docs/HLD.md section 6",
+    "known_risks": "docs/HLD.md section 7",
+    "lessons_learned_fsync_scaling": "engine/loadtest/split_race_scale_test.go (package doc comment)",
+    "lessons_learned_oci_unverified": "deploy/oci/README.md",
+    "lessons_learned_catalog_ceiling": "docs/LLD/catalog.md (~line 195-206)",
+    "lessons_learned_query_agent_prefix_gap": "docs/LLD/query-agent.md (~line 120-140)"
+  },
+  "artifacts_dir": ".cdr/runs/2026-07-12/029-implementation/",
+  "self_consistency": "internal sanity only per invariant I4 (build/matrix coverage checked; not a formal verification) -- see self-consistency.json",
+  "verification_delegated_to": "/cdr:verify",
+  "not_pushed": true
+}

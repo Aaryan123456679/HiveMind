@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "subtask": "7.3.1",
+  "note": "Internal sanity only per invariant I4 (build/vet clean, real test executed and green, validation-matrix rows all covered). This is NOT a formal independent verification; that is delegated to /cdr:verify.",
+  "build_vet": {
+    "command": "go build ./... && go vet ./loadtest/...",
+    "result": "OK, no output/errors"
+  },
+  "calibration_run": {
+    "command": "SOAK_DURATION=10s go test ./loadtest/... -run TestSoak -race -v -timeout 60s",
+    "result": "PASS (11.88s)",
+    "output": "soak run: duration=10s writerWorkers=8 queryWorkers=8 ingestOps=525 ingestErrs=0 queryOps=4498 queryErrs=0 emptyReads=0; goroutines start=2 end=2; heapAlloc start=439536 end=471448 bytes"
+  },
+  "real_default_soak_run": {
+    "command": "go test ./loadtest/... -run TestSoak -race -v -timeout 5m",
+    "result": "PASS",
+    "wall_clock": "121.96s test time / 2:06.38 total (go test process incl. race-detector overhead)",
+    "duration_config": "soakDefaultDuration = 2 * time.Minute (SOAK_DURATION unset)",
+    "output": "soak run: duration=2m0s writerWorkers=8 queryWorkers=8 ingestOps=6441 ingestErrs=0 queryOps=48442 queryErrs=0 emptyReads=0; goroutines start=2 end=2; heapAlloc start=439160 end=470320 bytes",
+    "assertions_passed": [
+      "ingestErrs == 0",
+      "queryErrs == 0",
+      "emptyReads == 0",
+      "ingestOps > 0, queryOps > 0",
+      "goroutine delta (2 -> 2, delta 0) <= slack 20",
+      "heap growth ratio (~1.07x) <= ceiling 20.0x"
+    ]
+  },
+  "full_package_regression_run": {
+    "command": "go test ./loadtest/... -race -v -timeout 15m",
+    "result": "PASS, all 4 test functions + subtests green",
+    "wall_clock": "242.007s (ok line) / 4:05.23 total",
+    "tests": [
+      "TestHarnessAggregatesConcurrentSamples PASS",
+      "TestHarnessRecordsErrors PASS",
+      "TestHarnessConfigDefaults PASS",
+      "TestHarnessNilWorkFunc PASS",
+      "TestQueryLatencyUnderLoad PASS (17.75s) p50=16.31ms p95=41.06ms p99=67.96ms",
+      "TestSoak PASS (121.65s) ingestOps=6835 queryOps=50763 errors=0 goroutines 2->2 heap 477024->481440 bytes",
+      "TestAutoSplitRaceAtScale PASS (101.12s) 4800 appends errors=0"
+    ],
+    "regressions_found": "none"
+  },
+  "issues_found_and_fixed": "none -- real soak run (calibration + full 2-minute default + combined package run) surfaced zero crashes, panics, goroutine leaks, memory-growth violations, or correctness violations. No production-code fix was required or made; only the new test file engine/loadtest/soak_test.go was added.",
+  "validation_matrix_coverage": "all rows in validation-matrix.json (AC1-AC8) exercised by the real runs above; AC6 (fix any issues found) trivially satisfied since no issue was found."
+}

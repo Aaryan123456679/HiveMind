@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "run_id": "012-verification",
+  "subtask": "6.1.1",
+  "issue": 30,
+  "commit": "b8c188b4e10b841a9e81edba0d8f76d5eff9ecfd",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_report": ".cdr/runs/2026-07-12/012-verification/verification.json",
+  "pointers": {
+    "route_wiring": "ui/src/App.tsx lines 20-34",
+    "router_test": "ui/src/App.test.tsx (vi.mock block + it.each(routes) + root-redirect test)",
+    "mock_client_seam": "ui/src/api/mockClient.ts",
+    "build_config": "ui/package.json scripts.build, ui/tsconfig.json, ui/tsconfig.node.json, ui/vite.config.ts, ui/vitest.config.ts",
+    "reverified_commands": [
+      "cd ui && npm install -> exit 0, 180 packages",
+      "npm run build -> exit 0, dist/ produced",
+      "npm test -> exit 0, 6/6 passed"
+    ]
+  },
+  "open_items_for_next_agent": [
+    "6.1.4 verifier: confirm FilesView.tsx/AdminView.tsx are actually deleted and replaced by a single FilesAdminView.tsx (not left alongside it), and App.tsx route wiring updated accordingly.",
+    "Track the 5 npm audit vulnerabilities (vite/esbuild/vitest dev-server chain) for a future dependency-hardening pass; dev-time-only, non-blocking today.",
+    "Consider adding a catch-all 404 route + test before 6.1.5's end-to-end smoke test."
+  ]
+}

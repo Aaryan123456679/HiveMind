@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "028-verification",
+  "macro": "CDR",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "6.3.1",
+  "git_head": "6203900619e65dbaa389be69022f6e62c6213da4",
+  "run_key": "issue32-6.3.1-6203900-verification",
+  "status": "completed",
+  "last_completed_step": "verification.json + regression.jsonl written",
+  "started_at": "2026-07-12T00:00:00Z",
+  "ended_at": "2026-07-12T00:30:00Z"
+}

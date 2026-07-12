@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "subtask": "5.4.1",
+  "issue": 29,
+  "commit": "86a1a4f66f927c55ba51291bea2587c2efdc6aed",
+  "parent": "fbafec7",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Independently reconstructed issue #29 subtask 5.4.1 text via `gh issue view 29`, read the full diff, re-derived compare_traversal_precision()/CorpusGrowthCheckpoint logic from source (not from implementer's plan/reasoning), built three original fixtures distinct from the implementer's doc-a/doc-b scenario (a star/hub-topology 'expansion hurts' case, a shared-neighbor 'expansion neutral' case, and a genuine single-call multi-checkpoint aggregation with 2 checkpoints), exercised 3 edge cases (empty query set, zero-delta identical retrieval, entity-less corpus), re-ran the full agents/eval/ suite, and ran ruff. All claims hold. One test-coverage gap noted (non-blocking).",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "gh issue view 29 quote: '5.4.1 -- Explicit check: does graph-traversal expansion ever hurt precision vs. no-expansion. Acceptance criteria: The benchmark explicitly compares HiveMind's precision with vs. without graph-traversal expansion at each corpus-growth checkpoint, and reports any checkpoint where expansion decreases precision. Test spec: pytest agents/eval/test_traversal_precision_check.py: fixture scenario where expansion adds a low-relevance neighbor, assert the comparison correctly flags a precision decrease.' compare_traversal_precision() computes both arms (real max_hops vs NO_EXPANSION_MAX_HOPS=0) via two genuinely distinct retrieve_documents() calls (confirmed by reading agents/eval/traversal_precision.py:92-95), scores both via score_arm, and exposes expansion_ever_hurt_precision / decreased_queries. checkpoints_with_precision_decrease() implements the 'reports any checkpoint' clause generically. Real corpus-growth-checkpoint wiring (20/50/100% ingestion) is explicitly a separate future subtask (5.3.4, issue #28, confirmed via gh issue view 28), so a checkpoint-agnostic wrapper accepting caller-supplied CorpusGrowthCheckpoint instances is a legitimate, disclosed scope boundary, not scope-dodging."
+    },
+    "core_logic_genuineness": {
+      "status": "pass",
+      "evidence": "Read retrieve_for_expansion_arms() directly: two calls to graphrag_lite.retrieve_documents, one with max_hops=expanded_max_hops (defaults to graphrag_lite.DEFAULT_MAX_HOPS=1) and one with max_hops=NO_EXPANSION_MAX_HOPS=0 -- confirmed genuinely different arguments, no dead branch. Independently constructed a fixture with a different entity-graph shape (3 docs d1/d2/d3, star/hub topology: query entity 'alpha' co-occurs with 'hub' in d1; 'hub' also co-occurs with irrelevant 'junk1'/'junk2' in d2/d3) distinct from the implementer's doc-a/doc-b/X-Y-Z scenario. Ran compare_traversal_precision() myself: no_expansion precision=1.0, expansion precision=0.333, expansion_ever_hurt_precision=True, decreased_queries=['qA'] -- correctly flagged."
+    },
+    "neutral_case_handling": {
+      "status": "pass",
+      "evidence": "Constructed my own 'expansion does not hurt' fixture (2 docs sharing entities 'q1'/'shared', both docs relevant to the query) distinct from the implementer's isolated-entity control. Ran independently: no_expansion precision=1.0, expansion precision=1.0, expansion_ever_hurt_precision=False. Confirms the flag is not hard-coded True and correctly distinguishes both branches."
+    },
+    "metrics_reuse_genuine": {
+      "status": "pass",
+      "evidence": "grep for precision/recall arithmetic in traversal_precision.py shows only field reads off ArmScore/QueryScore objects (e.g. expansion_query.precision) returned by eval.metrics.score_arm -- no re-derivation. eval/metrics.py:83 precision_at_k, :135 score_query, :196 score_arm are the sole precision-computation sites in the package; traversal_precision.py imports and calls score_arm directly (line ~194,201) rather than forking the arithmetic."
+    },
+    "checkpoint_wrapper_genuine": {
+      "status": "pass",
+      "evidence": "Read compare_precision_across_checkpoints(): builds a fresh EntityGraph.build(checkpoint.docs, ...) per checkpoint and calls compare_traversal_precision per checkpoint, appending in input order -- genuinely iterates, not a single-checkpoint stub. NOTE: the implementer's own test_checkpoints_with_precision_decrease_filters_correctly test only ever calls compare_precision_across_checkpoints with a 1-element checkpoints list (twice, then manually concatenates the two single-item results) -- it never exercises the function with a list of >1 checkpoint in one call. I independently constructed and ran compare_precision_across_checkpoints() with a genuine 2-checkpoint list (cp-20pct hurting shape, cp-100pct same hurting shape reused, distinct labels) in a single call: got 2 results in correct order, both correctly flagged by checkpoints_with_precision_decrease(). Wrapper aggregation is confirmed to genuinely work across multiple checkpoints, though the shipped test suite has a coverage gap here (see recommendations)."
+    },
+    "edge_cases": {
+      "status": "pass",
+      "evidence": "Ran 3 edge cases myself, all outside the shipped test suite: (1) empty query list -> compare_traversal_precision returns with expansion_ever_hurt_precision=False, per_query=[] deltas=[], no crash. (2) query with identical retrieval at both hop counts (isolated entity, no neighbors) -> delta=0.0, expansion_ever_hurt_precision=False, no mis-flag on zero-delta. (3) fully entity-less corpus (LLM returns '[]' for both doc and query) -> EntityGraph degenerates gracefully (empty adjacency), both arms score precision=0.0, no crash, no false flag."
+    },
+    "zero_live_api_calls": {
+      "status": "pass",
+      "evidence": "grep -ni 'OllamaClient|httpx|OpenRouter|GeminiClient|os.environ|getenv|.env' across both new files: only docstring prose matches (lines noting 'no live Ollama/OpenRouter/Gemini call' and 'No network access, environment variable, or .env read'); zero actual imports or reads. _StubLLMClient subclasses llm.client.LLMClient directly with a canned dict lookup, no network path."
+    },
+    "regression_and_dependency_risk": {
+      "status": "pass",
+      "evidence": "git diff --name-status fbafec7 86a1a4f -- agents/ shows only agents/eval/traversal_precision.py and agents/eval/test_traversal_precision_check.py added (plus .cdr/ run-record docs outside agents/). git diff fbafec7 86a1a4f -- agents/pyproject.toml pyproject.toml is empty (no new dependency). No modification to graphrag_lite.py, metrics.py, ground_truth.py, or any prior-subtask file."
+    },
+    "test_execution_independent_rerun": {
+      "status": "pass",
+      "evidence": "cd agents && python -m pytest eval/test_traversal_precision_check.py -v: 4 passed (matches claim). Full python -m pytest eval/ -q: 149 passed, 0 failed, 5 warnings (pre-existing SWIG deprecation warnings from an unrelated dataset test, not introduced by this change) -- matches the claimed count exactly. ruff check agents/eval/traversal_precision.py agents/eval/test_traversal_precision_check.py: all checks passed."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Requirements text independently pulled and matched; core comparison logic read line-by-line and re-derived with 3 original fixtures on a distinct entity-graph topology, all matching expected outcomes; metrics reuse confirmed by grep with no forked arithmetic; checkpoint wrapper independently exercised across a genuine multi-checkpoint single call; edge cases stress-tested beyond the shipped suite; full test suite and lint independently re-run and matched claims exactly; diff scope confirmed minimal (2 new files only, no prior-subtask files touched, no new dependency)."
+    }
+  },
+  "findings": [
+    {
+      "severity": "low",
+      "category": "test_coverage_gap",
+      "description": "test_checkpoints_with_precision_decrease_filters_correctly never calls compare_precision_across_checkpoints() with a checkpoints list containing more than 1 element in a single invocation -- it calls it twice with singleton lists and manually concatenates the TraversalPrecisionComparison results before filtering. This means the shipped suite does not directly exercise the per-checkpoint iteration/aggregation loop inside compare_precision_across_checkpoints() itself with multiple checkpoints; only checkpoints_with_precision_decrease()'s filtering over a manually-assembled list is exercised end-to-end. Verifier independently ran compare_precision_across_checkpoints() with a genuine 2-checkpoint list in one call and confirmed correct behavior, so the function is not broken -- but recommend adding a direct multi-checkpoint-in-one-call test before subtask 5.3.4 wires real corpus checkpoints in, to lock in this behavior at the unit level rather than relying on this ad hoc verification.",
+      "blocking": false
+    }
+  ],
+  "acceptance_criteria_met": true,
+  "scope_note": "Real corpus-growth-checkpoint (20%/50%/100%) wiring is out of scope for 5.4.1 and correctly deferred to subtask 5.3.4 (issue #28), which is still open/unimplemented. This subtask 5.4.1 is complete and safe on its own terms (fixture-level comparison-logic correctness, per its own test spec); it is NOT yet integrated into a real benchmark run, and that integration remains a prerequisite before the 'per corpus-growth checkpoint' acceptance criterion can be exercised against actual growth checkpoints rather than caller-supplied fixtures."
+}

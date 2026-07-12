@@ -1,0 +1,53 @@
+{
+  "subtask": "6.2.3",
+  "issue": 31,
+  "commit": "e28006dda19e539132926e9f2fa92ae4aa3a1967",
+  "for_verification_agent": {
+    "acceptance_criteria": "Kubernetes manifests exist under deploy/k8s/ for all 4 services (translating deploy/docker-compose.yml's wiring, not a rewrite), locally validated against a real kind/k3d cluster (pods Ready, /health and / endpoints reachable), plus a documented (not executed) OCI provisioning path.",
+    "new_files": [
+      "deploy/k8s/00-namespace.yaml",
+      "deploy/k8s/engine-deployment.yaml",
+      "deploy/k8s/api-deployment.yaml",
+      "deploy/k8s/agents-deployment.yaml",
+      "deploy/k8s/agents-config.yaml",
+      "deploy/k8s/agents-secret.example.yaml",
+      "deploy/k8s/ui-deployment.yaml",
+      "deploy/k8s/README.md",
+      "deploy/oci/provision.sh",
+      "deploy/oci/README.md"
+    ],
+    "modified_files": [
+      "deploy/README.md",
+      "docs/HLD.md",
+      ".gitignore"
+    ],
+    "how_to_reproduce_the_kind_validation": {
+      "commands": "See deploy/k8s/README.md's 'Local validation (kind)' section verbatim -- brew install kind (if absent); docker build the 4 images with :kindtest tag; kind create cluster --name <name>; kind load docker-image x4; kubectl apply -f deploy/k8s/; kubectl wait --for=condition=Ready pod --all -n hivemind --timeout=90s; kubectl port-forward svc/api and svc/ui, curl /health and /; kind delete cluster.",
+      "expected": "All 4 pods (agents, api, engine, ui) reach 1/1 Ready within ~20s. curl .../health returns 'ok'. curl .../ contains '<div id=\"root\">'."
+    },
+    "key_design_decisions_to_check": [
+      "architecture-discovery.md decisions 1-11 -- especially: compose service names kept identical to k8s Service names (DNS drop-in), no depends_on-equivalent used (api/agents/ui's own clients tolerate late-ready dependencies, no initContainers added), HEALTHCHECK -> readiness/liveness probes (tcpSocket for engine/agents, httpGet for api/ui), ephemeral emptyDir for engine's /data (no new persistence guarantee beyond what compose had), plain manifests chosen over Helm per user's stated preference.",
+      "deploy/k8s/agents-secret.example.yaml is applied as-is by `kubectl apply -f deploy/k8s/` (creates an empty-valued Secret, envFrom.secretRef marked optional:true on the agents Deployment) -- this is intentional, mirrors compose's ${VAR:-} blank-default behavior, documented in deploy/k8s/README.md and self-consistency.json's known_caveat_not_a_defect.",
+      "deploy/oci/provision.sh is explicitly, prominently marked UNVERIFIED AGAINST A LIVE OCI ACCOUNT (no OCI credentials in this sandbox) -- verify the disclosure is present and honest, not that the OCI steps actually work (they cannot be tested here).",
+      "No message queue / new architecture component introduced anywhere -- confirm via diff that only k8s-object + doc files were added/changed, no engine/api/agents/ui source touched."
+    ],
+    "what_was_actually_executed_vs_documented_only": {
+      "executed_for_real": "kind cluster creation, image build+load, kubectl apply, pod-Ready wait, port-forward + curl /health and / -- done twice for reproducibility, both clean PASS + clean teardown.",
+      "documented_only_not_executed": "deploy/oci/provision.sh's OCI CLI calls -- no OCI account/credentials available in this sandbox, disclosed prominently in the script header and deploy/oci/README.md."
+    }
+  },
+  "self_consistency_summary": {
+    "overall": "PASS (internal sanity only, not verification -- see .cdr/runs/2026-07-12/025-implementation/self-consistency.json for all 10 matrix items)",
+    "kind_validation_result": "PASS -- all 4 pods reached Ready, api /health returned 'ok', ui / served the SPA shell, both via a live kind cluster, reproduced twice, torn down cleanly both times"
+  },
+  "docs_pointers": {
+    "hld": "docs/HLD.md repo-layout deploy/ line updated (no longer '(not yet built)')",
+    "run_021_023_context": ".cdr/runs/2026-07-12/021-implementation (6.2.1 Dockerfiles), .cdr/runs/2026-07-12/023-implementation (6.2.2 compose), .cdr/runs/2026-07-12/024-verification (6.2.2 verification PASS)"
+  },
+  "not_in_scope_this_subtask": [
+    "Actually provisioning any real OCI compute/account resources -- no credentials in this sandbox",
+    "TLS/ingress/cert-manager, autoscaling, multi-node HA",
+    "Implementing api's /graph, /files, /admin Go handlers (pre-existing gap, unrelated)",
+    "Helm chart / kustomize"
+  ]
+}

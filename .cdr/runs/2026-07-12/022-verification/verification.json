@@ -1,0 +1,103 @@
+{
+  "subtask": "6.2.1",
+  "issue": 31,
+  "commit": "edb8d6ee5cc554b7ebbeaaccaa4cfeaa28616b9e",
+  "verdict": "PASS_WITH_COMMENTS",
+  "execution_verification": {
+    "independently_ran": true,
+    "commands": [
+      "docker build -f deploy/engine.Dockerfile -t hivemind-engine-verify . (cached, then --no-cache to confirm cold build)",
+      "docker build -f deploy/api.Dockerfile -t hivemind-api-verify . (--no-cache) from repo root",
+      "docker build -f deploy/agents.Dockerfile -t hivemind-agents-verify . (--no-cache) from repo root",
+      "docker run -d verify-engine / verify-api, polled `docker inspect --format='{{.State.Health.Status}}'`",
+      "docker run -p 18080:8080 verify-api-port; curl -i http://127.0.0.1:18080/health; curl -i -X POST .../query -d '{}'",
+      "docker run verify-agents-nofail (no env) to confirm the disclosed caveat reproduces",
+      "docker run -e LLM_PROVIDER=ollama verify-agents-ollama, polled health status",
+      "cd api && go test ./routes/... ./queryclient/... -v"
+    ],
+    "observed_results": {
+      "engine_build": "Succeeds cold (--no-cache); go build ./cmd/smokeserver completes, downloads grpc/protobuf deps as expected, image exports.",
+      "api_build": "Succeeds cold from repo-root context; confirmed go.work + go.work.sum + api/ + engine/ are all copied into the builder stage and `go build ./api` resolves engine/rpc/gen via the local workspace (no remote-module fetch attempted/needed for that path).",
+      "agents_build": "Succeeds cold; `pip install .` resolves agents/pyproject.toml deps including grpcio/protobuf manylinux wheels for python:3.11-slim; no protoc/system compiler needed at build time, matching the Dockerfile's own comment.",
+      "engine_run": "docker inspect Health.Status reached 'healthy' well within the 3-retry/10s-interval window (observed on first poll).",
+      "api_run": "docker inspect Health.Status reached 'healthy'. Independently curled GET /health on a host-published port: HTTP/1.1 200 OK, body 'ok', Content-Type text/plain -- matches HealthHandler's implementation exactly.",
+      "api_query_route_unaffected": "POST /query with an empty body still returns 400 'query must not be empty' -- identical to pre-change behavior; /health addition did not alter /query's routing or handler.",
+      "agents_run_without_env": "Container exits (Status=exited, Health=unhealthy) before binding port 50052. Logs show LLMFactoryError: 'No LLM provider configured: pass provider= explicitly or set the LLM_PROVIDER environment variable to one of (ollama, openrouter, gemini)' raised from agents/query/server.py's serve() -> agents/llm/factory.py's create_llm_client(), called before grpc.Server.add_insecure_port/start(). This independently reproduces and confirms the disclosed caveat is real, not merely claimed.",
+      "agents_run_with_LLM_PROVIDER_ollama": "Container reaches Health.Status=healthy; logs show 'LISTENING 50052' -- confirms the documented workaround (`-e LLM_PROVIDER=ollama`) is sufficient and accurate.",
+      "go_test": "api/routes and api/queryclient: all existing subtests pass (TestQueryRoute/* six subtests, TestGRPCQueryPipeline/* four subtests), 0 failures. No regression from the HealthHandler addition or RegisterRoutes change."
+    }
+  },
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "All three acceptance-criteria clauses independently verified by direct re-execution (not by trusting the commit message): each Dockerfile builds cold via `docker build`; each container starts and its HEALTHCHECK transitions to 'healthy' (engine via TCP nc, api via wget GET /health returning 200, agents via python socket connect once LLM_PROVIDER is supplied). Test spec ('docker build succeeds for each; docker run + basic health-check confirms each service starts') is satisfied for all three services."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "docs/HLD.md's repo-layout section lists 'deploy/  # Dockerfiles/compose, CI (not yet built)' -- this subtask is exactly the first increment filling that placeholder; no contradiction found. No dedicated deploy/deployment LLD doc exists yet (docs/LLD/ only has btree/catalog/eval/graph/ingestion-agent/llm-provider/mvcc/query-agent/rpc/split/wal.md), so there is no LLD to conform to or contradict for this subtask -- consistent with deploy work being new/unaddressed in LLD. api.Dockerfile's repo-root build context claim was independently verified against go.work (`use (./api ./engine)`) and is correct: api/main.go's cross-module import of engine/rpc/gen requires both module trees plus go.work/go.work.sum in the builder stage, exactly as the Dockerfile does."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "Diff is additive only: three new Dockerfiles plus a 12-line addition to api/routes/query.go (HealthHandler + one new mux.HandleFunc line). Re-ran api/routes and api/queryclient Go test suites: all pre-existing subtests still pass with no changes needed. Manually curled /query after the change and confirmed its request-validation behavior (400 on empty query) is unchanged."
+    },
+    "security": {
+      "verdict": "pass_with_comments",
+      "evidence": "No secrets, credentials, or unexpected network exposure introduced. HealthHandler intentionally does not leak internal state (documented as a liveness-only check, not a dependency-check). Minor observation: engine's smokeserver container runs as image default root user (alpine base, no USER directive) and api/agents likewise have no non-root USER set -- common for this build stage but worth hardening (non-root USER, read-only rootfs) in a later deploy-hardening subtask; not required by this subtask's AC."
+    },
+    "performance": {
+      "verdict": "pass",
+      "evidence": "Cold builds completed quickly (engine/api ~10s go build after base-image pull, agents ~12s pip install); image sizes are reasonable given alpine/slim base images and multi-stage separation of build tooling from runtime for the Go services. Not a concern for this subtask's scope."
+    },
+    "maintainability": {
+      "verdict": "pass",
+      "evidence": "Each Dockerfile carries a substantial, accurate doc comment explaining build-context requirements and health-check rationale, which independently matched what was observed during build/run (e.g. api.Dockerfile's go.work rationale, agents.Dockerfile's health-check dependency-avoidance rationale). HealthHandler's doc comment correctly scopes it as a liveness-only (not readiness/dependency) check."
+    },
+    "test_coverage": {
+      "verdict": "pass_with_comments",
+      "evidence": "Test spec is satisfied entirely via the manual docker build/run/health-check verification described above (matching the issue's own test spec, which is docker-command-based, not a unit test). However, no Go unit test was added for HealthHandler itself (api/routes/*_test.go has no 'health' references) -- a trivial httptest-based unit test asserting 200/'ok' would be cheap insurance against future regressions and is a low-severity gap, not a blocker given the subtask's test spec is explicitly the docker-level check."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "All three docker builds were re-run cold (--no-cache) rather than relying on cached layers or the commit's self-report; all three containers were started fresh and polled for Health.Status directly; the agents caveat was reproduced in both directions (fails without LLM_PROVIDER, succeeds with it) rather than taken on faith; existing Go tests were re-executed and shown to pass unchanged."
+    }
+  },
+  "caveat_assessment": {
+    "topic": "agents container requires -e LLM_PROVIDER=ollama to pass its health check",
+    "reproduced_independently": true,
+    "assessment": "Acceptable for now, non-blocking. Root cause (agents/query/server.py's serve() constructs the LLM client via create_llm_client() before binding the gRPC port) is a pre-existing agents/ code ordering choice, not something introduced or worsened by this subtask's Dockerfile. This subtask's scope is a working Dockerfile + basic health-check, and the acceptance criteria say nothing about zero-config startup; the caveat is disclosed clearly in the Dockerfile/commit and trivially worked around via one env var, which is exactly the kind of parameter a compose file (subtask 6.2.2, already anticipated in the commit message) or deployment target (6.2.3) is expected to supply. Recommend a low-severity follow-up: reordering serve() to bind the gRPC port before constructing the LLM client would make the container health-check-able even with zero config, improving operability, but this is an improvement suggestion, not a defect blocking this subtask."
+  },
+  "findings": [
+    {
+      "id": "F-6.2.1-1",
+      "severity": "low",
+      "blocking": false,
+      "type": "test_gap",
+      "area": "api/routes/query.go, api/routes/*_test.go",
+      "finding": "No Go unit test (httptest) was added for the new HealthHandler / GET /health route; coverage for it currently exists only at the docker-run/curl level performed in this verification. Low severity given the subtask's own test spec is docker-based, but a 2-line httptest case would be cheap and durable."
+    },
+    {
+      "id": "F-6.2.1-2",
+      "severity": "low",
+      "blocking": false,
+      "type": "operability_improvement",
+      "area": "agents/query/server.py",
+      "finding": "serve() constructs the LLM client (create_llm_client()) before binding the gRPC port, so the agents container cannot pass its own health check without an LLM provider configured, even though the health check itself only probes TCP bind, not LLM readiness. Reordering to bind the port first (or making health-check independent of LLM configuration) would let the container start healthy with zero config, which would simplify subtask 6.2.2/6.2.3 compose wiring. Confirmed real by direct reproduction (fails without env var, passes with it); not a regression introduced by this subtask, and not blocking its own acceptance criteria."
+    },
+    {
+      "id": "F-6.2.1-3",
+      "severity": "low",
+      "blocking": false,
+      "type": "security_hardening",
+      "area": "deploy/engine.Dockerfile, deploy/api.Dockerfile, deploy/agents.Dockerfile",
+      "finding": "None of the three final-stage images set a non-root USER; all three run as root by default (alpine/python-slim base default). Common at this stage of a project but worth hardening (add USER directive, consider read-only rootfs) before any real deployment target (6.2.3)."
+    },
+    {
+      "id": "F-6.2.1-4",
+      "severity": "info",
+      "blocking": false,
+      "type": "commit_message_precision",
+      "area": "commit edb8d6e message vs deploy/api.Dockerfile",
+      "finding": "Commit message's Impact section says the api health check was verified via 'curl GET /health'; the actual api.Dockerfile HEALTHCHECK uses `wget -q -O-` (busybox, no curl installed), and the Dockerfile's own comment correctly documents this ('avoiding an extra curl package install'). Purely a commit-message wording inaccuracy -- the actual artifact and its comment are correct and consistent with each other -- but noted since the verification task explicitly asked to check this claim independently."
+    }
+  ]
+}

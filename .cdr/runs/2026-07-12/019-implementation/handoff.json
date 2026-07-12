@@ -1,0 +1,37 @@
+{
+  "subtask": "6.1.5",
+  "issue": 30,
+  "milestone": 8,
+  "commit": "431d55e",
+  "prior_head": "3eefaa7ecb1b0d0a53b874278f17e30054c7aff1",
+  "acceptance_criteria": "A smoke test loads the app against a running (or mocked) backend and confirms the happy path: submit a query, see an answer, navigate to graph and files views without errors.",
+  "test_spec": "An e2e test (e.g. Playwright/Cypress) covering the query -> answer -> graph -> files navigation happy path.",
+  "files": {
+    "new": [
+      "ui/e2e/smoke.spec.ts",
+      "ui/playwright.config.ts"
+    ],
+    "modified": [
+      "ui/package.json (added @playwright/test devDependency, added test:e2e script)",
+      "ui/package-lock.json",
+      "ui/vitest.config.ts (added exclude: ['**/node_modules/**', '**/e2e/**'] so vitest does not collect Playwright specs)",
+      "ui/.gitignore (added playwright.config.js/.d.ts, playwright-report, test-results)",
+      "ui/README.md (documented npm run test:e2e + one-time browser install)"
+    ]
+  },
+  "key_pointers": {
+    "smoke_spec": "ui/e2e/smoke.spec.ts:94-166 (single test: 'submit query, see answer, navigate graph and files views without errors')",
+    "backend_mocks": "ui/e2e/smoke.spec.ts:26-89 (registerBackendMocks -- page.route() fixtures for POST /query, GET /graph?path=..., GET /files, GET /admin)",
+    "console_error_assertions": "ui/e2e/smoke.spec.ts:103-113 (page.on('console'/'pageerror') listeners) and :163-165 (final expect([]) assertions)",
+    "playwright_config": "ui/playwright.config.ts (testDir './e2e', single chromium project, webServer auto-starts `npm run dev -- --port 5173 --strictPort` against http://localhost:5173)"
+  },
+  "validation_matrix_path": ".cdr/runs/2026-07-12/019-implementation/validation-matrix.json",
+  "self_consistency_path": ".cdr/runs/2026-07-12/019-implementation/self-consistency.json",
+  "execution_honesty_note": "The e2e test was ACTUALLY EXECUTED via `npx playwright test` in this sandbox (not merely type-checked or dry-run) -- it launched a real Chromium browser (binaries pre-cached under ~/Library/Caches/ms-playwright) against a real Vite dev server auto-started by Playwright's webServer config, and passed twice consecutively ('1 passed'). One sandbox-specific fix was required and is disclosed: the dev server only accepted connections on http://localhost:5173, not http://127.0.0.1:5173 -- playwright.config.ts's baseURL/webServer.url were set to 'localhost' accordingly. Existing vitest suite (20 tests, 4 files) and `npm run build` were also re-run and pass, unaffected by this change.",
+  "known_gaps_for_verifier_to_check": [
+    "Confirm ui/e2e/smoke.spec.ts's mock fixtures genuinely match the wire contracts in QueryView.tsx/GraphView.tsx/FilesAdminView.tsx (cross-check field names/types).",
+    "Confirm vitest.config.ts's new exclude entry does not accidentally exclude any legitimate future vitest spec that happens to live under a path matching '**/e2e/**'.",
+    "CI wiring for `npm run test:e2e` is explicitly NOT done in this subtask (no CI workflow file exists in the repo's currently-tracked impacted modules) -- confirm this is an acceptable scope boundary against issue #30's wording.",
+    "Only chromium is covered; cross-browser (firefox/webkit) is explicitly out of scope per plan.md."
+  ]
+}

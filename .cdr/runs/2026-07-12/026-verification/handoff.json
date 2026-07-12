@@ -1,0 +1,15 @@
+{
+  "subtask": "6.2.3",
+  "issue": 31,
+  "commit": "e28006dda19e539132926e9f2fa92ae4aa3a1967",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_artifact": ".cdr/runs/2026-07-12/026-verification/verification.json",
+  "regression_entries_appended": 3,
+  "regression_index": ".cdr/index/regression.jsonl",
+  "issue_31_closeout": "6.2.1 (021-implementation/022-verification), 6.2.2 (023-implementation/024-verification), 6.2.3 (025-implementation/026-verification) all now verification-PASS or PASS_WITH_COMMENTS -- issue #31 can be considered closed pending final sign-off.",
+  "pointers": {
+    "manifests_reviewed": "deploy/k8s/*.yaml",
+    "oci_script_reviewed": "deploy/oci/provision.sh",
+    "docs_reviewed": ["docs/HLD.md", "deploy/README.md", "deploy/k8s/README.md", "deploy/oci/README.md"]
+  }
+}

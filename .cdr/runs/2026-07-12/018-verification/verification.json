@@ -1,0 +1,71 @@
+{
+  "subtask": "6.1.4",
+  "issue": 30,
+  "milestone": "Phase 6: Demo + deployment + load tests",
+  "commit": "3eefaa7ecb1b0d0a53b874278f17e30054c7aff1",
+  "base_commit": "7bb8af4677ba20181bd3e4dc75236e1d739e5669",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "FilesAdminView.tsx genuinely implements the acceptance criteria: fetches /files and /admin in parallel, renders catalog rows (path, status, size, lastModified) and corpus stats (file count, per-status counts). Both carried-forward findings (6.1.1's FilesView/AdminView consolidation, 6.1.2's citation dead-end) are substantively closed, not just claimed. Build and full test suite were independently re-run and match the handoff's self-reported results exactly (tsc+vite build exit 0; vitest 4 files / 20 tests, all pass). No blocking defects found; several low-severity gaps noted below.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Issue #30 subtask 6.1.4 AC: 'files/admin view lists catalog entries with status and shows basic corpus-level stats (file count, ingestion status)'. FilesAdminView.tsx renders files-catalog-row items with path+status (lines ~197-213) and admin-file-count / admin-status-count-* stats (lines ~161-179), sourced from mocked GET /files and GET /admin. Impacted modules match exactly: ui/src/routes/FilesAdminView.tsx + FilesAdminView.test.tsx created; no unrelated modules touched besides App.tsx/App.test.tsx wiring, which was already flagged in the issue's own module list intent (route wiring lives in App.tsx by construction)."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "docs/HLD.md line 64 confirms api/ gateway is documented to expose /ingest /query /graph /files /admin as five routes; docs/LLD/catalog.md line 45 confirms CatalogRecord.status enum is exactly ACTIVE | SPLITTING | SPLIT | REDIRECT, which is what FilesAdminView.tsx's CatalogStatus type and ALL_STATUSES array use verbatim -- no invented status values. Independently ran `grep -rn 'files\\|admin' -i api/routes/` (only query.go/query_test.go exist there) and inspected api/main.go's newMux (only registers /query) -- confirmed no Go handler exists for /files or /admin, so this is the same disclosed-UI-side-contract situation as 6.1.3's /graph, and the code's own header comment discloses this honestly rather than hiding it."
+    },
+    "carried_forward_finding_a_query_dead_end": {
+      "status": "closed",
+      "evidence": "Traced the code directly (not just the claim). FilesAdminView.tsx line ~70-71: `const [searchParams] = useSearchParams(); const highlightPath = searchParams.get(\"path\");`. Line ~197-205: for each catalog entry, `isHighlighted = highlightPath !== null && entry.path === highlightPath`, sets `data-highlighted` attribute and, when true, attaches `highlightedRowRef`. A second useEffect (deps [highlightPath, filesResult]) calls `highlightedRowRef.current.scrollIntoView({block:'center'})` guarded for jsdom. QueryView.tsx line 99 confirmed unchanged: `<Link to={`/files?path=${encodeURIComponent(citation)}`}>`. This now lands on a route that reads the same ?path= param and highlights the matching row -- the dead end is genuinely closed, not just asserted in commit prose."
+    },
+    "carried_forward_finding_b_route_consolidation": {
+      "status": "closed",
+      "evidence": "App.tsx diff confirmed: both `<Route path=\"/files\" element={<FilesAdminView />} />` and `<Route path=\"/admin\" element={<FilesAdminView />} />` are present (not collapsed to one route), and both NavLinks ('/files' 'Files', '/admin' 'Admin') remain in the <nav>. App.test.tsx's route table still has separate entries for /files and /admin, each independently rendered and asserted (files-result / admin-result testids), and both pass in the actual test run."
+    },
+    "carried_forward_finding_c_test_bodies": {
+      "status": "verified_by_reading_each_test",
+      "evidence": "Read all 6 tests in FilesAdminView.test.tsx line-by-line: (1) 'renders catalog rows and corpus stats' asserts 3 rows' path/status text and all 4 admin-status-count-* values plus fetch called with GET on both URLs; (2) 'highlights the catalog row matching ?path=' asserts exactly 1 row has data-highlighted=true and it's the correct path, other 2 are false; (3) 'does not highlight any row when no ?path=' asserts all rows data-highlighted=false; (4) '/files fails' asserts files-error text and files-result absent; (5) '/admin fails' asserts admin-error text and admin-result absent; (6) empty catalog asserts files-no-entries present and zero files-catalog-row elements. Every assertion body matches its stated intent -- none are placeholder/no-op tests."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Ran `grep -rln 'FilesView\\|AdminView' --include=*.ts --include=*.tsx .` (excluding node_modules): all hits are comments/identifiers referencing 'FilesAdminView' or historical prose comments about the old files, not actual imports of the deleted ui/src/routes/FilesView.tsx or AdminView.tsx. No compile/import breakage. tsc -b (part of npm run build) independently re-run and passed with exit 0, which would have failed on any dangling import."
+    },
+    "edge_cases": {
+      "status": "pass_with_comment",
+      "evidence": "Empty catalog and both individual endpoint failures are covered. Gap: no test/code path exercises a ?path= that does NOT match any catalog entry (e.g., a stale/renamed citation) -- behavior is implicitly 'no row highlighted' (isHighlighted false for all), which is reasonable, but it is untested. Also: duplicate CatalogEntry.path values would collide on React `key`/ref assignment (unlikely per catalog.md's path-is-identity invariant, so low risk)."
+    },
+    "security": {
+      "status": "pass",
+      "evidence": "entry.path, entry.status, adminResult.fileCount/statusCounts, and error message text are all rendered as JSX text children (React auto-escapes); grep confirms no dangerouslySetInnerHTML, no innerHTML, no href/src built from unsanitized attacker-controlled strings besides the react-router <Link to=...> (which react-router itself escapes/encodes as a URL, not HTML). No XSS vector introduced."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "GET /files and GET /admin are fetched in parallel (two independent useEffect-invoked async functions started before either awaits), not serially. No unbounded re-render loop; effects have correct dependency arrays ([] for fetch, [highlightPath, filesResult] for scroll)."
+    },
+    "maintainability": {
+      "status": "pass_with_comment",
+      "evidence": "Component is a single 217-line file mixing two concerns (files catalog + admin stats) per the issue's explicit naming/spec requirement, well-commented with an honest 'disclosed choice' header explaining the invented wire contract. Minor comment: mockClient.ts still exports now-fully-dead fetchFilesCatalog/fetchAdminStats stubs (no remaining callers) -- consistent with the precedent already set by 6.1.2/6.1.3 leaving fetchQueryResult/fetchGraphNeighbors dead, so not a new problem, but the dead code keeps accumulating across subtasks with no subtask scoped to remove it. Also: navigating to /admin now renders an <h1>Files</h1> as the page's top-level heading (only the <h2>Admin</h2> subsection heading is distinct) -- a UX regression from the previous AdminView.tsx which had <h1>Admin</h1>; not required to fail acceptance criteria (issue doesn't mandate distinct top-level headings), but worth a follow-up decision (e.g. route-aware heading) before 6.1.5's e2e smoke test starts asserting on headings."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "Independently ran `npm test -- --run` in ui/: exit code 0, 'Test Files 4 passed (4)', 'Tests 20 passed (20)' -- FilesAdminView.test.tsx 6, App.test.tsx 6, QueryView.test.tsx 3, GraphView.test.tsx 5. Matches handoff.json's self-reported '4 test files / 20 tests' exactly; independently ran `npm run build` (tsc -b && vite build): exit code 0, produced dist/ output with no type errors."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "All claims in the commit message and handoff.json were independently traced against the actual diff content and actual command re-execution (not taken at face value); no discrepancy found between claimed and actual behavior."
+    },
+    "possible_improvements": [
+      "Add a test for ?path= present but not matching any catalog row (defensive edge case for stale citations).",
+      "Consider a route-aware page heading (e.g. h1 'Files' vs 'Admin' depending on location.pathname) so /admin doesn't visually present as 'Files' at the top level.",
+      "Schedule a follow-up subtask to remove now-fully-dead mockClient.ts stubs (fetchFilesCatalog, fetchAdminStats, and the earlier fetchQueryResult/fetchGraphNeighbors) once IngestView is also migrated off mockClient, rather than letting dead code accumulate indefinitely.",
+      "The disclosed GET /files and GET /admin contracts (this subtask) and GET /graph (6.1.3) should be reconciled against the real Go handlers when they land in api/routes/, since three separate UI subtasks have now each independently invented parts of the wire contract."
+    ]
+  },
+  "commands_run": [
+    "cd ui && npm install  -> exit 0",
+    "cd ui && npm run build  -> exit 0 (tsc -b && vite build)",
+    "cd ui && npm test -- --run  -> exit 0, 4 files / 20 tests passed"
+  ],
+  "missing_context": false
+}

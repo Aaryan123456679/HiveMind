@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "run_id": "011-implementation",
+  "macro": "cdr:implement",
+  "macro_version": "1",
+  "agent": "implementation",
+  "subtask": "6.1.1",
+  "git_head": "e234438d1ea732685ef76139fce6bba24c4f5b1f",
+  "run_key": "sha256(macro=cdr:implement,version=1,subtask=6.1.1,head=e234438d,inputs=issue#30+ui-scaffold)",
+  "status": "completed",
+  "last_completed_step": "handoff",
+  "started_at": "2026-07-12T10:00:00-00:00",
+  "ended_at": "2026-07-12T10:55:00-00:00",
+  "commit": "b8c188b4e10b841a9e81edba0d8f76d5eff9ecfd"
+}

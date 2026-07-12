@@ -1,0 +1,18 @@
+{
+  "subtask": "7.2.1",
+  "issue": 35,
+  "affected_files": [
+    {
+      "path": "docs/WRITEUP.md",
+      "change_type": "new_file"
+    }
+  ],
+  "code_impact": false,
+  "contract_impact": false,
+  "api_impact": false,
+  "test_impact": false,
+  "build_impact": false,
+  "risk_level": "low",
+  "risk_rationale": "Docs-only addition; new markdown file with no code, schema, API, or test changes. No downstream consumers of docs/WRITEUP.md exist yet, so no cross-module breakage possible.",
+  "rollback_plan": "git revert the single commit that adds docs/WRITEUP.md."
+}

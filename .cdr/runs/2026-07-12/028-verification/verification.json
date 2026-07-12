@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "run_id": "028-verification",
+  "subtask": "6.3.1",
+  "issue": 32,
+  "commit": "6203900619e65dbaa389be69022f6e62c6213da4",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Reusable Go load-generation harness (engine/loadtest/harness.go) independently re-verified: goroutines+WaitGroup+channel+hdrhistogram design matches docs/LLD/eval.md and docs/HLD.md exactly. Exact test-spec command 'go test ./engine/loadtest/... -run TestHarness' passes from repo root (go.work present). Full engine module (go build/vet/test, -race on loadtest) is clean with no regressions across catalog/btree/graph/mvcc/split/wal/rpc/root. go.sum/go.mod additions are clean (only hdrhistogram-go + its own transitive test deps: testify/go-spew/difflib/yaml.v3), go mod verify and go mod tidy -diff clean. One non-blocking coverage gap found (see regression.jsonl).",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Run(cfg Config, work WorkFunc) (*Result, error) implemented in engine/loadtest/harness.go:169-223. Uses sync.WaitGroup (line 182-192) to spin up cfg.Workers goroutines, a buffered results channel (line 178, sized Workers*Iterations so no deadlock even though aggregation happens after wg.Wait()), and github.com/HdrHistogram/hdrhistogram-go (import line 26, go.mod line 6) for latency histograms. Result exposes P50/P95/P99/Percentile/Throughput/TotalCount/SuccessCount/ErrorCount/Elapsed/Histogram()."
+    },
+    "test_spec_conformance": {
+      "status": "pass",
+      "evidence": "Ran verbatim issue command from repo root: `go test ./engine/loadtest/... -run TestHarness -v` -> all 4 tests PASS (TestHarnessAggregatesConcurrentSamples, TestHarnessRecordsErrors, TestHarnessConfigDefaults, TestHarnessNilWorkFunc). Confirmed sample-count assertions are computed as workers*iterations constants (8*100=800, 4*50=200), not hardcoded literals; Histogram().TotalCount() cross-checked against res.SuccessCount independently."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "docs/LLD/eval.md 'engine/loadtest/ storage-engine concurrency benchmark' section specifies exactly this design: 'goroutines + sync.WaitGroup + results-collecting channel + histogram (hdrhistogram)'. docs/HLD.md line 61 lists loadtest/ pointing to LLD/eval.md. AGENT.md line 60 mandates 'All concurrency-sensitive tests must run under -race' -- confirmed via `go test ./loadtest/... -race -count=1` passing with no race detected."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Full engine module test suite (`go test ./... -count=1` from engine/) passes for all packages: engine (root), btree, catalog, graph, loadtest, mvcc, rpc, split, wal (cmd/smokeserver and rpc/gen have no test files, expected). loadtest package is not imported by engine/cmd or engine/rpc (grep-confirmed no non-test importers), so zero production code path is affected."
+    },
+    "reusability_for_downstream_subtasks": {
+      "status": "pass_with_comment",
+      "evidence": "WorkFunc(workerID, iter int) (time.Duration, error) is target-agnostic -- caller supplies the operation and its own latency measurement, harness has zero knowledge of ingestion/query/split semantics. Config has no target-specific fields. This should be directly reusable, unmodified, by 6.3.2/6.3.3/6.3.4 as claimed. Minor observation: harness aggregates only after wg.Wait() (not streaming), so it cannot report intra-run progress/partial percentiles -- acceptable for one-shot load tests but worth flagging if 6.3.3's 'query latency under concurrent ingestion load' wants overlapping/streaming measurement; can still be achieved by calling Run() concurrently from two goroutines in the test itself without harness changes."
+    },
+    "security": {
+      "status": "not_applicable",
+      "evidence": "Test-only harness, no network/external input, no production code path affected."
+    },
+    "dependency_hygiene": {
+      "status": "pass",
+      "evidence": "engine/go.mod adds only github.com/HdrHistogram/hdrhistogram-go v1.3.0 as direct dep. go.sum additions (testify, go-spew, go-difflib, yaml.v3) are hdrhistogram-go's own transitive test dependencies, not unrelated bumps. `go mod verify` -> 'all modules verified'. `go mod tidy -diff` -> empty (no drift)."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "Package doc comment (harness.go:1-18) subsumes and expands the deleted doc.go placeholder (1-line stub), cross-references docs/LLD/eval.md. Config.withDefaults() pattern is idiomatic and well-commented."
+    },
+    "test_coverage_gap": {
+      "status": "info",
+      "evidence": "Coverage run (`go test ./loadtest/... -coverprofile`) shows Run() at 79.4% and Percentile() at 66.7%; the untested branch is the out-of-range-latency clamping path (harness.go ~206-217: hist.RecordValue error handling / clamp-and-retry / fmt.Errorf on double failure) and the r.hist==nil / SuccessCount==0 zero-value branch of Percentile(). Not blocking for 6.3.1's acceptance criteria (trivial workload + sample count), but this exact path is likely to be exercised for real by 6.3.4 (auto-split race test can produce latency outliers under contention), so it should get direct test coverage before that subtask leans on it."
+    }
+  },
+  "commands_independently_run": [
+    "cd engine && go build ./...  (clean)",
+    "cd engine && go vet ./...  (clean)",
+    "cd engine && go test ./loadtest/... -run TestHarness -v -count=1  (4/4 PASS)",
+    "go test ./engine/loadtest/... -run TestHarness -v  (from repo root, verbatim issue command, via go.work; 4/4 PASS)",
+    "cd engine && go test ./loadtest/... -race -v -count=1  (4/4 PASS, no races)",
+    "cd engine && go test ./... -count=1  (all 9 testable packages PASS, no regressions)",
+    "cd engine && go mod verify  (all modules verified)",
+    "cd engine && go mod tidy -diff  (empty, no drift)",
+    "cd engine && go test ./loadtest/... -coverprofile=... && go tool cover -func=...  (Run 79.4%, Percentile 66.7%, rest 100%)"
+  ],
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    "Clamping/error-handling branch of Run() (out-of-range latency values) has no dedicated test; recommend adding before 6.3.4 (auto-split race test) relies on the harness under real contention.",
+    "Harness aggregates only post-hoc (after wg.Wait), no streaming/partial results; fine for 6.3.1-6.3.4's stated use cases but worth noting if a future subtask needs live progress reporting."
+  ]
+}

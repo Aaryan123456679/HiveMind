@@ -1,0 +1,29 @@
+{
+  "subtask": "7.2.1",
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "Document covers the system architecture",
+      "planned_check": "docs/WRITEUP.md contains a 'System architecture' section summarizing Go storage engine + Python agent layer + gRPC + React UI, MVCC/auto-split/graph-linked file store vs. vector chunking, matching docs/HLD.md sections 3.1/3.2",
+      "status": "planned"
+    },
+    {
+      "id": "AC2",
+      "description": "Document covers novelty vs. GraphRAG/RAPTOR/MemGPT per HLD.md section 6",
+      "planned_check": "docs/WRITEUP.md contains a 'Novelty vs. prior art' section whose claims about GraphRAG, RAPTOR, MemGPT/Letta, and HiveMind's contribution are traceable 1:1 to docs/HLD.md section 6 with no invented claims",
+      "status": "planned"
+    },
+    {
+      "id": "AC3",
+      "description": "Document summarizes benchmark results accurately (real numbers, not placeholders)",
+      "planned_check": "docs/WRITEUP.md contains a 'Benchmark results' section whose table/numbers match results/run-001/live_benchmark_results.json and run-metadata.json exactly (recall, precision, judge score, cost/1k queries per checkpoint/arm; actual spend $0.1677)",
+      "status": "planned"
+    },
+    {
+      "id": "AC4",
+      "description": "Document covers lessons learned / known limitations, grounded in real engineering history",
+      "planned_check": "docs/WRITEUP.md contains a 'Lessons learned / known limitations' section citing: (a) fsync-bound WAL append-count scaling insight from engine/loadtest/split_race_scale_test.go, (b) small-corpus/single-run benchmark caveat, (c) deploy/oci/ unverified-against-live-account status, (d) at least one additional concrete documented limitation from docs/LLD/*.md or HLD.md section 7 -- no generic/hypothetical lessons",
+      "status": "planned"
+    }
+  ]
+}

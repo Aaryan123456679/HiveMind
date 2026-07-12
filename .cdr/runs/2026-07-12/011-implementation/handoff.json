@@ -1,0 +1,59 @@
+{
+  "run_id": "011-implementation",
+  "subtask": "6.1.1",
+  "issue": 30,
+  "commit": "b8c188b4e10b841a9e81edba0d8f76d5eff9ecfd",
+  "parent_commit": "e234438d1ea732685ef76139fce6bba24c4f5b1f",
+  "pushed": false,
+  "acceptance_criteria": [
+    "A React app scaffold exists with routed pages/views corresponding to each of the five api/ gateway routes (/ingest /query /graph /files /admin).",
+    "UI build succeeds (`npm run build`).",
+    "A router test asserts all five routes render without error using mocked API responses."
+  ],
+  "test_spec_from_issue": "UI build succeeds (`npm run build`) and a router test asserts all five routes render without error using mocked API responses.",
+  "new_files": [
+    "ui/.gitignore",
+    "ui/index.html",
+    "ui/package.json",
+    "ui/package-lock.json",
+    "ui/tsconfig.json",
+    "ui/tsconfig.node.json",
+    "ui/vite.config.ts",
+    "ui/vitest.config.ts",
+    "ui/src/main.tsx",
+    "ui/src/App.tsx",
+    "ui/src/App.test.tsx",
+    "ui/src/setupTests.ts",
+    "ui/src/api/mockClient.ts",
+    "ui/src/routes/IngestView.tsx",
+    "ui/src/routes/QueryView.tsx",
+    "ui/src/routes/GraphView.tsx",
+    "ui/src/routes/FilesView.tsx",
+    "ui/src/routes/AdminView.tsx"
+  ],
+  "modified_files": [
+    "ui/README.md"
+  ],
+  "key_pointers": {
+    "route_wiring": "ui/src/App.tsx lines 20-34 (the <Routes> block: / -> redirect to /query, /ingest, /query, /graph, /files, /admin)",
+    "router_test": "ui/src/App.test.tsx -- vi.mock of ./api/mockClient at top of file, it.each(routes) block for the 5 paths, plus a root-redirect test",
+    "mocked_api_seam": "ui/src/api/mockClient.ts -- 5 stub async functions (fetchIngestStatus, fetchQueryResult, fetchGraphNeighbors, fetchFilesCatalog, fetchAdminStats), each imported by exactly one route view",
+    "build_config": "ui/package.json scripts.build = \"tsc -b && vite build\"; ui/tsconfig.json / ui/tsconfig.node.json split app vs vite/vitest config typing; ui/vite.config.ts (plain vite config) vs ui/vitest.config.ts (mergeConfig + vitest/config defineConfig with jsdom env + setupFiles)"
+  },
+  "commands_to_reverify": [
+    "cd ui && npm install",
+    "npm run build",
+    "npm test"
+  ],
+  "self_reported_local_results": {
+    "npm_install": "pass (178 packages; pre-existing transitive dev-dep vulnerabilities per npm audit, not addressed here -- see self-consistency.json known_gaps_disclosed_not_fixed)",
+    "npm_run_build": "pass (tsc -b && vite build, dist/ produced, exit 0)",
+    "npm_test": "pass (vitest run, 6/6 tests in src/App.test.tsx)"
+  },
+  "explicit_scope_boundaries_for_verifier": [
+    "Route components are intentionally placeholder-only (no real query/graph/catalog logic) -- do not flag as incomplete against 6.1.2-6.1.4's acceptance criteria, only against 6.1.1's.",
+    "/files and /admin are implemented as two separate placeholder components (FilesView.tsx, AdminView.tsx) rather than the combined FilesAdminView.tsx mentioned in issue #30's 6.1.4 body -- this is deliberate per the task instructions ('6.1.1 itself just needs route scaffolding/placeholders for all 5 paths'); 6.1.4 is expected to consolidate them later.",
+    "No live API/backend wiring exists or is expected in this subtask; api/'s own /query route is itself only a disclosed stand-in per api/routes/query.go, and /ingest /graph /files /admin have no Go handlers at all yet."
+  ],
+  "not_verified_by_this_agent": "Per invariant I4, this implementation agent did not adversarially verify its own work. A separate /cdr:verify run should independently re-run npm install/build/test, review diff quality, and confirm the validation-matrix.json criteria are genuinely met."
+}

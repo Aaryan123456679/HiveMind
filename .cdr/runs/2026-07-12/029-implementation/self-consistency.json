@@ -1,0 +1,36 @@
+{
+  "subtask": "7.2.1",
+  "checks": [
+    {
+      "check": "docs/WRITEUP.md contains all 4 required sections",
+      "result": "pass",
+      "detail": "Sections present: '1. System architecture', '2. Novelty vs. prior art', '3. Benchmark results', '4. Lessons learned / known limitations' (plus intro + Sources)."
+    },
+    {
+      "check": "Benchmark table in docs/WRITEUP.md matches README.md's benchmark table verbatim",
+      "result": "pass",
+      "detail": "diff of the 9-row table in both files is empty."
+    },
+    {
+      "check": "Benchmark table in docs/WRITEUP.md matches results/run-001/live_benchmark_results.json exactly (rounded to same precision as README/write-up)",
+      "result": "pass",
+      "detail": "Recomputed recall/precision/judge/cost-per-1k directly from the JSON for all 9 checkpoint/arm rows and confirmed values match the write-up table (e.g. 20pct/hivemind: 0.062/0.188/3.59/$0.089; 100pct/vector_rag: 0.823/0.494/4.42/$0.096)."
+    },
+    {
+      "check": "Novelty section makes no claims beyond HLD.md section 6",
+      "result": "pass",
+      "detail": "GraphRAG/RAPTOR/MemGPT bullets and HiveMind's contribution bullet are copied near-verbatim from docs/HLD.md section 6; no additional claims added."
+    },
+    {
+      "check": "Lessons-learned section is grounded in concrete, cited artifacts (not generic/hypothetical)",
+      "result": "pass",
+      "detail": "Each of the 4 lessons cites a specific file/section: engine/loadtest/split_race_scale_test.go (fsync/append-count scaling), results/run-001/ (small-corpus caveat, same numbers as section 3), deploy/oci/README.md (unverified OCI status), docs/LLD/catalog.md (free-list ceiling) and docs/LLD/query-agent.md (prefix-search residual gap)."
+    },
+    {
+      "check": "This is internal sanity only, not full verification",
+      "result": "n/a",
+      "detail": "Per invariant I4, formal verification is delegated to /cdr:verify and was explicitly not performed by this agent."
+    }
+  ],
+  "overall": "pass (internal sanity only)"
+}

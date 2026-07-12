@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "028-verification",
+  "subtask": "6.3.1",
+  "issue": 32,
+  "commit": "6203900619e65dbaa389be69022f6e62c6213da4",
+  "verdict": "PASS_WITH_COMMENTS",
+  "artifacts": {
+    "verification": ".cdr/runs/2026-07-12/028-verification/verification.json"
+  },
+  "regression_entries_appended": 3,
+  "regression_index": ".cdr/index/regression.jsonl",
+  "next_step": "6.3.2/6.3.3/6.3.4 implementation agents may reuse engine/loadtest.Run unmodified; address low-severity coverage gap (clamp branch) opportunistically before 6.3.4 relies on it under real contention."
+}

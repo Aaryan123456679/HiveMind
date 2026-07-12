@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "run_id": "002-verification",
+  "subtask": "5.3.2",
+  "issue": 28,
+  "commit_verified": "8f7751c3215c0148b9d29beb637953b7bf90ae51",
+  "parent_commit": "690a571f5863b1ba0a60568a51b270ab836a276e",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "LLM-judge scoring (llm_judge.py) and manual calibration harness (calibrate_judge.py) independently reproduced and verified against issue #28's acceptance criteria and test spec. JudgeError correctly fires on 8 independently-authored malformed inputs (distinct from the implementer's 6). Interceptor integration is real and mandatory (score_answer calls interceptor.call(), never client.complete()/complete_with_usage() directly); resulting StageRecord independently confirmed compatible with aggregate_by_stage/rollup_cost_per_1000_queries with zero adaptation. Calibration statistics (mean/max absolute delta, agreement-within-1-point) hand-verified correct on an independently constructed 5-sample fixture. Zero live API calls confirmed by grep + full test run. Full suite independently re-run: 230 passed (23 in test_llm_judge.py). ruff clean. agents/pyproject.toml diff is empty. Diff touches only the 3 claimed new files plus CDR run docs. Comments (non-blocking) noted below.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "Pulled issue #28 directly via `gh issue view 28`. Subtask 5.3.2 acceptance criteria: 'An LLM-judge scoring pass rates answer quality on a defined rubric, with a manual spot-check harness allowing a human to compare judge scores against a sample of manually-rated answers for calibration.' Test spec: 'pytest agents/eval/test_llm_judge.py (LLM-judge call mocked): assert scoring pipeline produces expected score structure; a manual calibration script is runnable and produces a comparison report.' Impacted modules listed: agents/eval/llm_judge.py, agents/eval/test_llm_judge.py, agents/eval/calibrate_judge.py -- matches exactly what was added. Rubric (3 criteria, 1-5 scale), score_answer/score_arm_answers producing JudgeScore structure, and calibrate_judge.py's run_calibration + CLI (runnable, produces CalibrationReport JSON) both independently confirmed to satisfy the stated acceptance criteria and test spec verbatim."
+    },
+    "judge_error_coverage": {
+      "status": "PASS",
+      "evidence": "Wrote 8 independently-authored malformed inputs distinct from the implementer's 6 test cases: missing 'completeness' key, score=0 (below range), score=6 (above range), non-numeric string score ('five'), garbage text surrounding otherwise-valid JSON, empty string, float score (3.5), and null score. All 8 raised JudgeError with an informative message; none silently defaulted, clamped, or coerced a score. Confirmed via direct execution, not by trusting the implementer's own 6 tests."
+    },
+    "interceptor_integration": {
+      "status": "PASS",
+      "evidence": "Read score_answer's call site directly: it calls `interceptor.call(llm_client, provider=..., arm=..., stage=..., prompt=..., model=..., query_id=...)` -- never `llm_client.complete()` or `llm_client.complete_with_usage()` directly. Independently wrote a fresh LLMClient stub (MyStubClient) whose complete() raises AssertionError if called (to catch any accidental bypass) and whose complete_with_usage() increments a counter; ran score_answer through it and confirmed complete_with_usage was called exactly once and complete() was never invoked. Confirmed the resulting record is a genuine `eval.cost_latency.StageRecord` (isinstance check) and passed it through both `aggregate_by_stage()` and `rollup_cost_per_1000_queries()` with zero modification -- both produced well-formed aggregates. This is a self-authored test, not a reuse of the implementer's own interceptor test."
+    },
+    "calibration_statistics": {
+      "status": "PASS",
+      "evidence": "Constructed 5 independent ManualRating/judge-score pairs (human scores 3.0, 5.0, 1.0, 4.0, 2.5 against a fixed judge score of 4.0 each), hand-computed deltas [1.0, -1.0, 3.0, 0.0, 1.5], abs-deltas [1.0,1.0,3.0,0.0,1.5], mean_absolute_delta=1.3, max_absolute_delta=3.0, agreement_within_1_point=0.6 (3 of 5 within 1.0). run_calibration()'s actual output matched exactly on all four figures and per-sample deltas."
+    },
+    "cli_boundary_deferral": {
+      "status": "PASS",
+      "evidence": "Grepped calibrate_judge.py: `from llm.factory import create_llm_client` and `LLMInterceptor()` construction occur only inside main(), not at module top level or inside run_calibration/load_manual_ratings/write_report. Ran the CLI-smoke test in isolation (test_calibrate_judge_main_cli_smoke_produces_report) -- passed, and the monkeypatch target (llm.factory.create_llm_client, patched before main() executes its function-local import) is genuinely live: main()'s late import re-resolves the patched attribute at call time, and the stub client's call count (2) confirms the real code path was exercised, not a no-op."
+    },
+    "zero_live_api_calls": {
+      "status": "PASS",
+      "evidence": "Grepped llm_judge.py, calibrate_judge.py, test_llm_judge.py for OpenRouterClient/GeminiClient/OPENROUTER_API_KEY/GEMINI_API_KEY/os.environ/load_dotenv/.env -- all matches are only in docstring prose describing the disclosed constraint, no executable references outside main()'s disclosed CLI boundary. Full test suite run confirms no network activity (fast, deterministic, uses only _StubLLMClient and httpx.MockTransport-backed OllamaClient)."
+    },
+    "dependency_check": {
+      "status": "PASS",
+      "evidence": "git diff 690a571..8f7751c -- agents/pyproject.toml is empty. Confirms stdlib-only claim."
+    },
+    "test_suite_reexecution": {
+      "status": "PASS",
+      "evidence": "Independently ran `cd agents && python -m pytest eval/test_llm_judge.py -q` -> 23 passed. Ran `python -m pytest eval/ llm/ -q` -> 230 passed, 0 failed, 5 warnings (unrelated SwigPyPacked/SwigPyObject deprecation warnings from an unrelated dependency, pre-existing). Ran `ruff check eval/llm_judge.py eval/calibrate_judge.py eval/test_llm_judge.py` -> all checks passed."
+    },
+    "reuse_not_reinvention": {
+      "status": "PASS",
+      "evidence": "Compared function/class inventories of eval/metrics.py (recall_at_k, precision_at_k, relevant_doc_id_set, QueryScore, score_query, ArmScore, score_arm) and eval/cost_latency.py (StageRecord, resolve_cost_usd, StageAggregate, aggregate_by_stage, ArmCostSummary, rollup_cost_per_1000_queries) against llm_judge.py/calibrate_judge.py -- no overlapping logic. llm_judge.py imports and reuses StageRecord directly (via LLMInterceptor.call's return) rather than defining its own cost/latency shape; calibrate_judge.py imports and reuses score_answer directly rather than reimplementing scoring. Genuine composition, not a fork."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "git diff 690a571..8f7751c --name-status shows only 3 new agents/eval/*.py files plus 7 new .cdr/runs/2026-07-12/001-implementation/* documentation files (not modifications to any prior-subtask source). No changes to agents/llm/interceptor.py, agents/eval/cost_latency.py, agents/llm/client.py, or any other existing file. Zero regression surface on prior subtasks."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "Confirmed StageRecord fields produced by LLMInterceptor.call() (arm, stage, duration_seconds, provider, cost_usd, query_id) match exactly what aggregate_by_stage/rollup_cost_per_1000_queries expect -- verified by reading agents/eval/cost_latency.py directly and running both functions against a freshly-constructed record."
+    }
+  },
+  "comments_non_blocking": [
+    "llm_judge.py's docstring prose is somewhat degraded/telegraphic in places (missing words, e.g. 'three map directly onto benchmark's other two arms already need judged uniformly') -- readability nit, does not affect correctness or test coverage; worth a documentation cleanup pass before merge but not a functional defect.",
+    "parse_judge_response requires strict JSON with no surrounding text (confirmed via my own 'garbage_around_json' test case, which correctly raises JudgeError). This is a deliberate, safe design choice (refuse to guess rather than attempt fuzzy extraction) but real judge-model outputs (e.g. from GPT-4o-mini via OpenRouter) sometimes wrap JSON in markdown code fences or conversational text despite prompt instructions asking for 'strict JSON' -- this could cause a higher-than-expected JudgeError rate during the real calibration run deferred to 5.3.4/later. Recommend the live-calibration follow-up task explicitly budget for this failure mode (e.g. prompt-engineering iteration or a documented policy of treating JudgeError as a hard stop requiring human review) before spending real API budget at scale in 5.3.4.",
+    "The disclosed deferral of a live calibration run (real OpenRouter/Gemini output against real manually-rated answers) is appropriately scoped out and does not block this subtask's own acceptance criteria, which only require the harness be runnable with mocks per the test spec."
+  ],
+  "safe_to_build_on_for_5_3_4": true,
+  "gating_defects_found": false
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "run_id": "022-verification",
+  "subtask": "6.2.1",
+  "issue": 31,
+  "commit": "edb8d6ee5cc554b7ebbeaaccaa4cfeaa28616b9e",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_json": ".cdr/runs/2026-07-12/022-verification/verification.json",
+  "touched_files": [
+    "deploy/engine.Dockerfile",
+    "deploy/api.Dockerfile",
+    "deploy/agents.Dockerfile",
+    "api/routes/query.go"
+  ],
+  "regression_entries_appended": 4,
+  "regression_index": ".cdr/index/regression.jsonl"
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "subtask": "6.1.4",
+  "verdict": "PASS_WITH_COMMENTS",
+  "run_dir": ".cdr/runs/2026-07-12/018-verification/",
+  "verification_file": ".cdr/runs/2026-07-12/018-verification/verification.json",
+  "pointers": {
+    "component": "ui/src/routes/FilesAdminView.tsx",
+    "test": "ui/src/routes/FilesAdminView.test.tsx",
+    "route_wiring": "ui/src/App.tsx lines 32-36",
+    "router_test": "ui/src/App.test.tsx",
+    "citation_link_source": "ui/src/routes/QueryView.tsx line 99",
+    "status_enum_source": "docs/LLD/catalog.md line 45",
+    "no_go_handler_confirmation": "api/routes/ (only query.go/query_test.go), api/main.go newMux"
+  },
+  "carried_forward_findings_status": {
+    "6.1.1_filesview_adminview_consolidation": "closed",
+    "6.1.2_query_citation_dead_end": "closed"
+  },
+  "new_low_severity_findings": [
+    "test_gap: ?path= present but non-matching not tested",
+    "ux_regression: /admin shows h1 'Files' not 'Admin'",
+    "dead_code_accumulation: mockClient.ts fetchFilesCatalog/fetchAdminStats now fully dead"
+  ]
+}

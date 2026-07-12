@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "subtask": "6.1.1",
+  "issue": 30,
+  "commit": "b8c188b4e10b841a9e81edba0d8f76d5eff9ecfd",
+  "parent": "e234438d1ea732685ef76139fce6bba24c4f5b1f",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Independently re-derived issue #30 subtask 6.1.1's acceptance criteria via `gh issue view 30` (not from implementer's plan.md or handoff narrative beyond file-path pointers), cross-checked docs/HLD.md section 3.1 for the five api/ gateway route names, read the full diff (19 files, 3583 insertions, all under ui/), and independently ran `npm install`, `npm run build`, and `npm test` from a clean state in ui/. All three commands succeeded with real exit code 0. Test file genuinely mocks ./api/mockClient via vi.mock and never touches fetch/XHR; 6/6 tests pass (5 per-route + 1 root-redirect), matching the issue's test spec verbatim. Diff scope is clean: only ui/ files touched, no engine/api/agents/docs modifications. No secrets or unsafe patterns found in package.json/package-lock.json (all packages resolve to registry.npmjs.org). The FilesView/AdminView split (vs. 6.1.4's named FilesAdminView.tsx) is a disclosed, scoped choice that does not violate 6.1.1's own acceptance criteria (which only requires 'routed pages/views corresponding to each of the five api/ gateway routes', not specific file names) -- flagged below as an observation, not a defect.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "gh issue view 30 quote (6.1.1): 'React app scaffold exists with routed pages/views corresponding to each of the five api/ gateway routes. Test spec: UI build succeeds (npm run build) and a router test asserts all five routes render without error using mocked API responses. Impacted modules: ui/src/App.tsx, ui/src/routes/'. ui/src/App.tsx wires exactly /ingest /query /graph /files /admin plus a '/' -> '/query' redirect (App.tsx lines ~20-34, confirmed by reading the diff directly, not the handoff's paraphrase). ui/src/App.test.tsx asserts all 5 routes render their heading + a mocked-status testid, plus a 6th test for the root redirect -- exactly matching the acceptance criteria and test spec text."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "docs/HLD.md line 63-64: 'api/ is a separate Go module: the HTTP gateway ... routes /ingest /query /graph /files /admin that fan out to the engine and the agent service via gRPC.' The five ui/ routes map 1:1 to these. Confirmed via api/routes/ (only query.go exists; query.go's own doc comment discloses /query is a structural stand-in not wired to a live gRPC pipeline, and that no proto RPC exists yet for the Python query pipeline) that /ingest /graph /files /admin indeed have zero Go handlers today. ui/src/api/mockClient.ts's doc comment correctly cites this same disclosed gap as the reason for using a mocked seam instead of live fetch calls in this subtask -- this is the correct architectural stance for 6.1.1 (scaffold now, wire later), not an architecture violation."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "git show b8c188b4 --stat and --name-only: all 18 new files + 1 modified file (ui/README.md) are under ui/. No engine/, api/, agents/, docs/, or proto/ files touched. ui/ was previously README-only (per HLD's prior 'not yet built' note), so this is a genuinely greenfield addition with no coupling to existing modules to regress."
+    },
+    "edge_cases": {
+      "status": "pass_with_comment",
+      "evidence": "The 6 tests cover the 5 named routes + root redirect, matching the spec exactly. Not covered (and not required by 6.1.1's acceptance criteria): an unmatched/404 path (e.g. /nonexistent) has no catch-all <Route path=\"*\"> and no test for it -- currently falls through to blank content with no heading. This is a minor gap worth addressing before or during 6.1.5's end-to-end smoke test, not a blocker for this subtask."
+    },
+    "security": {
+      "status": "pass_with_comment",
+      "evidence": "No secrets, .env files, or hardcoded tokens found (grepped ui/src, ui/*.json, ui/*.ts for process.env|API_KEY|SECRET|TOKEN -- zero matches). package-lock.json: all 225 'resolved' entries point to registry.npmjs.org, no private/unexpected registries. Ran `npm audit` after a clean `npm install`: 5 vulnerabilities (3 moderate, 1 high, 1 critical) in the vite/esbuild/vitest dev-server toolchain (GHSA-67mh-4wv8-2f99 class -- esbuild dev server accepting arbitrary-origin requests). These are dev-time-only (not shipped in `dist/` production build) and are current upstream-unfixed-without-a-major-bump issues in the pinned vite@^5.4.9/vitest@^2.1.3 versions; non-blocking for a scaffold subtask but should be tracked (e.g. upgrade to vite 6/7 + vitest 3 in a later hardening pass) rather than silently left. Not disclosed anywhere in the diff or commit message -- flagging so it doesn't get lost."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "tsconfig.json uses strict:true, noUnusedLocals, noUnusedParameters -- above-baseline rigor for a scaffold. Each route view follows an identical, easy-to-extend pattern (useEffect + fetch-stub + testid). vite.config.ts/vitest.config.ts split (with tsconfig.node.json's composite project referencing both) is a deliberate, documented workaround so `tsc -b` doesn't need to type vitest-only config keys -- confirmed this compiles cleanly. No ESLint/Prettier config was added in this diff; acceptable for a scaffold subtask but worth adding before the codebase grows across 6.1.2-6.1.4."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "Re-ran independently (not trusting the handoff's self-reported counts): `cd ui && npm install` (exit 0, 180 packages), `npm run build` (exit 0, tsc -b && vite build, dist/ produced, 168KB bundle), `npm test` i.e. `vitest run` (exit 0, 1 test file, 6/6 tests passed in 80ms). Confirmed genuine mocking: App.test.tsx's `vi.mock(\"./api/mockClient\", ...)` intercepts all 5 exported fetch* functions before App.tsx's route views import them; the mockClient.ts implementations themselves are plain async functions returning literal objects (grep confirms no `fetch`/`XMLHttpRequest`/`axios` usage anywhere in mockClient.ts or the route views), so there genuinely is no live network call possible in this test, satisfying the issue's 'using mocked API responses' requirement in substance, not just in name."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Requirement text pulled fresh from `gh issue view 30`, independently cross-referenced against docs/HLD.md section 3.1 and api/routes/query.go's own disclosed gap (not the implementer's restatement of it). Diff read in full (all 18 new + 1 modified file). Build/test commands re-executed from scratch in a real shell with real exit codes captured, not inferred from the handoff's self-reported results. Diff scope independently confirmed minimal via --stat/--name-only."
+    }
+  },
+  "findings": [
+    {
+      "severity": "low",
+      "category": "edge_case_gap",
+      "description": "No catch-all/404 route (<Route path=\"*\">) or corresponding test exists; navigating to an unmatched path renders no heading and no content. Not required by 6.1.1's acceptance criteria but should be added before 6.1.5's end-to-end smoke test.",
+      "blocking": false
+    },
+    {
+      "severity": "low",
+      "category": "dependency_vulnerability",
+      "description": "`npm audit` on the committed package-lock.json reports 5 vulnerabilities (3 moderate, 1 high, 1 critical) in the vite/esbuild/vitest dev-server toolchain (esbuild <=0.24.2 dev-server arbitrary-origin request issue, propagating through vite<=6.4.2, vitest<=3.2.5). Dev-time-only, not shipped in the production build, but not disclosed in the commit message or README; should be tracked and addressed in a later dependency-hardening pass (upgrading to vite 6/7 + vitest 3 is a breaking change per `npm audit fix --force`, so deliberately deferring is reasonable but should be an explicit, tracked decision rather than silent).",
+      "blocking": false
+    },
+    {
+      "severity": "info",
+      "category": "requirements_interpretation",
+      "description": "FilesView.tsx and AdminView.tsx were scaffolded as two separate placeholder components rather than issue #30's 6.1.4 body naming a single combined FilesAdminView.tsx. This is an acceptable interpretation for 6.1.1's narrower scope: 6.1.1's own acceptance criteria only requires 'routed pages/views corresponding to each of the five api/ gateway routes' (no specific file-naming requirement), and the diff's commit message + ui/README.md explicitly disclose that 6.1.4 will consolidate these into FilesAdminView.tsx. Not a requirements deviation for THIS subtask, but the verifier for 6.1.4 should confirm the consolidation actually happens (deleting the two separate files, not just adding a third alongside them) and that route wiring in App.tsx is updated accordingly.",
+      "blocking": false
+    }
+  ],
+  "acceptance_criteria_met": true,
+  "scope_note": "6.1.1 is scaffold/routing only, correctly deferring real query submission (6.1.2), graph visualization (6.1.3), and catalog/admin content + file consolidation (6.1.4) -- verified those are genuinely out of scope per the issue body's subtask breakdown, not silently dropped."
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "run_id": "024-verification",
+  "subtask": "6.2.2",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_artifact": ".cdr/runs/2026-07-12/024-verification/verification.json",
+  "regression_entries_appended": 5,
+  "regression_index": ".cdr/index/regression.jsonl",
+  "pointers": {
+    "compose_file": "deploy/docker-compose.yml",
+    "ui_dockerfile": "deploy/ui.Dockerfile",
+    "nginx_conf": "deploy/nginx.conf",
+    "env_example": "deploy/.env.example",
+    "smoke_test": "deploy/smoke-test.sh",
+    "api_query_route": "api/routes/query.go",
+    "api_main": "api/main.go",
+    "hld_reference": "docs/HLD.md#L38-L64"
+  }
+}

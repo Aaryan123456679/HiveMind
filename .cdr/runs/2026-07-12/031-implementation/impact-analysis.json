@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "subtask": "7.3.1",
+  "new_files": [
+    "engine/loadtest/soak_test.go"
+  ],
+  "modified_files": [],
+  "modified_files_contingent_on_real_bug_found": true,
+  "touched_but_unmodified_dependencies": [
+    "engine/catalog (Open, NewCatalog, Put/Get, CatalogRecord, StatusActive)",
+    "engine/wal (OpenWriter, Writer.Close)",
+    "engine/mvcc (NewVersionWriter, NewEpochManager, CommitVersion, SnapshotRead)"
+  ],
+  "blast_radius": "none on existing production code paths; new test file is additive only. If a real bug is found during the mandatory real -race run, the fix will be scoped to the minimal offending function in engine/catalog, engine/wal, or engine/mvcc and called out explicitly in the commit message and handoff.",
+  "risk_areas": [
+    {
+      "area": "goroutine-leak false positive from GC/scheduler noise",
+      "mitigation": "compare NumGoroutine with a generous worker-count-relative slack, not an exact equality, and run runtime.GC() + brief settle delay before both start and end snapshots"
+    },
+    {
+      "area": "memory growth false positive from legitimate steady-state bookkeeping (catalog records, WAL segments, mvcc version files) accumulated during a real multi-minute ingestion workload",
+      "mitigation": "assert a generous ceiling multiple on heap growth (documented rationale in-code) rather than near-zero growth; log actual before/after numbers regardless of pass/fail so the numbers are inspectable"
+    },
+    {
+      "area": "flaky wall-clock-bound test in CI",
+      "mitigation": "SOAK_DURATION env var overridable; default kept short (session-practical minutes) so default `go test ./...` runs stay fast; test also gated by testing.Short() skip like 6.3.4's scale test"
+    }
+  ],
+  "test_impact": {
+    "new_tests": ["TestSoak (engine/loadtest package)"],
+    "existing_tests_affected": [],
+    "race_gated": true
+  },
+  "rollback_plan": "New test-only file; revert by deleting engine/loadtest/soak_test.go (single git revert of the commit) with no production-code impact, unless a real fix file was also added, in which case that fix is reverted independently and called out in the commit message."
+}

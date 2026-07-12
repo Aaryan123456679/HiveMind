@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "subtask": "7.3.1",
+  "rows": [
+    {
+      "id": "AC1",
+      "requirement": "Sustained concurrent ingestion+query load run over an extended (documented, bounded) duration.",
+      "covered_by": "TestSoak: writer pool (CommitVersion) + query pool (SnapshotRead) run concurrently against shared fileID pool until a shared deadline, default duration overridable via SOAK_DURATION.",
+      "method": "real -race execution, output captured in self-consistency.json"
+    },
+    {
+      "id": "AC2",
+      "requirement": "No unrecovered crashes/panics.",
+      "covered_by": "go test itself fails/panics visibly if any goroutine panics uncaught; test asserts zero errors returned from every CommitVersion/SnapshotRead call.",
+      "method": "real execution; non-zero exit / panic trace would be captured verbatim"
+    },
+    {
+      "id": "AC3",
+      "requirement": "No leaks (stable goroutine counts).",
+      "covered_by": "runtime.NumGoroutine() snapshot before pool start vs. after wg.Wait(), asserted within a documented generous slack.",
+      "method": "real execution; numbers logged and asserted"
+    },
+    {
+      "id": "AC4",
+      "requirement": "Stable memory counts.",
+      "covered_by": "runtime.ReadMemStats HeapAlloc snapshot before vs. after (each preceded by runtime.GC()), asserted against a documented generous ceiling multiple.",
+      "method": "real execution; numbers logged and asserted"
+    },
+    {
+      "id": "AC5",
+      "requirement": "No correctness violations.",
+      "covered_by": "Every CommitVersion/SnapshotRead call's error is checked; SnapshotRead's returned bytes are checked non-empty (a correctness violation in the MVCC read path would surface as an error or empty read here, consistent with query_latency_test.go's precedent).",
+      "method": "real execution"
+    },
+    {
+      "id": "AC6",
+      "requirement": "Any issues found are fixed.",
+      "covered_by": "Plan step 5: if real run surfaces a failure, diagnose + fix + re-run to green before commit.",
+      "method": "conditional; see self-consistency.json for whether this was triggered"
+    },
+    {
+      "id": "AC7 (test-spec)",
+      "requirement": "go test ./engine/loadtest/... -run TestSoak -timeout <extended> runs cleanly.",
+      "covered_by": "TestSoak is the exact name; run with -timeout sized to comfortably exceed SOAK_DURATION.",
+      "method": "real execution, exact command captured"
+    },
+    {
+      "id": "AC8 (regression)",
+      "requirement": "No regression to existing engine/loadtest tests (6.3.1-6.3.4).",
+      "covered_by": "Full package test run (go test ./engine/loadtest/... -race, no -run filter, short timeout excluded per testing.Short semantics as needed).",
+      "method": "real execution"
+    }
+  ]
+}

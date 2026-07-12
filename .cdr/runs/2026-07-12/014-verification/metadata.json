@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "run_id": "014-verification",
+  "macro": "CDR-Verification",
+  "macro_version": "1",
+  "agent": "verification",
+  "subtask": "6.1.2",
+  "git_head": "71cb1bb89c11555d096eb36589766b9620f8ff21",
+  "run_key": "cdr-verify-6.1.2-71cb1bb89c11555d096eb36589766b9620f8ff21",
+  "status": "completed",
+  "last_completed_step": "verdict_written",
+  "started_at": "2026-07-12T17:00:00+05:30",
+  "ended_at": "2026-07-12T17:05:00+05:30"
+}

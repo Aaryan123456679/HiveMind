@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "run_id": "016-verification",
+  "subtask": "6.1.3",
+  "commit": "7bb8af4677ba20181bd3e4dc75236e1d739e5669",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_artifact": ".cdr/runs/2026-07-12/016-verification/verification.json",
+  "regression_entries_appended": 2,
+  "key_pointers": {
+    "graph_view": "ui/src/routes/GraphView.tsx",
+    "graph_view_test": "ui/src/routes/GraphView.test.tsx",
+    "app_test_diff": "ui/src/App.test.tsx lines ~18-27",
+    "proto_neighbor_msg": "proto/hivemind.proto lines 116-136 (GraphNeighborsRequest/Neighbor/GraphNeighborsResponse)",
+    "api_routes_grep_confirmation": "api/routes/ contains only query.go and query_test.go, no graph handler"
+  }
+}

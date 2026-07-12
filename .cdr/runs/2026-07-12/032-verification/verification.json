@@ -1,0 +1,66 @@
+{
+  "subtask_id": "7.3.1",
+  "verdict": "PASS_WITH_COMMENTS",
+  "acceptance_criteria_check": [
+    {
+      "criterion": "Soak run over sustained concurrent ingestion+query load surfaces no unrecovered crashes/panics",
+      "status": "pass",
+      "evidence": "Own fresh (-count=1) 2-minute -race run (not cached): PASS, no panic, exit 0. ingestOps=6570 queryOps=66672 ingestErrs=0 queryErrs=0. Second fresh run inside full-package run: ingestOps=6896 queryOps=50837, ingestErrs=0 queryErrs=0. Both same order of magnitude as implementer's claimed 6441/48442, confirming the workload is real and non-trivial, not that the exact figures are reproducible bit-for-bit (they are wall-clock/scheduler dependent, as expected for a timed loop)."
+    },
+    {
+      "criterion": "Stable memory/goroutine counts at the end",
+      "status": "pass",
+      "evidence": "All 3 of my own runs (20s x2, 2min x2) show goroutines start=2 end=2 exactly. Heap growth ratios observed across my runs: ~1.07-1.16x (well under the 20x ceiling asserted in code). Bound (20x) is generous but not vacuous: it would catch e.g. a version-writer bookkeeping leak scaling superlinearly with op count; slack of 20 goroutines above 16 workers is generous but would still catch a stuck goroutine per worker (workers only number 16)."
+    },
+    {
+      "criterion": "Any issues found are fixed",
+      "status": "pass (no issues found)",
+      "evidence": "0 ingest errors, 0 query errors, 0 empty reads across all my runs. No production file was modified in commit 1ad57d4 (git show --stat and git diff 2a5c30f..1ad57d4 --stat both show only engine/loadtest/soak_test.go, +294/-0). Consistent with implementer's claim that no bug was surfaced requiring a fix."
+    },
+    {
+      "criterion": "Test-spec command works: go test ./engine/loadtest/... -run TestSoak -timeout <extended>",
+      "status": "pass",
+      "evidence": "Ran verbatim (with -race added) from engine/ directory: `go test ./loadtest/... -run TestSoak -race -v -timeout 5m` -> PASS. Also ran with SOAK_DURATION=20s override to confirm the env-var knob genuinely changes duration and still exercises real load (1133-1142 ingest ops, 8087-9679 query ops in 20s)."
+    }
+  ],
+  "findings": [
+    {
+      "type": "architecture_conformance",
+      "severity": "info",
+      "finding": "TestSoak drives the real catalog+WAL+mvcc stack directly (catalog.Open/NewCatalog, wal.OpenWriter, mvcc.NewVersionWriter/NewEpochManager, mvcc.CommitVersion/SnapshotRead) -- same fixture shape as TestQueryLatencyUnderLoad in query_latency_test.go, confirmed by reading that file side by side. No LLM/segmentation boundary is reached, consistent with the pattern established since 6.3.2. No mocking of the layer actually under test."
+    },
+    {
+      "type": "duration_scaling_disclosure",
+      "severity": "info",
+      "finding": "The 2-minute default vs literal 'hours' scaling is disclosed explicitly and prominently in TestSoak's doc comment (a dedicated '# Honest duration-scaling judgment call' section), not buried or silent. SOAK_DURATION env var override verified to genuinely work (tested with 20s). This mirrors 6.3.4's split_race_scale_test.go precedent, confirmed by reading that file's own doc comment for consistency."
+    },
+    {
+      "type": "test_reproducibility_caveat",
+      "severity": "low",
+      "finding": "My first attempt to re-run the 2-minute case returned Go's test cache ('ok ... (cached)') rather than a fresh execution, and happened to print the exact same ingestOps/queryOps numbers as the implementer's claimed commit-message figures. Forcing -count=1 on subsequent runs produced different (but same-order-of-magnitude) op counts each time, confirming the test is not deterministic and the implementer's cited numbers are illustrative of one real run, not a guaranteed exact reproduction. Recommend implementer/CI callers always use -count=1 when re-verifying soak numbers to avoid being misled by cached results (this is a general Go testing gotcha, not a defect in the test itself)."
+    },
+    {
+      "type": "gaming_check",
+      "severity": "info",
+      "finding": "No evidence of a test gamed to always pass: op counts are non-trivial (thousands of ingest ops, tens of thousands of query ops per run), goroutine slack (20) and heap ceiling (20x) are generous but bounded and would be tripped by a real leak given the workload's own scale (16 workers, single-digit-KB seed content). ingestOps==0/queryOps==0 guard also present (t.Fatalf) to catch a miscomputed/zero deadline silently 'passing' by doing nothing."
+    },
+    {
+      "type": "regression_risk",
+      "severity": "info",
+      "finding": "Confirmed via git diff 2a5c30f..1ad57d4 --stat: only engine/loadtest/soak_test.go added (+294/-0), no production engine/* file touched. Full engine/loadtest package (harness_test.go, ingestion_bench_test.go, query_latency_test.go, split_race_scale_test.go, soak_test.go) re-run together with -race: all PASS, no interaction/regression (TestQueryLatencyUnderLoad, TestAutoSplitRaceAtScale, harness unit tests all green in the same invocation as TestSoak)."
+    },
+    {
+      "type": "known_limitation_honestly_disclosed",
+      "severity": "low",
+      "finding": "Implementer's own doc comment correctly acknowledges that a 2-minute run cannot surface slow-accumulating leaks that only manifest after hours (e.g. multi-hour-scale file-descriptor or version-file accumulation). This is a genuine, not-yet-closed gap against the literal acceptance criteria wording ('hours'), left open via the SOAK_DURATION override rather than fixed -- acceptable given session constraints but flagged so a real multi-hour run is tracked as follow-up before this is considered a fully executed hours-scale soak test."
+    }
+  ],
+  "confidence": 0.85,
+  "verifier_own_rerun_numbers": {
+    "run_20s_a": {"ingestOps": 1133, "ingestErrs": 0, "queryOps": 8087, "queryErrs": 0, "emptyReads": 0, "goroutines": "2->2"},
+    "run_20s_b": {"ingestOps": 1142, "ingestErrs": 0, "queryOps": 9679, "queryErrs": 0, "emptyReads": 0, "goroutines": "2->2"},
+    "run_2min_fresh_a": {"ingestOps": 6570, "ingestErrs": 0, "queryOps": 66672, "queryErrs": 0, "emptyReads": 0, "goroutines": "2->2"},
+    "run_2min_fresh_b_full_suite": {"ingestOps": 6896, "ingestErrs": 0, "queryOps": 50837, "queryErrs": 0, "emptyReads": 0, "goroutines": "2->2"},
+    "full_package_race_suite": "PASS in 244.583s: TestHarness* (4 tests), TestQueryLatencyUnderLoad, TestSoak, TestAutoSplitRaceAtScale all green"
+  }
+}

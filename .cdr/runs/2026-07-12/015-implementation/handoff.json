@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-12-015-implementation",
+  "subtask": "6.1.3",
+  "issue": 30,
+  "milestone": 8,
+  "commit": "7bb8af4677ba20181bd3e4dc75236e1d739e5669",
+  "prior_commits_context": {
+    "6.1.1": "b8c188b",
+    "6.1.2": "71cb1bb89c11555d096eb36589766b9620f8ff21"
+  },
+  "changed_files": [
+    {
+      "path": "ui/src/routes/GraphView.tsx",
+      "note": "Full rewrite of the 6.1.1 placeholder. Defines the disclosed /graph wire contract in its header comment (lines ~1-33): GET /graph?path=<encoded path> -> { path, neighbors: [{ path, edgeType, weight, hop }] }."
+    },
+    {
+      "path": "ui/src/routes/GraphView.test.tsx",
+      "note": "New file, 5 test cases: neighbor-count render (3 neighbors), ?path= deep-link auto-fetch (1 neighbor), empty-neighbors state, error state (404), empty-path submit guard."
+    },
+    {
+      "path": "ui/src/App.test.tsx",
+      "note": "One-line data-testid change in the routes table: graph-status -> graph-form (line ~24), following the identical precedent already documented in that file's own comment for the /query row from 6.1.2."
+    }
+  ],
+  "acceptance_criteria": [
+    "Selecting a file shows its graph neighbors (from /graph) as a visual adjacency/traversal view.",
+    "Test spec: component test mocking a /graph response, asserting the expected number of neighbor nodes render."
+  ],
+  "test_spec_pointer": {
+    "file": "ui/src/routes/GraphView.test.tsx",
+    "primary_test": "\"renders the expected number of neighbor nodes after selecting a file\" -- mocks 3 neighbors, asserts screen.findAllByTestId(\"graph-neighbor\") has length 3"
+  },
+  "data_testid_reference": [
+    "graph-form", "graph-path-input", "graph-loading", "graph-error",
+    "graph-result", "graph-center-path", "graph-neighbors", "graph-neighbor",
+    "graph-neighbor-path", "graph-neighbor-type", "graph-no-neighbors"
+  ],
+  "disclosed_gaps_for_verifier_attention": [
+    "No Go /graph HTTP handler exists in api/routes/ (only /query does, via api/routes/query.go). This subtask's fetch contract (GET /graph?path=<path> -> {path, neighbors:[{path, edgeType, weight, hop}]}) is a UI-side design decision, not derived from an existing backend contract -- documented at the top of ui/src/routes/GraphView.tsx and in architecture-discovery.md. Verifier should confirm this is an acceptable, clearly-disclosed simplification given the subtask is UI-only, same category of gap query.go itself disclosed before 6.1.2.",
+    "Path-based (not fileID-based) neighbor identification: proto/hivemind.proto's GraphNeighborsResponse.Neighbor uses target_file_id, not a path. This view uses path strings throughout to stay consistent with QueryView's citation-link convention (/files?path=...). Verifier should judge whether this is a reasonable adaptation or should have been flagged as a bigger open question.",
+    "App.test.tsx was touched even though not listed in the issue's 'Impacted modules' for 6.1.3 -- justified by the identical precedent 6.1.2 set (commit 71cb1bb) for the exact same situation (query-status -> query-form)."
+  ],
+  "local_verification_note": "Implementation agent ran `npm run build` and `npm test` inside ui/ locally (self-consistency step, NOT verification): both passed -- build produced dist/ with no errors; vitest run reported 3 test files / 14 tests, all passing. See self-consistency.json for details. This is not an adversarial verification pass.",
+  "run_artifacts": {
+    "requirement": ".cdr/runs/2026-07-12/015-implementation/requirement.md",
+    "architecture_discovery": ".cdr/runs/2026-07-12/015-implementation/architecture-discovery.md",
+    "impact_analysis": ".cdr/runs/2026-07-12/015-implementation/impact-analysis.json",
+    "plan": ".cdr/runs/2026-07-12/015-implementation/plan.md",
+    "validation_matrix": ".cdr/runs/2026-07-12/015-implementation/validation-matrix.json",
+    "self_consistency": ".cdr/runs/2026-07-12/015-implementation/self-consistency.json"
+  }
+}

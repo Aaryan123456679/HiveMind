@@ -1,0 +1,30 @@
+{
+  "note": "Internal sanity check only -- NOT verification. A separate /cdr:verify agent adversarially reviews this work.",
+  "checks": [
+    {
+      "command": "npm install (in ui/)",
+      "result": "pass",
+      "detail": "178 packages installed; npm audit reports pre-existing transitive vulnerabilities (3 moderate, 1 high, 1 critical) in dev-only tooling deps, not addressed in this scaffold-only subtask -- flagged for the verification agent's judgment."
+    },
+    {
+      "command": "npm run build (tsc -b && vite build)",
+      "result": "pass",
+      "detail": "39 modules transformed, dist/index.html + dist/assets/index-*.js emitted, built in ~430ms, exit 0."
+    },
+    {
+      "command": "npm test (vitest run)",
+      "result": "pass",
+      "detail": "src/App.test.tsx: 6/6 tests passed (one per route path.each: /ingest /query /graph /files /admin, plus the '/' redirect test). No act() warnings after awaiting screen.findByTestId for the mocked async status. Duration ~820ms."
+    }
+  ],
+  "matrix_coverage": {
+    "AC-1": "satisfied -- ui/src/App.tsx defines exactly 5 <Route> entries for /ingest /query /graph /files /admin, each pointing at a distinct component in ui/src/routes/.",
+    "AC-2": "satisfied -- npm run build passed, see checks above.",
+    "AC-3": "satisfied -- npm test passed, all 5 routes asserted rendered without error via mocked ./api/mockClient (vi.mock), see checks above.",
+    "AC-4 (scope guard)": "satisfied -- each route view file is <20 lines: heading + one paragraph + a stubbed mock-client call rendering its resolved note; no form handling, no graph library, no catalog table."
+  },
+  "known_gaps_disclosed_not_fixed": [
+    "npm audit flags pre-existing vulnerabilities in transitive dev dependencies (vite/vitest toolchain) -- out of scope for a scaffold subtask, left for a dedicated dependency-hygiene pass.",
+    "React Router logs 2 v7 future-flag warnings (v7_startTransition, v7_relativeSplatPath) at test time -- non-fatal, informational only; not opted into early since this is the initial scaffold and later subtasks may want to evaluate the v7 migration deliberately."
+  ]
+}

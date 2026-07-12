@@ -1,0 +1,44 @@
+{
+  "subtask": "6.1.5",
+  "issue": 30,
+  "milestone": 8,
+  "summary": "Introduce first-ever browser-level e2e tooling (Playwright) into ui/ and add ui/e2e/smoke.spec.ts covering the query->answer->graph->files happy path with network-level backend mocking. No existing runtime source files are modified; changes are additive (new devDependency, new config, new test dir, one npm script, README doc note).",
+  "new_files": [
+    "ui/e2e/smoke.spec.ts",
+    "ui/playwright.config.ts"
+  ],
+  "modified_files": [
+    "ui/package.json (add @playwright/test devDependency, add test:e2e script)",
+    "ui/README.md (document e2e test + how to run it)",
+    "ui/.gitignore (ignore playwright-report/ and test-results/ if not already ignored)"
+  ],
+  "unmodified_but_read": [
+    "ui/src/App.tsx",
+    "ui/src/routes/QueryView.tsx",
+    "ui/src/routes/GraphView.tsx",
+    "ui/src/routes/FilesAdminView.tsx",
+    "ui/src/main.tsx",
+    "ui/vite.config.ts",
+    "ui/vitest.config.ts",
+    "ui/package.json"
+  ],
+  "risk_assessment": {
+    "new_tooling_risk": {
+      "level": "medium",
+      "detail": "First e2e tooling introduction in the repo. Requires downloading a browser binary (~100-300MB) via `npx playwright install`, which depends on outbound network access from the execution environment. Confirmed network access works in this sandbox via `npm ping` against registry.npmjs.org during architecture-discovery, but the separate Playwright CDN (playwright.download.prss.microsoft.com or similar) was not directly probed before starting install; this is validated for real in self-consistency and disclosed honestly if it fails or is only partially confirmed."
+    },
+    "existing_test_regression_risk": {
+      "level": "low",
+      "detail": "No existing source or test files are modified. `npm test` (vitest) and `npm run build` are unaffected by adding a new devDependency and a new ui/e2e/ directory, since vitest.config.ts and vite.config.ts are not touched and Playwright specs live outside vitest's include globs by directory (ui/e2e/ vs ui/src/)."
+    },
+    "ci_risk": {
+      "level": "medium (out of scope to fully resolve here)",
+      "detail": "No CI workflow file was found/modified in this subtask (impacted modules per issue #30 are ui/e2e/smoke.spec.ts only). Wiring `npm run test:e2e` into an actual CI pipeline (installing browsers in CI, etc.) is left as explicit future work in handoff.json; this subtask's scope is the test script + local runnability, not CI integration."
+    },
+    "contract_drift_risk": {
+      "level": "low",
+      "detail": "Mock fixtures in smoke.spec.ts are hand-written to match the wire contracts disclosed in QueryView.tsx/GraphView.tsx/FilesAdminView.tsx's own header comments (themselves disclosed-choice contracts since no real Go handlers exist for /graph, /files, /admin yet). If those disclosed contracts change in a future subtask, this smoke test's fixtures will need a matching update -- same risk profile as the existing component tests (QueryView.test.tsx etc.) which mock the same contracts."
+    }
+  },
+  "rollback_plan": "Revert the single commit; no other files are touched so rollback is a clean single-commit revert with no cascading changes."
+}

@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-07-12-031-implementation",
+  "agent": "implementation",
+  "subtask": "7.3.1",
+  "issue": 36,
+  "status": "completed",
+  "commit_sha": "1ad57d4",
+  "commit_branch": "main",
+  "pushed": false,
+  "files_changed": [
+    {
+      "path": "engine/loadtest/soak_test.go",
+      "change_type": "new_file",
+      "sections": [
+        "TestSoak doc comment incl. honest duration-scaling rationale (lines ~19-83)",
+        "TestSoak body: fixture + workload + assertions (lines ~85-249)",
+        "soakDefaultDuration const (line ~254)",
+        "soakDuration() env-var parsing helper (lines ~259-272)"
+      ]
+    }
+  ],
+  "acceptance_criteria": [
+    "AC1: extended-duration sustained concurrent ingestion+query load (2min default, SOAK_DURATION env var override for real multi-hour runs)",
+    "AC2: no unrecovered crashes/panics",
+    "AC3: no goroutine leaks (stable goroutine counts)",
+    "AC4: stable memory counts",
+    "AC5: no correctness violations",
+    "AC6: any issues found are fixed (none found in real runs)"
+  ],
+  "test_spec": "go test ./engine/loadtest/... -run TestSoak -timeout <extended> (default SOAK_DURATION=2m; override via SOAK_DURATION=<go-duration> e.g. SOAK_DURATION=2h for a real multi-hour run, with a correspondingly larger -timeout)",
+  "real_test_output": {
+    "calibration_10s": {
+      "command": "SOAK_DURATION=10s go test ./loadtest/... -run TestSoak -race -v -timeout 60s",
+      "result": "PASS (11.88s)",
+      "ingestOps": 525, "ingestErrs": 0, "queryOps": 4498, "queryErrs": 0, "emptyReads": 0,
+      "goroutines_start_end": [2, 2],
+      "heapAlloc_start_end_bytes": [439536, 471448]
+    },
+    "default_2min": {
+      "command": "go test ./loadtest/... -run TestSoak -race -v -timeout 5m",
+      "result": "PASS (121.96s test time)",
+      "ingestOps": 6441, "ingestErrs": 0, "queryOps": 48442, "queryErrs": 0, "emptyReads": 0,
+      "goroutines_start_end": [2, 2],
+      "heapAlloc_start_end_bytes": [439160, 470320]
+    },
+    "full_package_suite": {
+      "command": "go test ./loadtest/... -race -v -timeout 15m",
+      "result": "PASS, all tests green, 242.007s",
+      "included": ["TestHarnessAggregatesConcurrentSamples", "TestHarnessRecordsErrors", "TestHarnessConfigDefaults", "TestHarnessNilWorkFunc", "TestQueryLatencyUnderLoad (17.75s)", "TestSoak (121.65s, ingestOps=6835 queryOps=50763 errors=0 goroutines 2->2 heap 477024->481440 bytes)", "TestAutoSplitRaceAtScale (101.12s)"],
+      "regressions_found": "none"
+    }
+  },
+  "production_code_fix": "none required -- no crash/leak/correctness issue surfaced in any real run",
+  "artifacts_dir": ".cdr/runs/2026-07-12/031-implementation/",
+  "self_consistency": "internal sanity only per invariant I4 (build/vet clean, real -race test executed and green, validation-matrix rows AC1-AC8 all covered); NOT a formal verification -- see self-consistency.json",
+  "pointers": {
+    "prior_precedent_for_duration_scaling": "engine/loadtest/split_race_scale_test.go package doc comment (subtask 6.3.4)",
+    "reused_fixture_pattern": "engine/loadtest/query_latency_test.go (subtask 6.3.3) -- same catalog+wal+mvcc fixture shape",
+    "harness_not_modified": "engine/loadtest/harness.go untouched (Run() is iteration-count-based, not duration-based; soak test drives its own sync.WaitGroup + atomic-counter loop instead, per requirement.md non-goals)",
+    "lld_context": ["docs/LLD/eval.md", "docs/LLD/mvcc.md", "docs/LLD/catalog.md", "docs/LLD/wal.md", "docs/HLD.md sections 3, 3.1, 5, 7"]
+  },
+  "not_verified": "Per invariant I4, this implementation agent did not self-verify. Recommend /cdr:verify to independently re-run TestSoak (including at a longer SOAK_DURATION if desired) and re-check the fixture/assertion design against docs/LLD/mvcc.md."
+}

@@ -1,0 +1,29 @@
+{
+  "subtask": "6.1.1",
+  "criteria": [
+    {
+      "id": "AC-1",
+      "text": "A React app scaffold exists with routed pages/views corresponding to each of the five api/ gateway routes.",
+      "planned_check": "Static: ui/src/App.tsx defines a <Routes> with exactly 5 <Route path> entries matching /ingest, /query, /graph, /files, /admin, each element referencing a distinct component in ui/src/routes/.",
+      "status_after_implementation": "pending"
+    },
+    {
+      "id": "AC-2",
+      "text": "UI build succeeds (`npm run build`).",
+      "planned_check": "Run `npm run build` inside ui/ after `npm install`; must exit 0 and produce ui/dist/.",
+      "status_after_implementation": "pending"
+    },
+    {
+      "id": "AC-3",
+      "text": "A router test asserts all five routes render without error using mocked API responses.",
+      "planned_check": "ui/src/App.test.tsx: for each of the 5 paths, render <App/> inside <MemoryRouter initialEntries=[path]> with ui/src/api/mockClient mocked via vi.mock, assert the corresponding view's marker text is present and no error/rejection is thrown. Run `npm test` (vitest run), must exit 0 with 5 assertions (one per route) passing.",
+      "status_after_implementation": "pending"
+    },
+    {
+      "id": "AC-4 (scope guard)",
+      "text": "Route components remain minimal placeholders (no 6.1.2-6.1.4 real feature logic implemented in this commit).",
+      "planned_check": "Manual diff review: IngestView/QueryView/GraphView/FilesView/AdminView.tsx each contain only a heading + short description + a stubbed mock-client call, no form submission handling, no graph rendering library, no catalog table.",
+      "status_after_implementation": "pending"
+    }
+  ]
+}

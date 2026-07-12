@@ -1,0 +1,14 @@
+{
+  "run_dir": ".cdr/runs/2026-07-12/014-verification/",
+  "subtask": "6.1.2",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_json": ".cdr/runs/2026-07-12/014-verification/verification.json",
+  "regression_entries_appended": 2,
+  "regression_index": ".cdr/index/regression.jsonl",
+  "key_pointers": {
+    "diff_source": "git show 71cb1bb89c11555d096eb36589766b9620f8ff21",
+    "contract_reference": "api/routes/query.go lines 15-31 (QueryRequest/QueryResult)",
+    "citation_link_dead_end": "ui/src/routes/QueryView.tsx (Link to=/files?path=) vs ui/src/routes/FilesView.tsx (unchanged placeholder, no useSearchParams)",
+    "test_gaps": "ui/src/routes/QueryView.test.tsx (3 tests: happy path, error path, empty-query guard)"
+  }
+}

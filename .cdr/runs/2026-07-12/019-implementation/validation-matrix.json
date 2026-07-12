@@ -1,0 +1,46 @@
+{
+  "subtask": "6.1.5",
+  "criteria": [
+    {
+      "clause": "A smoke test loads the app",
+      "assertion": "test.beforeEach navigates page to baseURL '/query' via a real Playwright browser context launched against the Vite dev server (webServer config); test fails immediately if the page fails to load (Playwright's default navigation timeout)."
+    },
+    {
+      "clause": "...against a running (or mocked) backend",
+      "assertion": "page.route() intercepts POST /query, GET /graph*, GET /files, GET /admin before navigation, fulfilling each with a fixture JSON matching the disclosed wire contracts in QueryView.tsx/GraphView.tsx/FilesAdminView.tsx; asserted implicitly by every subsequent UI assertion depending on those mocked responses resolving successfully (status/success states, not error states)."
+    },
+    {
+      "clause": "...submit a query",
+      "assertion": "Test fills #query-input with a sample query string and clicks the submit button within [data-testid=\"query-form\"]; test asserts the mocked POST /query request was actually received (route handler records a flag / count) before proceeding."
+    },
+    {
+      "clause": "...see an answer",
+      "assertion": "expect(page.getByTestId('query-answer')).toBeVisible() and .toHaveText(<mocked answer text>) after submit."
+    },
+    {
+      "clause": "...navigate to graph...view",
+      "assertion": "Test clicks the 'Graph' nav link (or navigates via page.getByRole('link', { name: 'Graph' })), fills [data-testid=\"graph-path-input\"], submits [data-testid=\"graph-form\"]."
+    },
+    {
+      "clause": "...and confirm graph view loads (no errors)",
+      "assertion": "expect(page.getByTestId('graph-result')).toBeVisible() and expect(page.getByTestId('graph-neighbor').first()).toBeVisible(); expect(page.getByTestId('graph-error')).toHaveCount(0)."
+    },
+    {
+      "clause": "...navigate to files view",
+      "assertion": "Test clicks the 'Files' nav link (page.getByRole('link', { name: 'Files' }))."
+    },
+    {
+      "clause": "...and confirm files view loads (no errors)",
+      "assertion": "expect(page.getByTestId('files-result')).toBeVisible(), expect(page.getByTestId('files-catalog-row').first()).toBeVisible(), expect(page.getByTestId('admin-result')).toBeVisible(); expect(page.getByTestId('files-error')).toHaveCount(0) and expect(page.getByTestId('admin-error')).toHaveCount(0)."
+    },
+    {
+      "clause": "...without errors (across the entire happy-path run)",
+      "assertion": "page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(...) }) and page.on('pageerror', err => pageErrors.push(...)) registered before first navigation; test.afterEach (or end of test) asserts expect(consoleErrors).toEqual([]) and expect(pageErrors).toEqual([])."
+    }
+  ],
+  "out_of_scope_explicitly_noted": [
+    "CI workflow wiring for test:e2e (no CI config file in this repo's impacted modules for this subtask)",
+    "Cross-browser (firefox/webkit) execution -- chromium only",
+    "Testing against a real running Go backend (no /graph, /files, /admin handlers exist yet in api/)"
+  ]
+}

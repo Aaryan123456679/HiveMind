@@ -1,0 +1,115 @@
+{
+  "subtask": "6.1.5",
+  "issue": 30,
+  "milestone": 8,
+  "commit": "431d55e2b571b65bcbc66c48f5b8fd60c4b46af1",
+  "prior_verified_head": "3eefaa7ecb1b0d0a53b874278f17e30054c7aff1",
+  "verdict": "PASS_WITH_COMMENTS",
+  "issue_30_closure": "recommend closing issue #30 as complete pending the non-blocking follow-ups noted below",
+  "execution_verification": {
+    "independently_ran": true,
+    "commands": [
+      "npx playwright install chromium",
+      "npx playwright test",
+      "npx playwright test (second run)",
+      "npm test",
+      "npm run build"
+    ],
+    "observed_results": {
+      "playwright_run_1": "1 passed (chromium), exit code 0",
+      "playwright_run_2": "1 passed (chromium), exit code 0, run consecutively to confirm no flake",
+      "npm_test": "4 test files, 20 tests passed, exit code 0 -- confirms vitest.config.ts's exclude: ['**/e2e/**'] correctly prevents vitest from attempting to collect the Playwright spec (no collection error, count unchanged from pre-6.1.5 baseline)",
+      "npm_run_build": "tsc -b && vite build succeeded, exit code 0"
+    },
+    "note_on_implementer_claim": "The implementer's claim of 'real Chromium browser against real Vite dev server, passed twice consecutively' is CORROBORATED by independent re-execution in this verification environment. In this sandbox the baseURL/webServer.url of 'http://localhost:5173' worked directly; the disclosed 127.0.0.1-vs-localhost sandbox quirk was not reproduced here (environment-dependent), but this does not contradict the implementer's disclosure -- it is consistent with a sandbox-specific DNS/binding difference, and localhost is the safer/more portable default regardless."
+  },
+  "dimensions": {
+    "requirements_conformance": {
+      "verdict": "pass",
+      "evidence": "Read ui/e2e/smoke.spec.ts in full (158 lines). Test body actually covers all three acceptance-criteria clauses, verified by reading assertions directly (not inferred from filename/description): (1) submit query -> see answer: lines fill 'Query' label, click Submit, wait for POST /query request, assert query-answer testid visible with exact MOCK_ANSWER text and citation text; (2) navigate to graph view without errors: clicks 'Graph' nav link, asserts Graph heading, submits a path, asserts graph-result/graph-neighbor visible and graph-error has zero count; (3) navigate to files view without errors: clicks 'Files' nav link, asserts Files heading, asserts admin-result/files-result visible, files-catalog-row visible, and both files-error/admin-error have zero count. Final assertions also require consoleErrors and pageErrors arrays to be empty across the whole run, exceeding the literal acceptance criteria (stronger 'without errors' proof than just DOM presence)."
+    },
+    "architecture_conformance": {
+      "verdict": "pass",
+      "evidence": "playwright.config.ts follows the existing per-tool-config-file convention (vite.config.ts/vitest.config.ts precedent). Mock fixtures in registerBackendMocks() cross-checked field-by-field against the actual current source (not just the e2e file's own comments): QueryView.tsx expects {answer, citations} -- fixture matches. GraphView.tsx expects {path, neighbors:[{path,edgeType,weight,hop}]} -- fixture matches exactly, same field names/types. FilesAdminView.tsx expects {files:[{path,status,sizeBytes,lastModified}]} for /files and {fileCount, statusCounts:{ACTIVE,SPLITTING,SPLIT,REDIRECT}} for /admin -- fixture matches exactly including the CatalogStatus enum values. No drift between e2e fixtures and real component wire-contract expectations was found."
+    },
+    "regression_risk": {
+      "verdict": "pass",
+      "evidence": "git diff --stat 3eefaa7 431d55e confirms only 7 files touched, all under ui/ (e2e/smoke.spec.ts, playwright.config.ts, vitest.config.ts, package.json, package-lock.json, .gitignore, README.md) -- nothing outside ui/ touched, no engine/api/agents Go or Python code affected. npm run build passes. npm test still reports exactly 4 files / 20 tests (matches pre-6.1.5 baseline), confirming the vitest exclude pattern works as intended and doesn't silently drop or duplicate any existing suite."
+    },
+    "security": {
+      "verdict": "pass",
+      "evidence": "playwright.config.ts contains no secrets/credentials; webServer.command just runs the existing 'npm run dev' script; reuseExistingServer is guarded by !process.env.CI (safe default, won't silently reuse a stale server in CI). package-lock.json diff contains only @playwright/test's own dependency subtree (playwright, playwright-core, fsevents as an optionalDependency for macOS) -- no unexpected/unrelated packages introduced."
+    },
+    "performance": {
+      "verdict": "pass",
+      "evidence": "Single chromium project, single test, ~0.4-0.7s per run observed locally plus dev-server startup -- appropriately scoped 'basic smoke test', not a performance concern for this subtask."
+    },
+    "maintainability": {
+      "verdict": "pass_with_comments",
+      "evidence": "Test is well-commented, explains the mocking rationale and disclosed contract choices inline. Minor: the smoke test never independently visits the '/admin' route via its own nav link (it only navigates via 'Files' link, and both /files and /admin routes render the same FilesAdminView component so admin-result/admin-error are exercised anyway on the /files navigation) -- acceptable given the 6.1.4 consolidation decision, but worth a one-line comment noting why a separate 'Admin' nav click isn't also asserted."
+    },
+    "test_coverage": {
+      "verdict": "pass",
+      "evidence": "Covers the full acceptance-criteria happy path plus an explicit zero-console/page-error assertion, which is stronger than the literal AC wording. Scope explicitly limited to chromium only and to the happy path only (no error-path/negative e2e test) -- consistent with the subtask's own 'basic smoke test' framing and issue #30's acceptance criteria, which only asks for the happy path."
+    },
+    "confidence": {
+      "verdict": "high",
+      "evidence": "Independently re-ran the exact test suite the implementer claims to have run, twice, with matching results (both times '1 passed', exit code 0). Also re-ran npm test and npm run build independently, both passing. Manually cross-checked mock fixture field names/types line-by-line against the current QueryView.tsx/GraphView.tsx/FilesAdminView.tsx wire-contract comments and type definitions, not merely against the e2e file's own internal comments."
+    }
+  },
+  "issue_30_overall_assessment": {
+    "coherent_working_state": true,
+    "summary": "Across 6.1.1-6.1.5, the ui/ dashboard now has a working app shell with 5 routes, a functioning Query view with real fetch-backed submit/answer/citation flow, a Graph view with neighbor visualization, a consolidated Files/Admin view, and a genuine browser-level e2e smoke test that independently verifies the whole happy path end-to-end. All builds and test suites pass. The dashboard is demo-able against a mocked backend, matching Phase 6's 'demo + deployment' framing.",
+    "dangling_non_blocking_follow_ups_from_earlier_subtasks": [
+      {
+        "source": "6.1.1 (run 012-verification)",
+        "finding": "No catch-all 404 route (<Route path=\"*\">) or test for an unmatched path.",
+        "still_open": true,
+        "relevance_to_6.1.5": "The e2e smoke test does not exercise an invalid route, so this remains unverified in the e2e layer too; low severity, does not block AC."
+      },
+      {
+        "source": "6.1.3/6.1.4 (runs 016/018-verification)",
+        "finding": "/graph, /files, /admin wire contracts were invented by the UI subtasks because no corresponding Go HTTP handlers exist yet in api/main.go (only /query is registered). The 6.1.5 e2e test mocks all three at the network layer for exactly this reason -- this is a real, disclosed, and still-unresolved integration gap: the dashboard has never been exercised against a real backend for anything but /query, and /query itself still returns 500 via notImplementedPipeline per earlier findings F-4.6.1-1/F-4.6.2-2 on issue #25.",
+        "still_open": true,
+        "relevance_to_6.1.5": "Not a blocker for 6.1.5's own pass/fail (mocking is explicitly allowed by the AC's own '(or mocked)' wording), but worth flagging as the single most significant dangling thread before this dashboard is demo'd against a live backend -- a dedicated follow-up issue reconciling api/'s actual Go routes with the contracts UI now depends on (fileID vs path identifiers, /graph and /files/admin handlers) is recommended."
+      },
+      {
+        "source": "6.1.4 (run 018-verification)",
+        "finding": "Visiting /admin renders top-level <h1>Files</h1> (only an <h2>Admin</h2> subsection heading distinguishes it) -- previously a distinct <h1>Admin</h1> existed pre-consolidation.",
+        "still_open": true,
+        "relevance_to_6.1.5": "The e2e test sidesteps this by only asserting the 'Files' heading path via the Files nav link, not a separate Admin-heading assertion -- so this UX regression remains unexercised and unresolved by 6.1.5, low severity."
+      },
+      {
+        "source": "6.1.4 (run 018-verification)",
+        "finding": "ui/src/api/mockClient.ts has accumulated fully dead exports (fetchQueryResult, fetchGraphNeighbors, fetchFilesCatalog, fetchAdminStats) with no callers.",
+        "still_open": true,
+        "relevance_to_6.1.5": "Unaffected by and unrelated to 6.1.5; a small cleanup item for a future subtask/refactor pass."
+      },
+      {
+        "source": "6.1.2 (run 014-verification)",
+        "finding": "QueryView.test.tsx does not exercise the loading state, zero-citations branch, or genuine fetch rejection.",
+        "still_open": true,
+        "relevance_to_6.1.5": "Component-level gap, not e2e; unaffected by this subtask."
+      }
+    ],
+    "recommendation": "PASS issue #30 as functionally complete for its stated scope. Open a new follow-up issue (e.g. under milestone 'Phase 6' or a new backend-integration milestone) to: (a) implement real Go handlers for /graph, /files, /admin and reconcile the UI-invented wire contracts against them; (b) add a catch-all 404 route + test; (c) restore a distinct heading for /admin; (d) prune dead mockClient.ts exports. None of these block 6.1.5's or issue #30's closure."
+  },
+  "findings": [
+    {
+      "id": "F-6.1.5-1",
+      "severity": "info",
+      "category": "test-coverage",
+      "blocking": false,
+      "finding": "e2e smoke test only navigates via the 'Files' nav link; it never independently clicks the 'Admin' nav link even though /admin is a distinct route rendering the same component. Acceptable given 6.1.4's consolidation decision (both routes render FilesAdminView, and admin-result/admin-error are exercised via the /files navigation), but a one-line comment explaining this would improve maintainability.",
+      "recommendation": "Optional: add inline comment in smoke.spec.ts noting why a separate Admin nav click is not also exercised."
+    },
+    {
+      "id": "F-6.1.5-2",
+      "severity": "info",
+      "category": "regression-carryforward",
+      "blocking": false,
+      "finding": "Carried forward and reconfirmed still-open: no real Go HTTP handlers exist for /graph, /files, /admin, and /query itself still returns 500 via notImplementedPipeline (see issue #25 findings F-4.6.1-1, F-4.6.2-2). The entire ui/ dashboard, including this e2e smoke test, has only ever been exercised against mocked network responses.",
+      "recommendation": "Track under a dedicated backend-integration follow-up issue; not a blocker for issue #30's closure per its own acceptance criteria wording."
+    }
+  ]
+}

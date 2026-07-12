@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "run_id": "024-verification",
+  "subtask": "6.2.2",
+  "issue": 31,
+  "commit": "6d63d8574c71636d23eed5cd06a8f2390d16f93b",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Independently rebuilt and ran the full compose stack (docker compose build; up -d) and re-ran deploy/smoke-test.sh unmodified. All acceptance criteria and test spec items were reproduced live, not taken on the implementer's self-report. One non-blocking config-fragility comment and one carried-over hardening comment were found; neither blocks this subtask's local/demo acceptance bar.",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "pass",
+      "evidence": "Single command (`docker compose up -d --build` from deploy/) brought up all four services (engine, api, agents, ui) on shared bridge network `hivemind`. `docker compose ps` and per-container `State.Health.Status` all showed healthy. curl http://localhost:8080/health -> 200 'ok'. curl http://localhost:8081/ -> 200 with real built SPA HTML (hashed asset filename index-De4iLhEj.js, <div id=\"root\">), i.e. UI can reach api/ gateway via the nginx /health proxy, satisfying 'UI can successfully reach the api/ gateway'."
+    },
+    "architecture_conformance": {
+      "status": "pass",
+      "evidence": "docs/HLD.md section 2/3 diagram: Client/UI -> API Gateway -> gRPC -> engine, and -> gRPC -> agents -> LLM provider layer. deploy/docker-compose.yml wires exactly this topology (ui depends_on api; api/agents depends_on engine; QUERY_PIPELINE_ADDR=agents:50052 on api; LLM_PROVIDER default ollama on agents). api's depends_on:engine is presently unused by api/main.go (confirmed by reading api/main.go -- only QUERY_PIPELINE_ADDR is dialed) but this is forward-looking per HLD's documented eventual /ingest,/graph,/files,/admin routes, not a contradiction."
+    },
+    "regression_risk": {
+      "status": "pass",
+      "evidence": "Ran deploy/smoke-test.sh for real: exit 0, clean `docker compose down -v` teardown (trap-based), verified via `docker ps -a --filter name=deploy-` and `docker network ls` afterward -- zero leftover containers/networks. All four Dockerfiles' HEALTHCHECK instructions (previously added in 6.2.1, confirmed present via grep) are what compose's service_healthy gating actually depends on, and they fired correctly."
+    },
+    "edge_cases": {
+      "status": "pass_with_comments",
+      "evidence": "Directly tested the claimed nginx error_page 405 => @spa_shell trick: GET :8081/query -> 200 SPA shell HTML; POST :8081/query with a valid JSON body ({\"query\":...}) -> forwarded through to api, which forwarded to agents over gRPC (confirmed by 500 response body citing an Ollama connection-refused exception raised inside the Python pipeline, and by agents' container logs, i.e. the request demonstrably reached agents' application code, not just a dial failure). This is the disclosed, non-blocking environment gap called out in item 9 of the task (no real Ollama daemon in this sandbox), not a wiring defect. One latent looseness: `location /query` is a prefix match rather than an exact match, so other paths starting with '/query' also get proxied to api instead of falling through to the SPA catch-all -- currently harmless (degrades to a 404 from api) but worth tightening if more routes are added later."
+    },
+    "security": {
+      "status": "pass_with_comments",
+      "evidence": "grep for secret-shaped values (sk-, AIza, ghp_, xox, inline api_key=...) across deploy/.env.example and deploy/docker-compose.yml found nothing; both files only reference variable names via ${VAR} substitution or empty defaults. Root .gitignore has `.env`/`.env.*` with a `!*.env.example` carve-out, confirmed by reading .gitignore directly. Carried-over comment: none of the four Dockerfiles' final stages (including the new ui.Dockerfile/nginx) set a non-root USER; fine for local/demo, should be hardened before a real deployment target."
+    },
+    "performance": {
+      "status": "pass",
+      "evidence": "Not a performance-sensitive subtask; all four images built from cache in seconds, all containers reported healthy within ~10-17s of `up -d`, well inside smoke-test.sh's 120s health-wait budget."
+    },
+    "maintainability": {
+      "status": "pass",
+      "evidence": "docker-compose.yml, ui.Dockerfile, nginx.conf, .env.example, and smoke-test.sh all carry clear, accurate header comments explaining the design decisions (in particular the /query GET-vs-POST collision reasoning), and those comments were independently confirmed to match actual runtime behavior rather than being aspirational."
+    },
+    "test_coverage": {
+      "status": "pass",
+      "evidence": "deploy/smoke-test.sh matches the subtask's test spec verbatim (compose up, poll health, curl api /health, load ui root, teardown) and was executed for real in this verification pass with exit code 0, not merely reviewed."
+    },
+    "confidence": {
+      "status": "high",
+      "evidence": "Every acceptance-criteria and test-spec claim in the commit message and requirement was independently reproduced by actually running docker compose, curling live containers, and reading the agents/api container logs for the /query POST trace -- nothing here was taken on trust from the implementer's self-report."
+    },
+    "possible_improvements": [
+      "Tighten `location /query` in deploy/nginx.conf to an exact match (`location = /query`) now that only that single path is intentionally proxied, to avoid accidentally forwarding /query* paths to api.",
+      "Add a non-root USER to ui.Dockerfile's nginx final stage (and the other three Dockerfiles, per 022-verification's carried-over finding) before any real deployment target.",
+      "Consider a Go httptest-based unit test asserting the 405-vs-SPA-shell contract at the api layer (not nginx) so the /query method-handling behavior is regression-tested outside of a full docker-compose run."
+    ]
+  },
+  "reproduction_log": [
+    "cd deploy && docker compose build (all four images built/cached)",
+    "docker compose up -d; docker compose ps -> all four services healthy",
+    "curl -i http://localhost:8080/health -> 200 'ok'",
+    "curl -i http://localhost:8081/health -> 200 'ok' (via nginx proxy)",
+    "curl http://localhost:8081/ -> real built SPA HTML (329 bytes, hashed JS asset)",
+    "curl -X GET http://localhost:8080/query -> 405 (direct to api)",
+    "curl -X GET http://localhost:8081/query -> 200 SPA shell (via nginx error_page 405 trick)",
+    "curl -X POST http://localhost:8081/query -d '{\"query\":\"what is hivemind\"}' -> 500, body cites Ollama connection-refused from inside agents' pipeline; agents container logs confirm request reached agents",
+    "docker compose down -v; docker ps -a / docker network ls -> no orphans",
+    "chmod +x deploy/smoke-test.sh && ./deploy/smoke-test.sh -> exit 0, clean teardown",
+    "grep for secret-shaped strings in deploy/.env.example and deploy/docker-compose.yml -> none found",
+    "Read docs/HLD.md sections 2-3 -> compose topology matches documented architecture"
+  ]
+}

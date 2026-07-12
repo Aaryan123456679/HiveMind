@@ -1,0 +1,27 @@
+{
+  "subtask": "6.1.5",
+  "checks": [
+    {
+      "check": "npm test (vitest, existing unit/component suite)",
+      "result": "pass",
+      "detail": "4 test files, 20 tests passed (App.test.tsx, QueryView.test.tsx, GraphView.test.tsx, FilesAdminView.test.tsx). Unaffected by this subtask's changes; vitest.config.ts's test.exclude was extended with '**/e2e/**' so Playwright specs are not picked up by vitest (initial run without the exclude failed with 'Playwright Test did not expect test.describe() to be called here' -- fixed before this result)."
+    },
+    {
+      "check": "npm run build (tsc -b && vite build)",
+      "result": "pass",
+      "detail": "TypeScript project build and Vite production build both succeeded; dist/ output produced with no type errors."
+    },
+    {
+      "check": "npx playwright install chromium",
+      "result": "pass",
+      "detail": "Chromium binaries were already present in ~/Library/Caches/ms-playwright (chromium-1223, chromium-1228, chromium_headless_shell, ffmpeg) -- install completed with exit code 0 and no download errors. Confirms browser binary install/launch is NOT blocked in this sandbox."
+    },
+    {
+      "check": "npx playwright test (ui/e2e/smoke.spec.ts, real chromium browser + real Vite dev server + network-level backend mocks)",
+      "result": "pass",
+      "detail": "The e2e test was ACTUALLY EXECUTED (not just statically validated) and passed twice consecutively: '1 passed (2.0s)' and '1 passed (1.7s)'. Playwright's own webServer auto-started `npm run dev -- --port 5173 --strictPort` and tore it down after the run. One environment-specific issue was found and fixed during this step: the dev server in this sandbox only accepts connections on `http://localhost:5173`, not `http://127.0.0.1:5173` (curl to 127.0.0.1 returned nothing while curl to localhost returned HTTP 200) -- playwright.config.ts's baseURL and webServer.url were changed from 127.0.0.1 to localhost to work around this sandbox-specific loopback-binding quirk before the test could run at all."
+    }
+  ],
+  "honest_disclosure": "The e2e test genuinely ran end-to-end in a real Chromium browser against a real Vite dev server in this sandbox, and genuinely passed on two separate runs. This was not a dry-run or type-check-only validation -- Playwright's test runner output ('1 passed') is a real execution result. The only caveat is a sandbox-local networking quirk (127.0.0.1 vs localhost loopback binding) that required a one-line config fix before the webServer could be reached at all; this is disclosed here rather than silently worked around.",
+  "matrix_coverage": "All validation-matrix.json clauses are covered by the single test in smoke.spec.ts, which passed."
+}

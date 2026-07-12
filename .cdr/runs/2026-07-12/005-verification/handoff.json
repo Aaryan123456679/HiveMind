@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "run_id": "005-verification",
+  "subtask": "5.4.1",
+  "issue": 29,
+  "commit": "86a1a4f66f927c55ba51291bea2587c2efdc6aed",
+  "verdict": "PASS_WITH_COMMENTS",
+  "verification_json": ".cdr/runs/2026-07-12/005-verification/verification.json",
+  "regression_entries_appended": 3,
+  "regression_index": ".cdr/index/regression.jsonl",
+  "pointers": {
+    "implementation_source": [
+      "agents/eval/traversal_precision.py",
+      "agents/eval/test_traversal_precision_check.py"
+    ],
+    "reused_dependencies": [
+      "agents/eval/metrics.py:83 (precision_at_k)",
+      "agents/eval/metrics.py:135 (score_query)",
+      "agents/eval/metrics.py:196 (score_arm)",
+      "agents/eval/baselines/graphrag_lite.py (EntityGraph, retrieve_documents, DEFAULT_MAX_HOPS)",
+      "agents/eval/ground_truth.py (QueryLabel, RelevantDoc)"
+    ],
+    "core_logic_lines": "agents/eval/traversal_precision.py:71-95 (retrieve_for_expansion_arms, two retrieve_documents calls with different max_hops)",
+    "checkpoint_wrapper_lines": "agents/eval/traversal_precision.py:230-289 (CorpusGrowthCheckpoint, compare_precision_across_checkpoints, checkpoints_with_precision_decrease)",
+    "related_open_issue": "issue #28 subtask 5.3.4 (real corpus-growth-checkpoint wiring, deferred, still open)"
+  },
+  "non_blocking_findings": [
+    "test_checkpoints_with_precision_decrease_filters_correctly does not exercise compare_precision_across_checkpoints with >1 checkpoint in a single call; recommend adding before 5.3.4 depends on it."
+  ],
+  "ended_at": "2026-07-11T19:11:33Z"
+}

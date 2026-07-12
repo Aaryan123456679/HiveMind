@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "run_id": "026-verification",
+  "subtask": "6.2.3",
+  "issue": 31,
+  "commit": "e28006dda19e539132926e9f2fa92ae4aa3a1967",
+  "verdict": "PASS_WITH_COMMENTS",
+  "summary": "Independently re-ran the full kind-cluster validation (not trusting the self-report): built all 4 images fresh from deploy/*.Dockerfile, created a real kind cluster, loaded images, `kubectl apply -f deploy/k8s/`, waited for Ready, curled api /health and ui / via port-forward, then tore the cluster down cleanly. All claims verified as true. Manifests faithfully translate docker-compose.yml's wiring (service names, env vars, health-check semantics -> probes) with no redesign. No secrets present; real-secret file correctly .gitignore'd, .example file correctly tracked. deploy/oci/provision.sh is syntactically valid, non-destructive, contains no embedded credentials, and is prominently and honestly disclosed as unverified against a live OCI account. docs/HLD.md and deploy/README.md updates are accurate and do not overclaim (they correctly distinguish 'locally validated via kind' from 'unverified against live OCI'). Scope discipline confirmed: diff touches only deploy/, docs/HLD.md, .gitignore, and .cdr run artifacts -- no engine/api/agents/ui source changed, no message-queue/architecture change introduced.",
+  "verification_method": "real_execution",
+  "dimensions": {
+    "requirements_conformance": {
+      "status": "PASS",
+      "evidence": "All 5 acceptance-bar items independently confirmed: (1) deploy/k8s/*.yaml present for all 4 services, each 1:1 traceable to the corresponding docker-compose.yml service (verified line-by-line: engine gRPC :50051 no host port, api :8080 QUERY_PIPELINE_ADDR=agents:50052 + PORT=8080, agents :50052 LLM_PROVIDER/ENGINE_GRPC_ADDR/QUERY_SERVER_PORT via ConfigMap matching agents.Dockerfile's baked-in ENV defaults, ui :80 nginx image unchanged). (2) actually applied to a real local kind cluster by this verification agent (cluster name hivemind-cdr): all 4 pods reached 1/1 Ready within ~15s of `kubectl wait --for=condition=Ready`; curl via kubectl port-forward returned api /health='ok' HTTP 200 and ui / returned the real built SPA HTML (`<div id=\"root\">`, hashed asset bundle `/assets/index-De4iLhEj.js`), matching 6.2.2's smoke-test expectations verbatim. (3) no secret values found by grep; agents-secret.example.yaml has empty stringData placeholders only; git check-ignore -v confirms deploy/k8s/agents-secret.yaml (non-example) is ignored by .gitignore's `deploy/k8s/*secret*.yaml` / `!*.example.yaml` pair, while agents-secret.example.yaml itself is correctly NOT ignored (exit code 1) so it stays tracked. (4) deploy/oci/provision.sh passes `bash -n`; script requires all account-specific OCID/SSH vars via `: \"${VAR:?...}\"` guards (fails loudly rather than acting on defaults), contains no hardcoded credentials, does nothing destructive (only instance-launch, ssh, k3s install, kubectl apply against resources the caller owns); the UNVERIFIED-AGAINST-LIVE-OCI banner is prominent in the script header, deploy/oci/README.md, deploy/k8s/README.md, and deploy/README.md's status table -- consistently and honestly disclosed, not silently presented as tested. (5) docs/HLD.md's deploy/ line and deploy/README.md's path table were read in full: both accurately state 'no longer a placeholder' with k8s described as 'locally validated against kind' and OCI as 'unverified against a live OCI account' -- no overclaim of real OCI deployment found anywhere in either file."
+    },
+    "architecture_conformance": {
+      "status": "PASS",
+      "evidence": "Compose->k8s service-name DNS mapping confirmed correct: k8s Service objects named engine/api/agents/ui exactly match compose's service names, so ENGINE_GRPC_ADDR=engine:50051 (baked into agents.Dockerfile's ENV and redundantly restated in agents-config ConfigMap) and QUERY_PIPELINE_ADDR=agents:50052 (set explicitly in api-deployment.yaml env) resolve identically under both Compose's embedded DNS and Kubernetes' in-cluster DNS. HEALTHCHECK->probe translation is faithful: engine/agents (gRPC-only, no HTTP) get tcpSocket probes matching their Dockerfiles' nc/socket-based HEALTHCHECKs; api/ui get httpGet probes against the same /health and / routes their wget-based HEALTHCHECKs hit. No message-queue or other new architecture component introduced; git diff-tree confirms only deploy/, docs/HLD.md, .gitignore, and .cdr/ run-artifact files changed -- zero touches to engine/, api/, agents/, ui/ source."
+    },
+    "regression_risk": {
+      "status": "PASS",
+      "evidence": "Purely additive: new deploy/k8s/ and deploy/oci/ directories plus doc/gitignore edits. Does not modify or remove deploy/docker-compose.yml or any of 6.2.1/6.2.2's existing working paths -- re-verified those files are untouched by this commit's diff. No risk to the existing compose demo."
+    },
+    "edge_cases": {
+      "status": "PASS_WITH_COMMENTS",
+      "evidence": "Correctly handled: `kubectl apply -f deploy/k8s/` sweeps the whole directory including agents-secret.example.yaml (kubectl does not respect the '.example' naming convention, only the .yaml extension), which creates a real (empty-valued) Secret object every time -- this is intentional and documented (mirrors compose's ${VAR:-} blank-default), and was independently confirmed by this agent's own `kubectl apply` run (`secret/agents-secret created`). One documented, disclosed gap not yet covered: no OCI security-list/firewall guidance for opening the NodePort if a user switches ui's Service type to NodePort per the README's own suggestion -- deploy/oci/README.md does flag this as a follow-up ('not handled by this script') so it's a disclosed limitation, not a silent gap."
+    },
+    "security": {
+      "status": "PASS_WITH_COMMENTS",
+      "evidence": "No secret values found in deploy/k8s/ or deploy/oci/ (grep for API key/token/password patterns turned up only placeholder empty strings and doc references). Real-secret file correctly .gitignore'd; verified directly with `git check-ignore -v`. provision.sh requires the caller's own OCI credentials via environment variables, never embeds any. Carried-over low-severity item (same as 024-verification's finding for the Dockerfiles): none of the k8s manifests set a non-root `securityContext`, readOnlyRootFilesystem, or resource requests/limits -- acceptable for this subtask's local-kind-validation bar per the resolved scope, but should be hardened before any real OCI/production deployment. Not blocking."
+    },
+    "performance": {
+      "status": "PASS",
+      "evidence": "Single-replica Deployments matching compose's single-instance-per-service topology; no unnecessary resource contention observed -- all 4 pods reached Ready within ~15s during this agent's own run, consistent with the commit's claimed ~20s."
+    },
+    "maintainability": {
+      "status": "PASS",
+      "evidence": "Plain Kubernetes YAML (no Helm/Kustomize) is appropriately right-sized for 4 small services per the user-confirmed resolved scope. Files are well-commented with clear cross-references to docker-compose.yml and the Dockerfiles they translate. deploy/k8s/README.md, deploy/oci/README.md, and deploy/README.md form a coherent, non-contradictory documentation set; each README's 'what was actually verified vs not' section is unusually precise and honest."
+    },
+    "test_coverage": {
+      "status": "PASS",
+      "evidence": "This agent independently reproduced the full validation loop end-to-end (build 4 images -> kind create -> kind load -> kubectl apply -> kubectl wait Ready -> port-forward -> curl /health and / -> kind delete), not merely trusting self-consistency.json's claims. Results matched the commit's claims exactly (pod names differ trivially as expected across separate runs). `bash -n deploy/oci/provision.sh` re-run and confirmed passing."
+    },
+    "confidence": {
+      "status": "HIGH",
+      "evidence": "Verification was performed via real command execution (kind/docker/kubectl all available and used), not documentation review alone, for every acceptance-bar item that is testable in this sandbox. The one item that is not testable here (real OCI account) is explicitly out of scope for failing this subtask per the user's resolved-scope framing, and was independently confirmed to be honestly disclosed rather than silently glossed over."
+    },
+    "possible_improvements": {
+      "status": "non_blocking",
+      "evidence": "1) Consider a `.gitignore`-style guard or a Makefile/README callout to NOT blanket `kubectl apply -f deploy/k8s/` in a real deployment once a real agents-secret.yaml exists alongside the .example file (glob ordering could apply either first depending on `kubectl`'s directory read order, though today only one secret-shaped file is ever present at a time in practice). 2) Add resource requests/limits and a non-root securityContext before any real (non-kind) deployment. 3) deploy/oci/README.md could additionally mention that the free-tier ARM shape allocation is capacity-constrained/region-dependent in practice (OCI's free ARM shapes are frequently out of capacity in busy regions) -- not a defect, just a heads-up worth a line."
+    }
+  },
+  "blocking_findings": [],
+  "non_blocking_findings_count": 3,
+  "verification_paths_used": {
+    "actual_kind_cluster": true,
+    "kind_or_k3d_available": true,
+    "dry_run_fallback_used": false
+  },
+  "issue_31_status": "All three subtasks (6.2.1 Dockerfiles, 6.2.2 docker-compose demo, 6.2.3 k8s manifests + OCI provisioning) have now independently verified as PASS or PASS_WITH_COMMENTS. Issue #31 can be considered closed pending final sign-off.",
+  "ended_at": "2026-07-12T00:00:00Z"
+}
