@@ -1,0 +1,52 @@
+{
+  "subtask": "6.2.1",
+  "issue": 31,
+  "risk_level": "low",
+  "greenfield": true,
+  "existing_files_modified": [
+    {
+      "path": "api/routes/query.go",
+      "change": "add GET /health route to RegisterRoutes, returning 200 text/plain \"ok\"",
+      "reason": "acceptance criteria requires container to respond to a basic health check; api/ has no existing HTTP health endpoint (grep confirmed no matches); issue #31 subtask 6.2.2's own test spec references 'curl api/ health route' as an expected prerequisite feature",
+      "risk": "low - additive-only, one new mux.HandleFunc line + one new handler function, does not touch /query"
+    }
+  ],
+  "existing_files_NOT_modified": [
+    {
+      "path": "engine/cmd/smokeserver/main.go",
+      "reason": "used as-is as the engine service entrypoint (only main package under engine/); no grpc health service added (see architecture-discovery.md health-check decision) to avoid RPC-surface scope creep"
+    },
+    {
+      "path": "agents/query/server.py",
+      "reason": "used as-is as the agents service entrypoint (python -m query.server); no grpcio-health-checking dependency added (not in uv.lock, cannot resolve new PyPI dep without network uv lock run)"
+    }
+  ],
+  "new_files": [
+    "deploy/engine.Dockerfile",
+    "deploy/api.Dockerfile",
+    "deploy/agents.Dockerfile"
+  ],
+  "pre_existing_deploy_dir": {
+    "existed_before": true,
+    "prior_contents": ["deploy/README.md"],
+    "note": "deploy/ directory already existed (README.md only, no Dockerfiles) -- not a brand new top-level directory, just missing the Dockerfiles this subtask adds"
+  },
+  "module_boundary_findings": [
+    {
+      "finding": "engine and api are SEPARATE go.mod modules joined only via go.work at repo root",
+      "impact": "api's Dockerfile build context must be the repo root (not api/ alone) because api/main.go imports github.com/Aaryan123456679/HiveMind/engine/rpc/gen; the Dockerfile COPYs go.work + go.work.sum + both api/ and engine/ trees so `go build` resolves the local workspace instead of trying to fetch engine as a remote module",
+      "engine_dockerfile_context": "also repo root, for consistency and because it needs proto/ generated code under engine/rpc/gen which lives inside engine/ itself (no cross-module need, but same repo-root context keeps both Dockerfiles' COPY paths uniform and simple)"
+    },
+    {
+      "finding": "agents/ requires no system-level compiler deps (no protoc/protobuf-compiler apt package needed) at RUNTIME",
+      "impact": "protobuf>=6.33.5,<7.0.0 and grpcio 1.82.1 both ship manylinux wheels for python:3.11-slim (linux/amd64 and arm64); grpcio-tools (the codegen tool requiring more build tooling) is a dev/codegen-time-only dependency, not needed for the container to RUN query.server, so agents.Dockerfile installs the full pyproject.toml dependency set (uv pip install / pip install .) without extra apt-get build-essential -- kept minimal per the .venv precedent noted in prior benchmark work (protobuf version must stay >= the gencode baked into committed hivemind_pb2*.py stubs, currently 6.33.5, to avoid VersionError at import; the pyproject.toml pin already enforces this at install time)"
+    }
+  ],
+  "acceptance_criteria_coverage_risk": [
+    {
+      "risk": "engine and agents are gRPC-only (no HTTP), so a curl-based health check is not directly applicable",
+      "mitigation": "documented explicitly in architecture-discovery.md; HEALTHCHECK uses a dependency-free TCP-connect script (busybox nc for engine's alpine-based image, python socket.create_connection for agents) rather than silently omitting a health check or silently skipping the acceptance criterion"
+    }
+  ],
+  "rollback": "revert new deploy/*.Dockerfile files and the single additive api/routes/query.go health route; no other code paths touched"
+}

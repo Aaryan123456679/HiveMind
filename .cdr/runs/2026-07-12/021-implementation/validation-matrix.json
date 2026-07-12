@@ -1,0 +1,50 @@
+{
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "text": "engine service: docker build succeeds via Dockerfile",
+      "check": "docker build -f deploy/engine.Dockerfile -t hivemind-engine:cdr-6.2.1 .",
+      "expected": "exit code 0, image produced"
+    },
+    {
+      "id": "AC-2",
+      "text": "engine service: container starts and responds to a basic health check",
+      "check": "docker run -d --name hivemind-engine-check -p 15051:50051 hivemind-engine:cdr-6.2.1 ; then run the image's own HEALTHCHECK equivalent from host: nc -z 127.0.0.1 15051 (or docker inspect --format='{{.State.Health.Status}}' after HEALTHCHECK interval elapses)",
+      "expected": "container State.Status=running, TCP connect to 50051 succeeds, log line 'LISTENING 0.0.0.0:50051' present in docker logs"
+    },
+    {
+      "id": "AC-3",
+      "text": "api service: docker build succeeds via Dockerfile",
+      "check": "docker build -f deploy/api.Dockerfile -t hivemind-api:cdr-6.2.1 .",
+      "expected": "exit code 0, image produced"
+    },
+    {
+      "id": "AC-4",
+      "text": "api service: container starts and responds to a basic health check",
+      "check": "docker run -d --name hivemind-api-check -p 18080:8080 hivemind-api:cdr-6.2.1 ; curl -sf http://127.0.0.1:18080/health",
+      "expected": "HTTP 200, body 'ok'"
+    },
+    {
+      "id": "AC-5",
+      "text": "agents service: docker build succeeds via Dockerfile",
+      "check": "docker build -f deploy/agents.Dockerfile -t hivemind-agents:cdr-6.2.1 .",
+      "expected": "exit code 0, image produced"
+    },
+    {
+      "id": "AC-6",
+      "text": "agents service: container starts and responds to a basic health check",
+      "check": "docker run -d --name hivemind-agents-check -p 15052:50052 hivemind-agents:cdr-6.2.1 ; python3 -c \"import socket; socket.create_connection(('127.0.0.1', 15052), timeout=3)\" from host, or docker exec ... the image's own HEALTHCHECK command",
+      "expected": "TCP connect succeeds if server.py's serve() reaches server.start() before the LLM client construction step blocks/fails; if create_llm_client() raises before binding the port (no LLM_PROVIDER configured), this is disclosed explicitly in self-consistency.json rather than silently reported as passing"
+    }
+  ],
+  "test_spec_mapping": [
+    {
+      "test_spec_item": "docker build succeeds for each Dockerfile",
+      "covered_by": ["AC-1", "AC-3", "AC-5"]
+    },
+    {
+      "test_spec_item": "docker run + basic health-check curl/script confirms service starts",
+      "covered_by": ["AC-2", "AC-4", "AC-6"]
+    }
+  ]
+}

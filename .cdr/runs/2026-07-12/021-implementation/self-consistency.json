@@ -1,0 +1,41 @@
+{
+  "docker_available": true,
+  "docker_version": "Docker version 28.0.4, build b8034c0 (Docker Desktop for Mac, started via `open -a Docker` at the start of this run)",
+  "note": "Real `docker build` and `docker run` were actually executed in this environment (not merely reviewed statically). Full commands and output are in this run's shell history; summarized results below are genuine, not assumed.",
+  "results": [
+    {
+      "service": "engine",
+      "build": {"cmd": "docker build -f deploy/engine.Dockerfile -t hivemind-engine:cdr-6.2.1 .", "result": "SUCCESS", "image_size": "23.7MB"},
+      "run": {"cmd": "docker run -d --name hivemind-engine-check -p 15051:50051 hivemind-engine:cdr-6.2.1", "result": "SUCCESS", "logs": "LISTENING [::]:50051", "state_status": "running"},
+      "health_check": {"docker_healthcheck_status": "healthy (nc -z 127.0.0.1 50051 inside container)", "external_check": "nc -z 127.0.0.1 15051 -> Connection succeeded", "result": "PASS"}
+    },
+    {
+      "service": "api",
+      "build": {"cmd": "docker build -f deploy/api.Dockerfile -t hivemind-api:cdr-6.2.1 .", "result": "SUCCESS", "image_size": "25.4MB"},
+      "run": {"cmd": "docker run -d --name hivemind-api-check -p 18080:8080 hivemind-api:cdr-6.2.1", "result": "SUCCESS", "logs": "api gateway listening on :8080", "state_status": "running"},
+      "health_check": {"cmd": "curl -sf -i http://127.0.0.1:18080/health", "response": "HTTP/1.1 200 OK, body: ok", "docker_healthcheck_status": "healthy", "result": "PASS"}
+    },
+    {
+      "service": "agents",
+      "build": {"cmd": "docker build -f deploy/agents.Dockerfile -t hivemind-agents:cdr-6.2.1 .", "result": "SUCCESS", "image_size": "501MB"},
+      "run_unconfigured": {
+        "cmd": "docker run -d --name hivemind-agents-check -p 15052:50052 hivemind-agents:cdr-6.2.1 (no LLM_PROVIDER env var)",
+        "result": "CONTAINER EXITED (exit code 1)",
+        "logs": "llm.factory.LLMFactoryError: No LLM provider configured: pass provider= explicitly or set the LLM_PROVIDER environment variable to one of ('ollama', 'openrouter', 'gemini').",
+        "disclosure": "query.server's serve() constructs the LLM client (via llm.factory.create_llm_client()) BEFORE binding the gRPC port. With zero configuration this exits before ever listening, so a bare `docker run` with no env vars does NOT pass a health check. This is disclosed here rather than hidden."
+      },
+      "run_configured": {
+        "cmd": "docker run -d --name hivemind-agents-check -p 15052:50052 -e LLM_PROVIDER=ollama hivemind-agents:cdr-6.2.1",
+        "result": "SUCCESS",
+        "logs": "LISTENING 50052",
+        "state_status": "running",
+        "rationale": "LLM_PROVIDER=ollama constructs an OllamaClient pointed at a default local Ollama base URL without requiring an API key at construction time (unlike openrouter/gemini) -- this is the minimal env config that lets the container actually start listening, used purely to exercise the health check path, not a claim that a real Ollama backend is reachable from inside this container."
+      },
+      "health_check": {"docker_healthcheck_status": "healthy (python3 socket.create_connection to 127.0.0.1:50052 inside container)", "external_check": "nc -z 127.0.0.1 15052 -> Connection succeeded", "result": "PASS (with LLM_PROVIDER=ollama set)"}
+    }
+  ],
+  "build_matches_matrix": true,
+  "go_tests_run": {"cmd": "cd api && go test ./...", "result": "ok (api/queryclient, api/routes both pass; confirms the added /health route did not break existing api/routes tests)"},
+  "cleanup": "all *-check containers removed after verification (docker rm -f); built images (hivemind-engine/api/agents:cdr-6.2.1) left in local docker image cache, not pushed anywhere",
+  "self_consistency_only": "This is internal sanity-checking only, per invariant I4 -- NOT the adversarial verification step. A separate /cdr:verify agent must independently re-run and adversarially review this work."
+}

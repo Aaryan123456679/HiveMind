@@ -89,8 +89,20 @@ func NewQueryHandler(pipeline QueryPipeline) http.HandlerFunc {
 	}
 }
 
+// HealthHandler is a basic liveness check for the api/ gateway process itself: it does not
+// probe downstream dependencies (the engine gRPC server or the agents/ query service) --
+// it only confirms the HTTP server is up and accepting requests. Added for GitHub issue #31
+// subtask 6.2.1 (deploy/api.Dockerfile's container HEALTHCHECK curls this route) and relied
+// on by subtask 6.2.2's compose smoke check ("curl api/ health route").
+func HealthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
 // RegisterRoutes registers every route this package implements onto mux, backed by pipeline.
 // Called from api/main.go's server setup.
 func RegisterRoutes(mux *http.ServeMux, pipeline QueryPipeline) {
 	mux.HandleFunc("/query", NewQueryHandler(pipeline))
+	mux.HandleFunc("/health", HealthHandler)
 }

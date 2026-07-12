@@ -1,0 +1,48 @@
+{
+  "subtask": "6.2.1",
+  "issue": 31,
+  "milestone": 8,
+  "for_verification_agent": {
+    "acceptance_criteria": "Three services (engine, api, agents) each build a working container image via Dockerfile; container starts and responds to a basic health check.",
+    "test_spec": "docker build succeeds for each Dockerfile; docker run + basic health-check curl/script confirms service starts.",
+    "new_files": [
+      "deploy/engine.Dockerfile",
+      "deploy/api.Dockerfile",
+      "deploy/agents.Dockerfile"
+    ],
+    "modified_files": [
+      {
+        "path": "api/routes/query.go",
+        "change": "added HealthHandler + GET /health registration in RegisterRoutes",
+        "line_ranges": "new HealthHandler function immediately before RegisterRoutes (near end of file, ~line 92-105); RegisterRoutes gained one new mux.HandleFunc line"
+      }
+    ],
+    "build_contexts": {
+      "engine": "repo root; docker build -f deploy/engine.Dockerfile -t hivemind-engine .",
+      "api": "repo root (needs engine/rpc/gen cross-module import + go.work/go.work.sum); docker build -f deploy/api.Dockerfile -t hivemind-api .",
+      "agents": "repo root; docker build -f deploy/agents.Dockerfile -t hivemind-agents ."
+    },
+    "health_check_mechanisms": {
+      "engine": "gRPC-only, no HTTP -- Docker HEALTHCHECK is a dependency-free `nc -z 127.0.0.1 50051` TCP-connect check (busybox nc, no new deps)",
+      "api": "new GET /health HTTP route (api/routes/query.go's HealthHandler) returning 200 'ok'; Docker HEALTHCHECK uses busybox `wget`",
+      "agents": "gRPC-only (agents/query/server.py), no HTTP -- Docker HEALTHCHECK is a dependency-free python3 socket.create_connection TCP-connect check; grpcio-health-checking was deliberately NOT added as a new dependency (not in uv.lock, cannot resolve a new PyPI lock entry without a real network `uv lock` run in this environment)"
+    },
+    "important_caveat_for_agents_service": "agents/query/server.py's serve() constructs the LLM client (llm.factory.create_llm_client()) BEFORE binding the gRPC port. A bare `docker run` of deploy/agents.Dockerfile with NO env vars set will exit(1) immediately with llm.factory.LLMFactoryError ('No LLM provider configured') and NEVER pass a health check. It only starts listening (and then passes the health check) once LLM_PROVIDER is set to one of ollama/openrouter/gemini -- LLM_PROVIDER=ollama was used during self-consistency because OllamaClient's constructor does not require an API key (only openrouter/gemini would additionally need a key env var). This was NOT hidden -- see self-consistency.json's run_unconfigured vs run_configured results. Verification agent should decide whether this behavior (health check requires LLM_PROVIDER to be set) is acceptable for this subtask's scope or whether it should be flagged as a finding (e.g. suggesting docker-compose.yml, subtask 6.2.2, is the natural place to set LLM_PROVIDER as a default env var for local/demo runs)."
+  },
+  "self_consistency_summary": {
+    "docker_build_run_actually_executed": true,
+    "all_three_builds": "SUCCESS (real `docker build`, Docker Desktop daemon started and used in this environment)",
+    "all_three_health_checks_passed": "engine: PASS; api: PASS; agents: PASS ONLY with -e LLM_PROVIDER=ollama (documented above, not hidden)",
+    "full_details": ".cdr/runs/2026-07-12/021-implementation/self-consistency.json"
+  },
+  "docs_pointers": {
+    "hld": "docs/HLD.md:85 (deploy/ line), :92 (pipeline ordering)",
+    "no_existing_lld_for_deploy": true,
+    "deploy_readme": "deploy/README.md (pre-existing, unchanged)"
+  },
+  "not_in_scope_this_subtask": [
+    "deploy/docker-compose.yml (subtask 6.2.2)",
+    "Real deploy target host (subtask 6.2.3, blocked on OQ-3)",
+    "grpc_health_v1 service registration in engine/rpc or agents/query (documented design decision, not silently skipped -- see architecture-discovery.md)"
+  ]
+}
