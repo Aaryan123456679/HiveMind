@@ -1,0 +1,40 @@
+{
+  "subtask": "6.3.1",
+  "rows": [
+    {
+      "requirement": "Reusable harness spins up a configurable number of goroutines",
+      "test": "TestHarnessAggregatesConcurrentSamples (Config.Workers=8)",
+      "status": "covered"
+    },
+    {
+      "requirement": "Collects results via a channel",
+      "test": "harness.go Run() uses an internal chan sample fed by all worker goroutines; exercised by all TestHarness* tests",
+      "status": "covered"
+    },
+    {
+      "requirement": "Produces latency histograms via hdrhistogram",
+      "test": "TestHarnessAggregatesConcurrentSamples asserts Result wraps *hdrhistogram.Histogram and P50/P95/P99 are internally consistent",
+      "status": "covered"
+    },
+    {
+      "requirement": "go test ./engine/loadtest/... -run TestHarness: run a trivial workload through the harness, assert histogram output has expected sample count",
+      "test": "TestHarnessAggregatesConcurrentSamples asserts Result.TotalCount == workers*iterations (800)",
+      "status": "covered"
+    },
+    {
+      "requirement": "Error handling in results (not explicit in issue but needed for reuse by 6.3.4 which asserts no-data-loss)",
+      "test": "TestHarnessRecordsErrors asserts SuccessCount/ErrorCount split correctness",
+      "status": "covered"
+    },
+    {
+      "requirement": "Reusable by 6.3.2/6.3.3/6.3.4 without modification",
+      "test": "Run(cfg Config, work WorkFunc) is target-agnostic (caller supplies work); not directly testable here, confirmed by design review in architecture-discovery.md",
+      "status": "covered_by_design"
+    }
+  ],
+  "out_of_scope_this_run": [
+    "BenchmarkIngestionThroughput (6.3.2)",
+    "TestQueryLatencyUnderLoad (6.3.3)",
+    "TestAutoSplitRaceAtScale (6.3.4)"
+  ]
+}

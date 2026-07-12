@@ -1,0 +1,30 @@
+{
+  "subtask": "6.3.1",
+  "checks": [
+    {
+      "check": "go build ./... (engine module)",
+      "result": "pass"
+    },
+    {
+      "check": "go vet ./... (engine module)",
+      "result": "pass, no issues"
+    },
+    {
+      "check": "go test ./loadtest/... -run TestHarness -v (exact issue test spec)",
+      "result": "pass, 4 tests (TestHarnessAggregatesConcurrentSamples, TestHarnessRecordsErrors, TestHarnessConfigDefaults, TestHarnessNilWorkFunc)"
+    },
+    {
+      "check": "go test ./loadtest/... -race -v",
+      "result": "pass, no race detected"
+    },
+    {
+      "check": "go test ./... (full engine module, all existing packages)",
+      "result": "pass, no regressions in catalog/btree/graph/mvcc/split/wal/rpc/engine root"
+    },
+    {
+      "check": "validation-matrix.json fully covered",
+      "result": "all 6 rows covered or covered_by_design; no gaps"
+    }
+  ],
+  "note": "This is internal sanity only (build green, matrix covered) per invariant I4. It is NOT verification — a separate /cdr:verify pass is required and has not been run by this agent."
+}

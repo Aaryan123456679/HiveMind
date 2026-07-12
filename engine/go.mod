@@ -3,6 +3,7 @@ module github.com/Aaryan123456679/HiveMind/engine
 go 1.26.4
 
 require (
+	github.com/HdrHistogram/hdrhistogram-go v1.3.0
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
 )

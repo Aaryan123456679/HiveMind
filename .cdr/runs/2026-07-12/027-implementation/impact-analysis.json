@@ -1,0 +1,29 @@
+{
+  "subtask": "6.3.1",
+  "new_files": [
+    "engine/loadtest/harness.go",
+    "engine/loadtest/harness_test.go"
+  ],
+  "modified_files": [
+    "engine/go.mod",
+    "engine/go.sum"
+  ],
+  "unmodified_related_files": [
+    "engine/loadtest/doc.go"
+  ],
+  "downstream_consumers_not_touched_this_run": [
+    "engine/loadtest/ingestion_bench_test.go (6.3.2, future)",
+    "engine/loadtest/query_latency_test.go (6.3.3, future)",
+    "engine/loadtest/split_race_scale_test.go (6.3.4, future)"
+  ],
+  "new_dependency": {
+    "module": "github.com/HdrHistogram/hdrhistogram-go",
+    "version": "v1.3.0",
+    "reason": "docs/LLD/eval.md and issue #32 explicitly specify hdrhistogram for latency percentile tracking; no existing dependency provides this."
+  },
+  "blast_radius": "additive only — new package contents in an otherwise-empty scaffold package, plus one new direct module dependency. No existing package's code, exported API, or tests are modified. No production/runtime code path changes (loadtest is a test/benchmark-support module not imported by production servers).",
+  "risk_notes": [
+    "Low risk: engine/loadtest is not imported by engine/cmd or engine/rpc production code, so this change cannot affect production behavior.",
+    "go.mod/go.sum change is additive (new require); go build ./... across the whole engine module will be re-verified after the change."
+  ]
+}
