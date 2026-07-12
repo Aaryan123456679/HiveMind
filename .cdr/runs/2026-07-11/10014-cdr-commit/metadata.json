@@ -1,1 +1,0 @@
-{"schema_version":"1.0","run_id":"10014-cdr-commit","macro":"cdr-commit","macro_version":"1","agent":"cdr-commit","subtask":"5.2.2","git_head":"3b8e8d3d899a431362ff322e086acd5723093180","run_key":"5.2.2-3b8e8d3-cdr-commit","status":"completed","last_completed_step":"commit_doc_and_indexes_written","started_at":"2026-07-11T16:56:18Z","ended_at":"2026-07-11T16:59:00Z"}
