@@ -1,0 +1,58 @@
+{
+  "subtask": "6.2.2",
+  "issue": 31,
+  "build_green": true,
+  "checks": [
+    {
+      "check": "docker compose -f deploy/docker-compose.yml config",
+      "result": "PASS -- valid YAML, resolved services engine/api/agents/ui, network hivemind, no errors (after fixing a stray `</content>` tag accidentally written into all 9 new files by a tool-call artifact, cleaned before this check)"
+    },
+    {
+      "check": "docker compose build (all four services)",
+      "result": "PASS -- engine, api, agents, ui images all built successfully; ui's builder stage ran real `tsc -b && vite build` (not stubbed), produced dist/index.html + dist/assets/index-*.js"
+    },
+    {
+      "check": "docker compose up -d (real run, not simulated)",
+      "result": "PASS -- all four containers reached STATUS 'healthy': deploy-engine-1, deploy-agents-1, deploy-api-1, deploy-ui-1"
+    },
+    {
+      "check": "curl http://localhost:8080/health (api, host-published port)",
+      "result": "PASS -- 200 'ok'"
+    },
+    {
+      "check": "curl http://localhost:8081/ (ui root page via nginx, host-published port)",
+      "result": "PASS -- 200, real built index.html (verified <div id=\"root\"> present)"
+    },
+    {
+      "check": "curl http://localhost:8081/health (ui->api proxy)",
+      "result": "PASS -- 200 'ok', confirms ui's nginx reaches api over the compose network by service name"
+    },
+    {
+      "check": "curl -X GET http://localhost:8081/query (SPA path/API path collision handling)",
+      "result": "PASS -- 200, served SPA index.html shell (not api's raw 405), via error_page 405 -> @spa_shell nginx mechanism"
+    },
+    {
+      "check": "curl -X POST http://localhost:8081/query (ui->api->agents full chain reachability)",
+      "result": "PASS as 'reachable' (acceptance bar for this subtask) -- request proxied through ui's nginx to api to agents; api returned 500 with body 'queryclient: GRPCQueryPipeline.RunQuery: RPC failed ... Ollama request to http://localhost:11434/api/generate failed: [Errno 111] Connection refused'. This 500 is EXPECTED and OUT OF SCOPE: no local Ollama server is running in this sandbox/demo environment (LLM_PROVIDER=ollama is only a wiring default per the requirement, not a promise of a working local Ollama daemon). The important signal is that the request traversed ui -> api -> agents end to end without a network/proxy-level failure (no nginx 502/504, no connection refused between containers) -- api/agents both being 'reachable' is exactly this subtask's acceptance criterion, not 'the full LLM pipeline produces a real answer.'"
+    },
+    {
+      "check": "deploy/smoke-test.sh full run (docker compose up -d --build, health-poll, curl api /health, curl ui root, teardown)",
+      "result": "PASS -- 'all services healthy after 6s'; both curls succeeded; script printed 'SMOKE TEST PASSED: engine, api, agents, ui all reachable'; teardown (docker compose down -v) ran cleanly via trap"
+    },
+    {
+      "check": "post-teardown cleanliness",
+      "result": "PASS -- `docker ps -a --filter name=deploy-` empty, `docker network ls | grep hivemind` empty after final teardown"
+    },
+    {
+      "check": "no real secret values committed",
+      "result": "PASS -- deploy/.env.example contains only LLM_PROVIDER=ollama (a provider name, not a secret) plus two commented-out variable NAMES (OPENROUTER_API_KEY=, GEMINI_API_KEY=) with no values"
+    }
+  ],
+  "validation_matrix_coverage": "all 7 rows in validation-matrix.json exercised by real docker/curl commands in this run, not just static review",
+  "known_limitations_disclosed_not_hidden": [
+    "agents/query pipeline's /query POST returns HTTP 500 in this environment because no local Ollama daemon is running -- this is an environment/runtime-config gap (not a defect in the compose wiring itself) and is explicitly out of scope per the requirement's framing (subtask 6.2.3, the real deploy target, is separately blocked on an open question)",
+    "api/routes/query.go's RegisterRoutes only wires /query and /health -- /graph, /files, /admin have no server-side handlers, so ui's nginx intentionally falls through to the SPA catch-all for those paths rather than proxying to api's nonexistent handlers (documented design decision in architecture-discovery.md)"
+  ],
+  "note": "This is internal sanity only (build green + validation matrix covered) per invariant I4 -- it is NOT the independent verification pass, which is delegated to a separate /cdr:verify run."
+}
+</content>

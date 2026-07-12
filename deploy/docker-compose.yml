@@ -1,0 +1,76 @@
+# deploy/docker-compose.yml -- GitHub issue #31 subtask 6.2.2.
+#
+# Local/demo compose wiring for all four HiveMind services: engine (Go, storage/gRPC),
+# api (Go, HTTP gateway), agents (Python, query pipeline gRPC service), ui (React/Vite,
+# served + reverse-proxied by nginx). See deploy/README.md and this run's
+# architecture-discovery.md (.cdr/runs/2026-07-12/023-implementation/) for the full design
+# reasoning (nginx /query path-collision handling, agents' LLM_PROVIDER requirement, etc).
+#
+# Usage:
+#   cd deploy && docker compose up --build
+#   (or from repo root: docker compose -f deploy/docker-compose.yml up --build)
+#
+# All four Dockerfiles' build `context` is the repo root (`..` relative to this file), NOT
+# `deploy/` itself -- api.Dockerfile in particular needs go.work/go.work.sum at the repo root
+# to resolve the cross-module engine/rpc/gen import (see deploy/api.Dockerfile's own header
+# comment from subtask 6.2.1).
+
+services:
+  engine:
+    build:
+      context: ..
+      dockerfile: deploy/engine.Dockerfile
+    networks:
+      - hivemind
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    depends_on:
+      engine:
+        condition: service_healthy
+    environment:
+      # Wires api's /query route to the real agents/query/server.py gRPC service running in
+      # this compose stack (api/main.go's queryPipeline() dials this address; unset by
+      # default, which would otherwise leave `agents` built/started/healthchecked but never
+      # actually reached by anything else in this stack -- see this run's plan.md).
+      QUERY_PIPELINE_ADDR: agents:50052
+    ports:
+      - "8080:8080"
+    networks:
+      - hivemind
+
+  agents:
+    build:
+      context: ..
+      dockerfile: deploy/agents.Dockerfile
+    depends_on:
+      engine:
+        condition: service_healthy
+    environment:
+      # Demo/local default so `docker compose up` works out of the box with no real API key
+      # (agents/query/server.py's serve() crash-exits before binding its gRPC port without a
+      # configured provider -- see subtask 6.2.1's finding). Override via deploy/.env (see
+      # deploy/.env.example) to point at a real hosted provider instead.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    networks:
+      - hivemind
+
+  ui:
+    build:
+      context: ..
+      dockerfile: deploy/ui.Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8081:80"
+    networks:
+      - hivemind
+
+networks:
+  hivemind:
+    driver: bridge

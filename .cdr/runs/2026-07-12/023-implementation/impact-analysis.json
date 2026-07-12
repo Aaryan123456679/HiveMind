@@ -1,0 +1,47 @@
+{
+  "subtask": "6.2.2",
+  "issue": 31,
+  "new_files": [
+    "deploy/docker-compose.yml",
+    "deploy/ui.Dockerfile",
+    "deploy/nginx.conf",
+    "deploy/.env.example",
+    "deploy/smoke-test.sh"
+  ],
+  "modified_files": [],
+  "unchanged_dependencies": [
+    "deploy/engine.Dockerfile",
+    "deploy/api.Dockerfile",
+    "deploy/agents.Dockerfile",
+    "api/routes/query.go (RegisterRoutes: /query, /health only)",
+    "ui/src/routes/QueryView.tsx, GraphView.tsx, FilesAdminView.tsx (relative fetch paths, unmodified)",
+    "ui/package.json (build script: tsc -b && vite build)"
+  ],
+  "risk_areas": [
+    {
+      "area": "nginx path collision between SPA client route /query (GET) and API route /query (POST)",
+      "mitigation": "if-GET-rewrite-to-index.html inside location /query, else proxy POST to api; documented in architecture-discovery.md"
+    },
+    {
+      "area": "agents container crash-exits without LLM_PROVIDER before health check binds",
+      "mitigation": "compose environment sets LLM_PROVIDER=${LLM_PROVIDER:-ollama} default, carried over from 6.2.1 finding"
+    },
+    {
+      "area": "docker compose up first-run race (dependent services starting before engine/api are healthy)",
+      "mitigation": "depends_on with condition: service_healthy (Compose v2 feature, confirmed v2.34.0 installed)"
+    },
+    {
+      "area": "ui build (tsc -b, strict mode) failing inside Docker build stage",
+      "mitigation": "run actual `docker compose build ui` / `docker compose up` in step 3 to confirm real build success, not just static review"
+    },
+    {
+      "area": "missing deploy/.env should not break docker compose up",
+      "mitigation": "use ${VAR:-default} substitution syntax, not env_file: directive (which errors on missing file)"
+    }
+  ],
+  "no_impact_on": [
+    "engine/, api/, agents/ source code (no changes)",
+    "existing api/routes/query.go handlers (untouched, only consumed via reverse proxy)",
+    "subtask 6.2.3 (real deploy target, separately blocked, untouched)"
+  ]
+}

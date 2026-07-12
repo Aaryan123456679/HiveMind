@@ -1,0 +1,41 @@
+{
+  "subtask": "6.2.2",
+  "issue": 31,
+  "rows": [
+    {
+      "criterion": "single compose command brings up all four services networked together",
+      "test": "docker compose -f deploy/docker-compose.yml up -d --build; docker compose ps shows engine, api, agents, ui all Up (healthy)",
+      "covered_by": "step 6 (manual run) + deploy/smoke-test.sh's health-poll loop"
+    },
+    {
+      "criterion": "UI can successfully reach the api/ gateway",
+      "test": "curl http://localhost:8081/query is NOT the check (that's a GET, rewritten to index.html by design); real check is that ui's nginx proxies /query POST to api -- validated indirectly by api's own /health passing behind the same network + by ui's root page loading (nginx up, network resolves api hostname). A stronger check: curl -X POST http://localhost:8081/query with a JSON body should reach api's handler (even if it returns an error due to QueryPipeline not fully live, an HTTP response from api -- not an nginx 502 -- proves reachability).",
+      "covered_by": "deploy/smoke-test.sh"
+    },
+    {
+      "criterion": "docker compose up + scripted smoke check: curl api/ health route",
+      "test": "curl -fsS http://localhost:8080/health returns 200 \"ok\"",
+      "covered_by": "deploy/smoke-test.sh"
+    },
+    {
+      "criterion": "docker compose up + scripted smoke check: load ui/ root page",
+      "test": "curl -fsS http://localhost:8081/ returns 200 with body containing built index.html markers (<div id=\"root\">)",
+      "covered_by": "deploy/smoke-test.sh"
+    },
+    {
+      "criterion": "agents service does not crash-loop without real API keys (demo/local default)",
+      "test": "LLM_PROVIDER=ollama set via compose default; docker compose ps shows agents Up (healthy), not Restarting",
+      "covered_by": "step 6 manual run"
+    },
+    {
+      "criterion": "no real secret values committed",
+      "test": "deploy/.env.example contains only variable NAMES, no real key values; grep for OPENROUTER_API_KEY=/GEMINI_API_KEY= followed by a non-empty non-placeholder value returns nothing",
+      "covered_by": "manual review of deploy/.env.example content + git diff before commit"
+    },
+    {
+      "criterion": "ui Dockerfile actually builds the real Vite/React app (not a stub)",
+      "test": "docker compose build ui succeeds (tsc -b type-check + vite build both pass inside the builder stage)",
+      "covered_by": "step 6 manual run"
+    }
+  ]
+}

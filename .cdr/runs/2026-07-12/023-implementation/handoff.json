@@ -1,0 +1,51 @@
+{
+  "subtask": "6.2.2",
+  "issue": 31,
+  "milestone": 8,
+  "for_verification_agent": {
+    "acceptance_criteria": "A single compose command brings up all four services (engine, api, agents, ui) networked together, and the UI can successfully reach the api/ gateway.",
+    "test_spec": "docker compose up followed by a scripted smoke check (curl api/ health route, load ui/ root page) confirms all services are reachable.",
+    "new_files": [
+      "deploy/docker-compose.yml",
+      "deploy/ui.Dockerfile",
+      "deploy/nginx.conf",
+      "deploy/.env.example",
+      "deploy/smoke-test.sh"
+    ],
+    "modified_files": [],
+    "how_to_reproduce": {
+      "manual": "cd deploy && docker compose up -d --build ; docker compose ps  (expect all 4 services 'healthy')",
+      "scripted": "./deploy/smoke-test.sh  (brings the stack up, polls health, curls api /health + ui /, tears down; prints 'SMOKE TEST PASSED' on success)"
+    },
+    "ports": {
+      "api": "host 8080 -> container 8080, GET /health -> 200 'ok'",
+      "ui": "host 8081 -> container 80 (nginx), root page + reverse-proxied /health and /query"
+    },
+    "key_design_decisions_to_check": [
+      "deploy/nginx.conf: /query path is proxied to api unconditionally; api's real 405 (GET/non-POST) response is intercepted via `error_page 405 = @spa_shell` and internally rewritten to index.html so react-router's client-side /query view still renders on direct navigation/hard-refresh. Verify this by: curl -X GET http://localhost:8081/query (expect 200, SPA html) vs curl -X POST http://localhost:8081/query (expect proxied to api, non-2xx acceptable if no Ollama daemon is running -- see caveat below).",
+      "deploy/nginx.conf: /graph, /files, /admin deliberately have NO dedicated proxy location (fall through to the SPA catch-all `location / { try_files $uri /index.html; }`) because api/routes/query.go's RegisterRoutes does not implement handlers for those paths yet -- confirmed out of scope in requirement.md.",
+      "deploy/docker-compose.yml: api service gets QUERY_PIPELINE_ADDR=agents:50052 set (not present in api.Dockerfile itself) so api's /query route actually dials the agents service in this compose stack rather than agents being built/started/healthchecked but unused.",
+      "deploy/docker-compose.yml: agents service gets LLM_PROVIDER=${LLM_PROVIDER:-ollama} (default, no env_file directive -- uses plain ${VAR:-default} substitution so a missing deploy/.env does not error).",
+      "depends_on with condition: service_healthy is used at every edge (api/agents depend on engine; ui depends on api) -- Compose v2.34.0 feature, confirmed installed and working in this run."
+    ],
+    "known_caveat_not_a_defect": "POST /query end-to-end (ui -> api -> agents) returns HTTP 500 in this sandbox because no local Ollama daemon is listening on localhost:11434 inside the agents container -- this is an environment/runtime-config gap, not a compose-wiring defect (LLM_PROVIDER=ollama is a wiring default per this subtask's instructions, not a promise of a working local Ollama daemon). The request DOES traverse the full ui->api->agents chain without any nginx/network-level failure (no 502/504, no connection-refused between containers), which is this subtask's actual acceptance bar ('the UI can successfully reach the api/ gateway'). Verification agent should confirm reachability (no proxy/network errors), not a successful LLM answer."
+  },
+  "self_consistency_summary": {
+    "docker_compose_up_actually_executed": true,
+    "all_four_services_healthy": "engine, api, agents, ui all reached STATUS 'healthy' via docker compose ps",
+    "smoke_test_script_actually_run": "PASS -- deploy/smoke-test.sh executed for real, printed 'SMOKE TEST PASSED: engine, api, agents, ui all reachable', teardown via trap ran cleanly",
+    "post_teardown_state": "clean -- no leftover deploy-* containers or hivemind network after final `docker compose down -v`",
+    "full_details": ".cdr/runs/2026-07-12/023-implementation/self-consistency.json"
+  },
+  "docs_pointers": {
+    "hld": "docs/HLD.md:85 (deploy/ line), :92 (pipeline ordering)",
+    "no_existing_lld_for_deploy": true,
+    "run_021_022_context": ".cdr/runs/2026-07-12/021-implementation/ (6.2.1 Dockerfiles), .cdr/runs/2026-07-12/022-verification/ (6.2.1 verification, PASS_WITH_COMMENTS)"
+  },
+  "not_in_scope_this_subtask": [
+    "Implementing api's /graph, /files, /admin Go handlers",
+    "subtask 6.2.3 (real deploy target), separately blocked on an open question",
+    "Getting a real local Ollama daemon (or other real LLM provider) running so /query returns a genuine synthesized answer -- reachability only, per acceptance criteria"
+  ]
+}
+</content>
