@@ -1,0 +1,16 @@
+{
+  "subtask": "6.1.4",
+  "note": "Internal sanity only -- NOT verification (invariant I4). A separate agent adversarially verifies this work.",
+  "commands_run": [
+    { "cwd": "ui/", "command": "npm run build", "result": "pass", "detail": "tsc -b && vite build succeeded, no type errors, 38 modules transformed" },
+    { "cwd": "ui/", "command": "npm test -- --run", "result": "pass", "detail": "4 test files, 20 tests passed (App.test.tsx: 6, FilesAdminView.test.tsx: 6, QueryView.test.tsx: 3, GraphView.test.tsx: 5)" }
+  ],
+  "validation_matrix_coverage": {
+    "AC1": "covered by FilesAdminView.test.tsx 'renders catalog rows and corpus stats...' (3 rows, path+status per row)",
+    "AC2": "covered by same test (admin-file-count, per-status counts)",
+    "AC3": "covered: single test mocks both /files and /admin via one fetch stub, asserts both catalog rows and stats",
+    "AC4": "covered by 'highlights the catalog row matching a ?path= deep link' and 'does not highlight any row when no ?path= is present'",
+    "AC5_regression": "covered: App.test.tsx updated and passing for all 5 routes + redirect",
+    "AC6_loading_error": "error-state checks covered (files-error, admin-error); loading-state testids exist in component (files-loading/admin-loading) but are not asserted in a dedicated test since fetch resolves synchronously-enough in jsdom that reliably catching the loading frame without an artificial delay was not attempted -- same tradeoff QueryView.test.tsx/GraphView.test.tsx make (neither asserts *-loading either)"
+  }
+}

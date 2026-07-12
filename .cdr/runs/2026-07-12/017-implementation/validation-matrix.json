@@ -1,0 +1,48 @@
+{
+  "subtask": "6.1.4",
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "Files/admin view lists catalog entries + ingestion status",
+      "checks": [
+        "FilesAdminView.test.tsx: mock fetch('/files') to resolve 3 entries with distinct statuses (ACTIVE/SPLITTING/REDIRECT); assert 3 elements with data-testid=files-catalog-row render, each containing its path and status text"
+      ]
+    },
+    {
+      "id": "AC2",
+      "description": "Shows basic corpus-level stats: file count, ingestion status summary",
+      "checks": [
+        "FilesAdminView.test.tsx: mock fetch('/admin') to resolve { fileCount: 3, statusCounts: {...} }; assert data-testid=admin-file-count contains '3' and per-status counts render"
+      ]
+    },
+    {
+      "id": "AC3",
+      "description": "Test spec: component test mocking /files and /admin responses, asserting catalog rows and stats render correctly",
+      "checks": [
+        "FilesAdminView.test.tsx stubs global.fetch, routing calls by URL ('/files' vs '/admin') to distinct mock responses, single test asserting both catalog rows and stats render together"
+      ]
+    },
+    {
+      "id": "AC4",
+      "description": "?path= deep link (mirroring GraphView's 6.1.3 convention) surfaces/highlights the catalog row a QueryView citation linked to, closing the prior dead-end",
+      "checks": [
+        "FilesAdminView.test.tsx: render with MemoryRouter initialEntries=['/files?path=docs/foo.md'], mock /files response including that path among entries; assert the matching row carries data-highlighted='true' (and no other row does)",
+        "Manual code check: QueryView.tsx's citation Link target ('/files?path=<encodeURIComponent(citation)>') is unchanged and now resolves to a functional highlight in FilesAdminView, not a dead end"
+      ]
+    },
+    {
+      "id": "AC5 (regression)",
+      "description": "App router test (6.1.1) continues to pass for /files and /admin after consolidation",
+      "checks": [
+        "App.test.tsx: update /files and /admin rows' expected testids to FilesAdminView's real result testids (behind stubbed fetch), all 5 routes + redirect test still pass"
+      ]
+    },
+    {
+      "id": "AC6 (loading/error states)",
+      "description": "Consistent with QueryView/GraphView's idle/loading/error/success convention",
+      "checks": [
+        "FilesAdminView.test.tsx: assert files-loading/admin-loading render before resolution (or immediately-pending fetch promise), and files-error/admin-error render with role=alert on non-ok fetch response"
+      ]
+    }
+  ]
+}

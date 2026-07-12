@@ -1,0 +1,36 @@
+{
+  "subtask": "6.1.4",
+  "issue": 30,
+  "affected_files": {
+    "new": [
+      "ui/src/routes/FilesAdminView.tsx",
+      "ui/src/routes/FilesAdminView.test.tsx"
+    ],
+    "deleted": [
+      "ui/src/routes/FilesView.tsx",
+      "ui/src/routes/AdminView.tsx"
+    ],
+    "modified": [
+      "ui/src/App.tsx",
+      "ui/src/App.test.tsx"
+    ],
+    "unchanged_but_referenced": [
+      "ui/src/routes/QueryView.tsx",
+      "ui/src/routes/GraphView.tsx"
+    ]
+  },
+  "reasoning": {
+    "App.tsx": "Both /files and /admin routes now render the same FilesAdminView component instance instead of FilesView/AdminView; nav links and route paths unchanged (no link rot).",
+    "App.test.tsx": "Router test's per-route assertions for /files and /admin (heading + files-status/admin-status testids sourced from mocked mockClient) no longer apply once FilesAdminView performs real fetch() calls -- mirrors the precedent App.test.tsx's own comment already documents for /query (6.1.2) and /graph (6.1.3).",
+    "mockClient.ts": "Left unmodified, confirmed by checking 71cb1bb/7bb8af4 diffs: fetchQueryResult/fetchGraphNeighbors stubs were left in place (dead but harmless) once QueryView/GraphView started calling fetch() directly, so fetchFilesCatalog/fetchAdminStats are left untouched here for the same precedent -- no import of mockClient remains in FilesAdminView.tsx."
+  },
+  "dependents": {
+    "QueryView.tsx": "Citation links point at /files?path=<encodeURIComponent(citation)> (line 99). Currently a dead end (no ?path= reader on the /files route). This subtask closes it: FilesAdminView reads ?path= via useSearchParams and highlights/scrolls to the matching catalog row.",
+    "GraphView.tsx": "Its own header comment says 'FilesView (6.1.4) does not exist yet, so a future FilesView link can point straight at /graph?path=<path>' -- this subtask's FilesAdminView should link each catalog row to /graph?path=<path> to close that forward-reference too (bonus, not a strict acceptance criterion, but directly implied by the carried-forward context and GraphView's own comment)."
+  },
+  "no_go_handler_yet": {
+    "files": true,
+    "admin": true,
+    "note": "Same situation 6.1.3 found for /graph: api/routes/query.go is the only Go handler; api/main.go's newMux only registers a single /query route. This subtask defines the UI-side contract via a disclosed-choice comment, same convention as GraphView.tsx."
+  }
+}
