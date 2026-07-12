@@ -128,12 +128,16 @@ DEFAULT_CORPUS_DIR = DEFAULT_MANIFEST_PATH.parent
 _FREE_PROVIDERS = frozenset({"ollama"})
 
 #: Local Ollama model used for every non-judge call (retrieval, final-answer generation,
-#: graphrag_lite). `llm.ollama_client.DEFAULT_MODEL` (`llama3.1:8b`) is a much larger model
-#: whose load/swap time under Ollama's single-model-server proxy was observed empirically to
-#: make the transient /api/generate 404 (see ResilientLLMClient) far more likely to outlast the
-#: retry budget. `mistral:latest` was validated as reliably fast and JSON-compliant enough for
-#: this corpus's queries in isolated pre-integration testing.
-_LOCAL_OLLAMA_MODEL = "mistral:latest"
+#: graphrag_lite). `llm.ollama_client.DEFAULT_MODEL` (`llama3.1:8b`, ~4.9GB) is a much larger
+#: model whose load/swap time under Ollama's single-model-server proxy was observed empirically
+#: to make the transient /api/generate 404 (see ResilientLLMClient) far more likely to outlast
+#: the retry budget. `mistral:latest` (~4.1GB resident) fixed that, but repeated live runs on
+#: memory-constrained hardware showed it holding the host at ~95-98% swap utilization for the
+#: full multi-hour run, which three times ended in the OS silently SIGKILL-ing the benchmark
+#: process with no traceback (see `run_live_benchmark`'s live-debugging history). `llama3.2:latest`
+#: (~2.0GB resident, roughly half the footprint) was smoke-tested for clean bare-JSON output and
+#: chosen to keep the run inside available memory for the full checkpoint sweep.
+_LOCAL_OLLAMA_MODEL = "llama3.2:latest"
 
 #: Retry budget for `ResilientLLMClient` -- see constraint (c) in the module docstring.
 _RESILIENT_MAX_ATTEMPTS = 5
