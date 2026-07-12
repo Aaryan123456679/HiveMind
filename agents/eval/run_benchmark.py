@@ -90,6 +90,7 @@ from eval.cost_latency import ArmCostSummary, StageRecord, rollup_cost_per_1000_
 from eval.ground_truth import QueryLabel, build_ground_truth_dataset
 from eval.metrics import ArmScore, score_arm
 from eval.pipeline import generate_final_answer
+from query.synthesizer import SynthesizerError
 from eval.traversal_precision import (
     CorpusGrowthCheckpoint,
     TraversalPrecisionComparison,
@@ -444,16 +445,22 @@ def run_arm_at_checkpoint(
     if judge_config is not None:
         from eval.llm_judge import score_arm_answers  # local import: optional path only
 
-        answers = {
-            query_label.query: generate_final_answer(
-                query_label.query,
-                retrieved_by_query.get(query_label.query, []),
-                corpus,
-                judge_config.final_answer_llm_client,
-                model=judge_config.model,
-            ).answer
-            for query_label in queries
-        }
+        def _final_answer_or_empty(query_label: QueryLabel) -> str:
+            try:
+                return generate_final_answer(
+                    query_label.query,
+                    retrieved_by_query.get(query_label.query, []),
+                    corpus,
+                    judge_config.final_answer_llm_client,
+                    model=judge_config.model,
+                ).answer
+            except SynthesizerError:
+                # The final-answer LLM can still fail to produce parseable JSON after
+                # ResilientLLMClient's retries are exhausted -- score this one query as an
+                # empty answer rather than aborting the whole arm/checkpoint run over it.
+                return ""
+
+        answers = {query_label.query: _final_answer_or_empty(query_label) for query_label in queries}
         judge_results = score_arm_answers(
             arm_name,
             answers,
