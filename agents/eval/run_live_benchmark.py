@@ -317,6 +317,56 @@ class CostCappedInterceptor(LLMInterceptor):
         return intercepted
 
 
+class InterceptedLLMClient(LLMClient):
+    """Routes `complete()` through a shared `CostCappedInterceptor`, so a paid `--llm-provider`
+    non-judge call (retrieval, final-answer generation, graphrag_lite) is cost-tracked and
+    cap-enforced identically to the judge call, under the same `--cost-cap-usd`.
+
+    Deliberately never wrapped in (or wrapping) `ResilientLLMClient`: constraint (d) forbids
+    hiding extra, uncounted retried calls behind a real paid client, so a paid `--llm-provider`
+    run trades away constraint (c)'s bare-JSON retry safety net -- each logical call maps to
+    exactly one billed request, and a malformed completion surfaces as the caller's own
+    `SynthesizerParseError`/`JudgeError`/etc, same as it would for any other paid-provider call.
+    """
+
+    def __init__(
+        self,
+        inner: LLMClient,
+        *,
+        interceptor: CostCappedInterceptor,
+        provider: str,
+        arm: str,
+        stage: str,
+    ) -> None:
+        self._inner = inner
+        self._interceptor = interceptor
+        self._provider = provider
+        self._arm = arm
+        self._stage = stage
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
+        intercepted = self._interceptor.call(
+            self._inner,
+            provider=self._provider,
+            arm=self._arm,
+            stage=self._stage,
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+        return intercepted.text
+
+
 def build_smokeserver_binary(*, engine_dir: Path = _ENGINE_DIR, build_dir: Path | None = None) -> Path:
     """`go build ./cmd/smokeserver` into `build_dir` (a fresh temp dir if not given), returning
     the built binary's path. Mirrors `agents/ingestion/test_e2e_smoke.py`'s
@@ -535,6 +585,7 @@ def _build_judge_config(
     judge_model: str | None,
     cost_cap_usd: float,
     final_answer_llm_client: LLMClient,
+    interceptor: CostCappedInterceptor | None = None,
 ) -> tuple[JudgeConfig, CostCappedInterceptor]:
     """Build the real `JudgeConfig` for one live run.
 
@@ -551,13 +602,20 @@ def _build_judge_config(
     retry (confirmed via a live run). Each client already carries its own correct model from
     construction (`_LOCAL_OLLAMA_MODEL` here, `judge_model` via `judge_kwargs` below), so
     `JudgeConfig.model` is left `None` and both calls fall back to their own client's default.
+
+    `interceptor`: optional, additive -- when the caller has already built a `CostCappedInterceptor`
+    shared with non-judge paid calls (`--llm-provider`, see `InterceptedLLMClient`), pass it here
+    so `--cost-cap-usd` caps *combined* spend across judge and non-judge calls under one running
+    total, rather than two independent caps. Omitted (or `None`), a fresh one is constructed --
+    the original, judge-only behavior, unchanged.
     """
     judge_kwargs: dict[str, object] = {}
     if judge_model is not None:
         judge_kwargs["model"] = judge_model
     judge_llm_client = create_llm_client(provider=judge_provider, **judge_kwargs)
 
-    interceptor = CostCappedInterceptor(cap_usd=cost_cap_usd)
+    if interceptor is None:
+        interceptor = CostCappedInterceptor(cap_usd=cost_cap_usd)
     judge_config = JudgeConfig(
         final_answer_llm_client=final_answer_llm_client,
         judge_llm_client=judge_llm_client,
@@ -604,6 +662,22 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--judge-model", default=None, help="Optional judge model override.")
     parser.add_argument(
+        "--llm-provider",
+        choices=("ollama", "openrouter", "gemini"),
+        default="ollama",
+        help=(
+            "Provider for every non-judge LLM call (retrieval/intent-refinement, final-answer "
+            "generation, graphrag_lite). Defaults to local/free Ollama, wrapped in "
+            "ResilientLLMClient (constraint (c)) -- zero cost, never counted against "
+            "--cost-cap-usd. Any other value routes all three through the SAME "
+            "CostCappedInterceptor used for the judge (never ResilientLLMClient -- see "
+            "constraint (d)), so --cost-cap-usd then caps combined judge + non-judge spend."
+        ),
+    )
+    parser.add_argument(
+        "--llm-model", default=None, help="Optional model override for --llm-provider."
+    )
+    parser.add_argument(
         "--cost-cap-usd",
         type=float,
         default=1.0,
@@ -624,17 +698,53 @@ def main(argv: list[str] | None = None) -> None:
 
     smokeserver_binary = build_smokeserver_binary()
 
-    # Every non-judge LLM call in this run is local/free Ollama, wrapped for resilience against
-    # occasional non-bare-JSON output (constraint (c)) -- never the judge client (constraint (d)).
-    retrieval_llm_client: LLMClient = ResilientLLMClient(
-        create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
-    )
-    final_answer_llm_client: LLMClient = ResilientLLMClient(
-        create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
-    )
-    graphrag_llm_client: LLMClient = ResilientLLMClient(
-        create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
-    )
+    # Single shared interceptor: built first so both non-judge (--llm-provider) and judge
+    # (--judge-provider) paid calls, whichever combination is requested, are cap-enforced
+    # against ONE running total under --cost-cap-usd (see _build_judge_config's interceptor=).
+    interceptor = CostCappedInterceptor(cap_usd=args.cost_cap_usd)
+
+    if args.llm_provider == "ollama":
+        # Default, zero-regression path: every non-judge LLM call in this run is local/free
+        # Ollama, wrapped for resilience against occasional non-bare-JSON output (constraint
+        # (c)) -- never routed through the interceptor, never the judge client (constraint (d)).
+        retrieval_llm_client: LLMClient = ResilientLLMClient(
+            create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
+        )
+        final_answer_llm_client: LLMClient = ResilientLLMClient(
+            create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
+        )
+        graphrag_llm_client: LLMClient = ResilientLLMClient(
+            create_llm_client(provider="ollama", model=_LOCAL_OLLAMA_MODEL)
+        )
+    else:
+        # --llm-provider requests a paid router: every non-judge call is now real spend, so each
+        # client is routed through the SAME shared CostCappedInterceptor used for the judge --
+        # never ResilientLLMClient, which would hide extra, uncounted retried paid calls
+        # (constraint (d)). --cost-cap-usd therefore caps combined judge + non-judge spend.
+        llm_kwargs: dict[str, object] = {}
+        if args.llm_model is not None:
+            llm_kwargs["model"] = args.llm_model
+        retrieval_llm_client = InterceptedLLMClient(
+            create_llm_client(provider=args.llm_provider, **llm_kwargs),
+            interceptor=interceptor,
+            provider=args.llm_provider,
+            arm="hivemind",
+            stage="retrieval",
+        )
+        final_answer_llm_client = InterceptedLLMClient(
+            create_llm_client(provider=args.llm_provider, **llm_kwargs),
+            interceptor=interceptor,
+            provider=args.llm_provider,
+            arm="all",
+            stage="final_answer",
+        )
+        graphrag_llm_client = InterceptedLLMClient(
+            create_llm_client(provider=args.llm_provider, **llm_kwargs),
+            interceptor=interceptor,
+            provider=args.llm_provider,
+            arm="graphrag_lite",
+            stage="retrieval",
+        )
     embed_client = OllamaEmbeddingClient()
 
     hivemind_retriever = LiveHivemindRetriever(
@@ -653,6 +763,7 @@ def main(argv: list[str] | None = None) -> None:
         judge_model=args.judge_model,
         cost_cap_usd=args.cost_cap_usd,
         final_answer_llm_client=final_answer_llm_client,
+        interceptor=interceptor,
     )
 
     try:
@@ -674,13 +785,20 @@ def main(argv: list[str] | None = None) -> None:
     write_benchmark_results(report, results_path)
     write_chart(report.to_json()["rows"], chart_path)
 
+    # report.stage_records' own retrieval/final-answer records always carry provider="ollama"
+    # (run_benchmark.py hardcodes this regardless of the actual client, a pre-existing,
+    # deliberately out-of-scope limitation of that module -- see run_live_benchmark.py's
+    # docstring), so sum_real_cost_usd(report.stage_records) under-counts whenever
+    # --llm-provider is non-Ollama. interceptor.total_cost_usd is the authoritative total: every
+    # paid call this run could make (judge, and -- when --llm-provider is non-Ollama --
+    # retrieval/final-answer/graphrag_lite too) goes through this one shared, cap-enforced
+    # interceptor.
     total_cost_usd = sum_real_cost_usd(report.stage_records)
     print(f"Wrote live benchmark results to {results_path}")
     print(f"Wrote degradation chart to {chart_path}")
     print(
-        f"Real spend this run: ${total_cost_usd:.4f} "
-        f"(interceptor-tracked: ${interceptor.total_cost_usd:.4f}, "
-        f"cap: ${args.cost_cap_usd:.4f})"
+        f"Real spend this run: ${interceptor.total_cost_usd:.4f} "
+        f"(stage-record total: ${total_cost_usd:.4f}, cap: ${args.cost_cap_usd:.4f})"
     )
 
 

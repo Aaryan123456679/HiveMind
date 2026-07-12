@@ -26,6 +26,7 @@ from eval.ground_truth import QueryLabel, RelevantDoc
 from eval.run_live_benchmark import (
     CostCapExceededError,
     CostCappedInterceptor,
+    InterceptedLLMClient,
     LiveHivemindRetriever,
     ResilientLLMClient,
     _build_judge_config,
@@ -244,6 +245,74 @@ def test_cost_capped_interceptor_allows_free_provider_regardless_of_cap():
 
     assert client.call_count == 1
     assert intercepted.record.cost_usd == 0.0
+
+
+# --- InterceptedLLMClient (--llm-provider routing) ------------------------------------------
+
+
+class _CountingPricedClient(LLMClient):
+    """Like `_CountingJudgeClient`, but reports real token usage against a rate-tabled model so
+    `CostCappedInterceptor` can actually price it (paid providers -- unlike Ollama -- raise
+    `LLMInterceptorError` rather than default to `$0.0` when usage is unavailable)."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def complete(self, prompt, *, model=None, temperature=0.0, max_tokens=None, timeout=None):
+        self.call_count += 1
+        return '{"relevance": 5, "correctness": 5, "completeness": 5, "overall": 5}'
+
+    def complete_with_usage(
+        self, prompt, *, model=None, temperature=0.0, max_tokens=None, timeout=None
+    ):
+        text = self.complete(prompt, model=model, temperature=temperature)
+        from llm.client import CompletionResult, TokenUsage
+
+        return CompletionResult(
+            text=text,
+            model="openai/gpt-4o-mini",
+            usage=TokenUsage(prompt_tokens=100, completion_tokens=50),
+        )
+
+
+def test_intercepted_llm_client_routes_through_shared_interceptor():
+    interceptor = CostCappedInterceptor(cap_usd=1.0)
+    inner = _CountingPricedClient()
+    client = InterceptedLLMClient(
+        inner, interceptor=interceptor, provider="openrouter", arm="hivemind", stage="retrieval"
+    )
+
+    result = client.complete("prompt")
+
+    assert result == '{"relevance": 5, "correctness": 5, "completeness": 5, "overall": 5}'
+    assert inner.call_count == 1
+    assert interceptor.total_cost_usd > 0.0
+
+
+def test_intercepted_llm_client_respects_cost_cap():
+    interceptor = CostCappedInterceptor(cap_usd=0.0)
+    inner = _CountingJudgeClient()
+    client = InterceptedLLMClient(
+        inner, interceptor=interceptor, provider="openrouter", arm="hivemind", stage="retrieval"
+    )
+
+    with pytest.raises(CostCapExceededError):
+        client.complete("prompt")
+
+    assert inner.call_count == 0
+
+
+def test_intercepted_llm_client_free_provider_never_capped():
+    interceptor = CostCappedInterceptor(cap_usd=0.0)
+    inner = _CountingJudgeClient()
+    client = InterceptedLLMClient(
+        inner, interceptor=interceptor, provider="ollama", arm="hivemind", stage="retrieval"
+    )
+
+    result = client.complete("prompt")
+
+    assert result == '{"relevance": 5, "correctness": 5, "completeness": 5, "overall": 5}'
+    assert interceptor.total_cost_usd == 0.0
 
 
 # --- sum_real_cost_usd -----------------------------------------------------------------------

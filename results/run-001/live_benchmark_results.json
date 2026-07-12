@@ -1,0 +1,263 @@
+{
+  "checkpoints": [
+    {
+      "label": "20pct",
+      "pct": 20
+    },
+    {
+      "label": "50pct",
+      "pct": 50
+    },
+    {
+      "label": "100pct",
+      "pct": 100
+    }
+  ],
+  "rows": [
+    {
+      "checkpoint_label": "20pct",
+      "checkpoint_pct": 20,
+      "arm": "hivemind",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.06249999999999999,
+      "mean_precision": 0.1875,
+      "query_count": 32,
+      "total_cost_usd": 0.0028503000000000005,
+      "cost_per_1000_queries": 0.08907187500000001,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 2.5034189440775663
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.2592970651458018
+        }
+      ],
+      "mean_judge_overall": 3.593749999999999
+    },
+    {
+      "checkpoint_label": "20pct",
+      "checkpoint_pct": 20,
+      "arm": "vector_rag",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.21875,
+      "mean_precision": 0.13125000000000003,
+      "query_count": 32,
+      "total_cost_usd": 0.003017849999999999,
+      "cost_per_1000_queries": 0.09430781249999996,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 0.050382549525238574
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.2375000428583007
+        }
+      ],
+      "mean_judge_overall": 3.7187499999999987
+    },
+    {
+      "checkpoint_label": "20pct",
+      "checkpoint_pct": 20,
+      "arm": "graphrag_lite",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.1875,
+      "mean_precision": 0.11250000000000002,
+      "query_count": 32,
+      "total_cost_usd": 0.0029765999999999994,
+      "cost_per_1000_queries": 0.09301874999999998,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 1.2885357814084273
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.141812831920106
+        }
+      ],
+      "mean_judge_overall": 3.583333333333333
+    },
+    {
+      "checkpoint_label": "50pct",
+      "checkpoint_pct": 50,
+      "arm": "hivemind",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.14583333333333331,
+      "mean_precision": 0.375,
+      "query_count": 32,
+      "total_cost_usd": 0.0028568999999999995,
+      "cost_per_1000_queries": 0.08927812499999999,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 3.3066174895502627
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.255105509131681
+        }
+      ],
+      "mean_judge_overall": 3.7708333333333326
+    },
+    {
+      "checkpoint_label": "50pct",
+      "checkpoint_pct": 50,
+      "arm": "vector_rag",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.45833333333333337,
+      "mean_precision": 0.27499999999999997,
+      "query_count": 32,
+      "total_cost_usd": 0.0030808499999999996,
+      "cost_per_1000_queries": 0.09627656249999998,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 0.05385030072648078
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.23130178777501
+        }
+      ],
+      "mean_judge_overall": 3.958333333333334
+    },
+    {
+      "checkpoint_label": "50pct",
+      "checkpoint_pct": 50,
+      "arm": "graphrag_lite",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.19791666666666669,
+      "mean_precision": 0.11875,
+      "query_count": 32,
+      "total_cost_usd": 0.0029356499999999993,
+      "cost_per_1000_queries": 0.09173906249999998,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 1.1836707096081227
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.1480960703920573
+        }
+      ],
+      "mean_judge_overall": 3.635416666666667
+    },
+    {
+      "checkpoint_label": "100pct",
+      "checkpoint_pct": 100,
+      "arm": "hivemind",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.3020833333333333,
+      "mean_precision": 0.71875,
+      "query_count": 32,
+      "total_cost_usd": 0.0029925000000000004,
+      "cost_per_1000_queries": 0.093515625,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 4.674198093678569
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.175360864493996
+        }
+      ],
+      "mean_judge_overall": 4.229166666666666
+    },
+    {
+      "checkpoint_label": "100pct",
+      "checkpoint_pct": 100,
+      "arm": "vector_rag",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.8229166666666669,
+      "mean_precision": 0.4937499999999999,
+      "query_count": 32,
+      "total_cost_usd": 0.003069899999999999,
+      "cost_per_1000_queries": 0.09593437499999997,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 0.06417175257229246
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.1508883411006536
+        }
+      ],
+      "mean_judge_overall": 4.416666666666668
+    },
+    {
+      "checkpoint_label": "100pct",
+      "checkpoint_pct": 100,
+      "arm": "graphrag_lite",
+      "k": 5,
+      "num_queries": 32,
+      "mean_recall": 0.26041666666666663,
+      "mean_precision": 0.15625,
+      "query_count": 32,
+      "total_cost_usd": 0.0029455499999999995,
+      "cost_per_1000_queries": 0.09204843749999998,
+      "stages": [
+        {
+          "stage": "retrieval_and_final_answer",
+          "call_count": 32,
+          "mean_duration_seconds": 1.2031618230976164
+        },
+        {
+          "stage": "llm_judge",
+          "call_count": 32,
+          "mean_duration_seconds": 2.0826180989679415
+        }
+      ],
+      "mean_judge_overall": 3.677083333333334
+    }
+  ],
+  "traversal_precision": [
+    {
+      "checkpoint_label": "20pct",
+      "expansion_ever_hurt_precision": true,
+      "expansion_mean_precision": 0.10625000000000001,
+      "no_expansion_mean_precision": 0.11875
+    },
+    {
+      "checkpoint_label": "50pct",
+      "expansion_ever_hurt_precision": true,
+      "expansion_mean_precision": 0.1125,
+      "no_expansion_mean_precision": 0.1609375
+    },
+    {
+      "checkpoint_label": "100pct",
+      "expansion_ever_hurt_precision": true,
+      "expansion_mean_precision": 0.18750000000000003,
+      "no_expansion_mean_precision": 0.24218750000000006
+    }
+  ]
+}

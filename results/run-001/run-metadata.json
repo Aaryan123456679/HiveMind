@@ -1,0 +1,17 @@
+{
+  "run_id": "run-001",
+  "date": "2026-07-12",
+  "description": "First full live paid-API benchmark run: 3 checkpoints (20/50/100% of 32-doc corpus) x 3 arms (hivemind, vector_rag, graphrag_lite) x 32 queries, real judge scoring.",
+  "command": "python -m eval.run_live_benchmark --llm-provider openrouter --judge-provider openrouter --cost-cap-usd 2.0",
+  "interpreter": "agents/.venv/bin/python (protobuf 6.33.6 -- must match generated gRPC gencode; system anaconda python has protobuf 5.29.6 and will fail with a VersionError)",
+  "llm_provider": "openrouter",
+  "llm_model": "openai/gpt-4o-mini (default)",
+  "judge_provider": "openrouter",
+  "judge_model": "openai/gpt-4o-mini (default)",
+  "cost_cap_usd": 2.0,
+  "actual_spend_usd": 0.1677,
+  "corpus_total_docs": 32,
+  "queries_per_checkpoint": 32,
+  "checkpoints_pct": [20, 50, 100],
+  "wall_clock_minutes_approx": 35
+}
