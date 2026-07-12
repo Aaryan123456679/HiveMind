@@ -68,6 +68,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from eval.cost_latency import StageRecord
+from json_fences import strip_code_fences
 
 if TYPE_CHECKING:
     from llm.client import LLMClient
@@ -180,8 +181,9 @@ def parse_judge_response(query: str, answer: str, raw_text: str) -> JudgeScore:
             silently substitutes a default score for a missing/invalid one -- see module
             docstring's "refuse to invent data" convention.
     """
+    stripped = strip_code_fences(raw_text)
     try:
-        parsed = json.loads(raw_text)
+        parsed = json.loads(stripped)
     except json.JSONDecodeError as exc:
         raise JudgeError(f"judge response is not valid JSON: {exc}\nraw response: {raw_text!r}") from exc
 
