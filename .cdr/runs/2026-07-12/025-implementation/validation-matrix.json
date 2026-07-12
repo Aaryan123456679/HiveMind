@@ -1,0 +1,66 @@
+{
+  "subtask": "6.2.3",
+  "matrix": [
+    {
+      "id": "V1",
+      "criterion": "deploy/k8s/ contains a Deployment+Service for each of engine, api, agents, ui, plus namespace/config/secret-template manifests",
+      "method": "static: ls deploy/k8s/, kubectl apply --dry-run=client -f deploy/k8s/ (schema validity)",
+      "status": "planned"
+    },
+    {
+      "id": "V2",
+      "criterion": "kind (or k3d) cluster actually created in this sandbox",
+      "method": "executed: kind create cluster, kubectl cluster-info against it",
+      "status": "planned"
+    },
+    {
+      "id": "V3",
+      "criterion": "kubectl apply -f deploy/k8s/ succeeds and all 4 pods reach Ready",
+      "method": "executed: kubectl apply, kubectl get pods -n hivemind -w until all Ready, kubectl get pods -o wide capture",
+      "status": "planned"
+    },
+    {
+      "id": "V4",
+      "criterion": "api's /health endpoint reachable through the cluster (matches 6.2.2 smoke test's api check)",
+      "method": "executed: kubectl port-forward svc/api 8080:8080 & curl localhost:8080/health, expect 200 'ok'",
+      "status": "planned"
+    },
+    {
+      "id": "V5",
+      "criterion": "ui's / endpoint reachable through the cluster and serves the SPA shell (matches 6.2.2 smoke test's ui check)",
+      "method": "executed: kubectl port-forward svc/ui 8081:80 & curl localhost:8081/, grep '<div id=\"root\">'",
+      "status": "planned"
+    },
+    {
+      "id": "V6",
+      "criterion": "env vars / service DNS names translated correctly (agents reachable at agents:50052 from api's perspective, engine at engine:50051 from api/agents)",
+      "method": "executed: kubectl logs on api/agents pods checked for connection errors to engine/agents service names; kubectl exec a debug pod to nslookup engine/agents service names inside the cluster",
+      "status": "planned"
+    },
+    {
+      "id": "V7",
+      "criterion": "no message queue / architecture change introduced",
+      "method": "static: diff review -- only Deployment/Service/ConfigMap/Secret/Namespace k8s objects added, no new engine/api/agents/ui source changes",
+      "status": "planned"
+    },
+    {
+      "id": "V8",
+      "criterion": "OCI provisioning script exists, is shell-syntax-valid, and is explicitly marked unverified-against-live-OCI",
+      "method": "static: bash -n deploy/oci/provision.sh; grep for the unverified-disclosure comment",
+      "status": "planned"
+    },
+    {
+      "id": "V9",
+      "criterion": "documentation (deploy/k8s/README.md, deploy/README.md, docs/HLD.md) updated",
+      "method": "static: file review",
+      "status": "planned"
+    },
+    {
+      "id": "V10",
+      "criterion": "kind cluster cleanly torn down after validation, no dangling resources left running",
+      "method": "executed: kind delete cluster, docker ps confirms no leftover kind node containers",
+      "status": "planned"
+    }
+  ],
+  "note": "This matrix is self-consistency scope only (internal sanity), per invariant I4 -- NOT a substitute for /cdr:verify."
+}

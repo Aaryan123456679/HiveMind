@@ -1,0 +1,68 @@
+# deploy/k8s/ui-deployment.yaml -- GitHub issue #31 subtask 6.2.3.
+#
+# Translates deploy/docker-compose.yml's `ui` service (built from deploy/ui.Dockerfile,
+# nginx config baked in from deploy/nginx.conf -- no runtime config needed, nginx's
+# `proxy_pass http://api:8080` already resolves via the `api` Service name unchanged, same
+# as it resolved via Compose's `api` container before -- see architecture-discovery.md,
+# decision 2).
+#
+# Service type: ClusterIP for the kind-validation path in this subtask (reached via
+# `kubectl port-forward`, see deploy/k8s/README.md). For the eventual single-VM OCI path,
+# change `type: ClusterIP` below to `type: NodePort` (no cloud LoadBalancer available/needed
+# on a single free-tier VM) -- see deploy/oci/README.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: hivemind
+  labels:
+    app: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+    spec:
+      containers:
+        - name: ui
+          image: hivemind-ui:kindtest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+          # Native kubelet HTTP probe against the SPA root, same route
+          # deploy/ui.Dockerfile's own wget-based HEALTHCHECK hits.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: hivemind
+spec:
+  selector:
+    app: ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP

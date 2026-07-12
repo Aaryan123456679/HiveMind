@@ -1,0 +1,74 @@
+# deploy/k8s/engine-deployment.yaml -- GitHub issue #31 subtask 6.2.3.
+#
+# Translates deploy/docker-compose.yml's `engine` service (built from
+# deploy/engine.Dockerfile). gRPC-only, internal-only (no port published to the host in
+# compose either) -- see this run's architecture-discovery.md, decisions 1-4, 6-7.
+#
+# Image: set `image:` below to whatever tag you loaded/pushed (this run's kind validation
+# used `hivemind-engine:kindtest` loaded via `kind load docker-image`; for a real cluster
+# push to a registry the cluster can pull from and update `image:` + `imagePullPolicy`
+# accordingly -- see deploy/k8s/README.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: engine
+  namespace: hivemind
+  labels:
+    app: engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: engine
+  template:
+    metadata:
+      labels:
+        app: engine
+    spec:
+      containers:
+        - name: engine
+          image: hivemind-engine:kindtest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50051
+              name: grpc
+          # Same dependency-free TCP-connect check baked into deploy/engine.Dockerfile's own
+          # HEALTHCHECK (`nc -z 127.0.0.1 50051`) -- reused here via a raw TCP socket probe
+          # so kubelet doesn't need any exec/tooling beyond what's already in the image.
+          readinessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        # Ephemeral, matching docker-compose.yml's engine service, which has no named volume
+        # either (see architecture-discovery.md, decision 6 -- no new durability guarantee
+        # introduced beyond what compose already provided).
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: engine
+  namespace: hivemind
+spec:
+  selector:
+    app: engine
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+  type: ClusterIP

@@ -1,0 +1,32 @@
+{
+  "subtask": "6.2.3",
+  "issue": 31,
+  "new_files": [
+    "deploy/k8s/00-namespace.yaml",
+    "deploy/k8s/engine-deployment.yaml",
+    "deploy/k8s/api-deployment.yaml",
+    "deploy/k8s/agents-deployment.yaml",
+    "deploy/k8s/agents-config.yaml",
+    "deploy/k8s/agents-secret.example.yaml",
+    "deploy/k8s/ui-deployment.yaml",
+    "deploy/k8s/README.md",
+    "deploy/oci/provision.sh",
+    "deploy/oci/README.md"
+  ],
+  "modified_files": [
+    "deploy/README.md",
+    "docs/HLD.md"
+  ],
+  "files_not_touched_and_why": [
+    "deploy/*.Dockerfile -- images are consumed as-is, no rebuild-recipe changes needed",
+    "deploy/docker-compose.yml -- compose path stays as the local dev/demo path (6.2.2's own acceptance criterion), k8s is an additional deploy path, not a replacement",
+    "deploy/nginx.conf -- baked into the ui image already, reused unmodified in k8s",
+    "engine/, api/, agents/, ui/ source trees -- explicitly out of scope, this is deploy-config-only per resolved OQ-3 scope"
+  ],
+  "blast_radius": "Additive only. No existing file's runtime behavior changes. deploy/README.md gets a new section pointing at deploy/k8s/ and deploy/oci/; docs/HLD.md's repo-layout deploy/ line changes from '(not yet built)' to reflect current state. No CI config touched (none exists yet for k8s per requirement scope).",
+  "risk_notes": [
+    "kind cluster validation is local-only proof that manifests are internally consistent (image refs, env vars, Service DNS, probes) -- it does NOT validate anything OCI/ARM-specific (arch mismatch, OCI Always-Free shape limits, k3s-specific quirks) since no OCI account exists in this sandbox. This is disclosed, not hidden.",
+    "deploy/oci/provision.sh cannot be executed against a real account in this sandbox -- ships as an unverified, review-before-run artifact per the resolved scope's explicit instruction.",
+    "Docker images are built with the host's native arch (arm64 on this Mac) for the kind proof; the eventual OCI path also targets ARM (OCI Always-Free ARM shape), so no cross-arch surprise is anticipated, but this is not proven end-to-end here either -- documented as an open follow-up in deploy/oci/README.md, not silently assumed."
+  ]
+}

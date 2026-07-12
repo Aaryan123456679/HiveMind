@@ -1,0 +1,10 @@
+# deploy/k8s/00-namespace.yaml -- GitHub issue #31 subtask 6.2.3.
+#
+# Single namespace for all four HiveMind services, mirroring deploy/docker-compose.yml's
+# single `hivemind` bridge network (see this run's architecture-discovery.md, decision 1).
+# `kubectl delete namespace hivemind` gives a full-stack teardown equivalent to
+# `docker compose down -v`.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hivemind

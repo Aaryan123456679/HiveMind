@@ -1,0 +1,14 @@
+# deploy/k8s/agents-config.yaml -- GitHub issue #31 subtask 6.2.3.
+#
+# Non-sensitive settings for the `agents` service, mirroring deploy/.env.example's
+# LLM_PROVIDER default (see docker-compose.yml: LLM_PROVIDER: ${LLM_PROVIDER:-ollama}).
+# Real API keys go in deploy/k8s/agents-secret.example.yaml (a template only), never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agents-config
+  namespace: hivemind
+data:
+  LLM_PROVIDER: "ollama"
+  ENGINE_GRPC_ADDR: "engine:50051"
+  QUERY_SERVER_PORT: "50052"

@@ -1,0 +1,59 @@
+{
+  "subtask": "6.2.3",
+  "note": "Internal sanity check only (invariant I4 -- implementation agent does not verify its own work). A separate /cdr:verify run is required.",
+  "checks": [
+    {
+      "id": "V1",
+      "result": "PASS",
+      "detail": "deploy/k8s/{00-namespace,engine-deployment,api-deployment,agents-deployment,agents-config,agents-secret.example,ui-deployment}.yaml all present; kubectl apply -f deploy/k8s/ against a live kind cluster succeeded twice (see V3) with no schema errors."
+    },
+    {
+      "id": "V2",
+      "result": "PASS",
+      "detail": "kind was not present in the sandbox; installed via `brew install kind` (v0.32.0). Two separate clusters created and torn down during this run: hivemind-6-2-3 and hivemind-6-2-3-b (reproducibility re-run). `kubectl cluster-info` confirmed reachable both times."
+    },
+    {
+      "id": "V3",
+      "result": "PASS",
+      "detail": "kubectl apply -f deploy/k8s/ applied cleanly both runs. All 4 pods (agents, api, engine, ui) reached READY 1/1 within ~15-20s both times, confirmed via `kubectl wait --for=condition=Ready pod --all -n hivemind --timeout=90s` (no timeout hit) and `kubectl get pods -n hivemind` showing Running/1/1 for all four."
+    },
+    {
+      "id": "V4",
+      "result": "PASS",
+      "detail": "kubectl port-forward svc/api 8080 + curl http://localhost:.../health returned 'ok' both runs (matches 6.2.2 smoke test's api/health assertion)."
+    },
+    {
+      "id": "V5",
+      "result": "PASS",
+      "detail": "kubectl port-forward svc/ui 80 + curl http://localhost:.../ contained '<div id=\"root\">' both runs (matches deploy/smoke-test.sh's ui-root assertion verbatim)."
+    },
+    {
+      "id": "V6",
+      "result": "PASS",
+      "detail": "kubectl logs on api/agents/engine pods showed no connection errors (api: 'api gateway listening on :8080'; agents: 'LISTENING 50052'; engine: 'LISTENING [::]:50051'). Additionally ran a throwaway busybox pod (`kubectl run dnscheck --image=busybox -- nslookup engine; agents; api`) inside the cluster -- all three short names resolved to their ClusterIP Service addresses via <name>.hivemind.svc.cluster.local, confirming compose's unmodified env var values (agents:50052, engine:50051) work identically under k8s DNS."
+    },
+    {
+      "id": "V7",
+      "result": "PASS",
+      "detail": "Diff review: only new deploy/k8s/*.yaml, deploy/oci/*, deploy/k8s/README.md, deploy/oci/README.md, and doc-only edits to deploy/README.md + docs/HLD.md + .gitignore. No engine/, api/, agents/, ui/ source files touched. No queue/broker introduced."
+    },
+    {
+      "id": "V8",
+      "result": "PASS",
+      "detail": "`bash -n deploy/oci/provision.sh` passed (syntax valid). File's header block explicitly states '** UNVERIFIED AGAINST A LIVE OCI ACCOUNT **' and instructs review/dry-run before use."
+    },
+    {
+      "id": "V9",
+      "result": "PASS",
+      "detail": "deploy/k8s/README.md, deploy/oci/README.md written; deploy/README.md updated with a deploy-paths table; docs/HLD.md's repo-layout deploy/ line updated from '(not yet built)' to reflect current state."
+    },
+    {
+      "id": "V10",
+      "result": "PASS",
+      "detail": "`kind delete cluster` run after each of the two validation passes; `kind get clusters` reported 'No kind clusters found' and `docker ps -a --filter name=hivemind` returned empty after final teardown -- no dangling resources left running."
+    }
+  ],
+  "reproducibility_note": "The full build->kind-create->load->apply->wait->curl->teardown sequence was executed twice end-to-end (clusters hivemind-6-2-3 and hivemind-6-2-3-b) with identical PASS results both times, confirming the manifests are not order- or state-dependent on the first cluster's leftover state.",
+  "known_caveat_not_a_defect": "kubectl apply -f deploy/k8s/ also applies deploy/k8s/agents-secret.example.yaml directly (it's a valid, if placeholder-valued, Secret manifest sitting in the same directory) -- this is intentional and harmless: it creates an empty-string-valued agents-secret so envFrom.secretRef (marked optional: true on the agents Deployment) has something to bind to, mirroring compose's own ${OPENROUTER_API_KEY:-} blank-default behavior. Documented in deploy/k8s/README.md's file table.",
+  "overall": "PASS (self-consistency scope only, not verification)"
+}

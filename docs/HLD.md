@@ -82,7 +82,7 @@ HiveMind/
   api/       # Go module: HTTP gateway
   ui/        # React dashboard (not yet built)
   data/      # dataset prep scripts (not yet built)
-  deploy/    # Dockerfiles/compose, CI (not yet built)
+  deploy/    # Dockerfiles/compose, k8s manifests, OCI provisioning (issue #31, no longer a placeholder)
   proto/     # shared .proto for Go<->Python gRPC (not yet written)
 ```
 

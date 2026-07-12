@@ -30,3 +30,8 @@ ui/dist/
 .env
 .env.*
 !*.env.example
+
+# k8s secret manifests derived from deploy/k8s/*.example.yaml templates (GitHub issue #31
+# subtask 6.2.3) -- names only allowed to be committed, real values never.
+deploy/k8s/*secret*.yaml
+!deploy/k8s/*secret*.example.yaml
