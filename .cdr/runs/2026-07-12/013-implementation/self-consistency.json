@@ -1,0 +1,20 @@
+{
+  "note": "Internal sanity only per invariant I4 -- this is NOT verification. A separate /cdr:verify agent must adversarially review this work.",
+  "checks": [
+    {
+      "command": "npm run build",
+      "cwd": "ui/",
+      "result": "pass",
+      "summary": "tsc -b && vite build succeeded; 39 modules transformed, dist/ produced, no type errors."
+    },
+    {
+      "command": "npm test",
+      "cwd": "ui/",
+      "result": "pass",
+      "summary": "vitest run: 2 test files, 9 tests, all passed (App.test.tsx 6 tests including the updated /query row and root-redirect assertions; QueryView.test.tsx 3 new tests covering submit+render, error path, empty-query no-op)."
+    }
+  ],
+  "validation_matrix_coverage": "All 8 rows in validation-matrix.json exercised: submit calls /query, answer renders, citations render as clickable links, error path renders, empty-query guarded, App.test.tsx regression fixed and green, build green.",
+  "new_dependency_added": "@testing-library/user-event@^14.5.2 added as a devDependency (was missing despite being the standard companion to @testing-library/react already in use) to drive realistic user interactions (typing, clicking) in QueryView.test.tsx.",
+  "known_preexisting_warnings": "React Router v6 future-flag console warnings (v7_startTransition, v7_relativeSplatPath) appear in test output; these are pre-existing library warnings unrelated to this subtask's changes and do not fail tests."
+}

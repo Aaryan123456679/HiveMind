@@ -15,9 +15,13 @@ vi.mock("./api/mockClient", () => ({
   fetchAdminStats: vi.fn().mockResolvedValue({ ok: true, note: "mocked admin" }),
 }));
 
+// The /query route's assertion targets "query-form" rather than "query-status": subtask 6.1.2
+// replaced QueryView's on-mount mockClient placeholder with a real, user-triggered query form
+// (see QueryView.tsx / QueryView.test.tsx), so there is no longer an async on-mount status
+// element to await there -- the form itself is always rendered synchronously.
 const routes: Array<{ path: string; heading: string; statusTestId: string }> = [
   { path: "/ingest", heading: "Ingest", statusTestId: "ingest-status" },
-  { path: "/query", heading: "Query", statusTestId: "query-status" },
+  { path: "/query", heading: "Query", statusTestId: "query-form" },
   { path: "/graph", heading: "Graph", statusTestId: "graph-status" },
   { path: "/files", heading: "Files", statusTestId: "files-status" },
   { path: "/admin", heading: "Admin", statusTestId: "admin-status" },
@@ -49,6 +53,6 @@ describe("App router", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Query" })).toBeInTheDocument();
-    expect(await screen.findByTestId("query-status")).toBeInTheDocument();
+    expect(await screen.findByTestId("query-form")).toBeInTheDocument();
   });
 });

@@ -1,0 +1,32 @@
+{
+  "subtask": "6.1.2",
+  "issue": 30,
+  "primary_files": [
+    {
+      "path": "ui/src/routes/QueryView.tsx",
+      "change": "Replace on-mount mockClient placeholder with a real form (query text input +\nsubmit button), fetch-based POST to /query, loading/error state, and rendering of the\nsynthesized answer plus a list of clickable cited file paths.",
+      "risk": "low"
+    },
+    {
+      "path": "ui/src/routes/QueryView.test.tsx",
+      "change": "New component test file (RTL) mocking global fetch's /query response, asserting\nsubmit calls fetch with expected body, and that answer text + citation links render.",
+      "risk": "low"
+    }
+  ],
+  "dependent_files": [
+    {
+      "path": "ui/src/App.test.tsx",
+      "change": "The existing 6.1.1 router test's generic it.each loop asserts a\ndata-testid=\"query-status\" element appears on mount for the /query route, which no longer\nexists once QueryView stops calling fetchQueryResult on mount. Minimal targeted update: the\n/query row's assertion now checks for the always-rendered query form (data-testid=\n\"query-form\") instead, keeping the rest of the already-verified 6.1.1 router test unchanged.",
+      "risk": "low",
+      "reason": "Necessary to keep already-verified 6.1.1 test suite green; not a re-implementation of 6.1.1 scope."
+    }
+  ],
+  "not_impacted": [
+    "ui/src/api/mockClient.ts (fetchQueryResult stub left as-is for other views' reference; no other view imports it for Query)",
+    "api/routes/query.go (contract already fixed by 6.1.1-era backend work; read-only reference)",
+    "ui/src/routes/IngestView.tsx, GraphView.tsx, FilesView.tsx, AdminView.tsx (untouched, subtasks 6.1.3/6.1.4)"
+  ],
+  "new_dependencies": [],
+  "blast_radius": "Confined to ui/ workspace; no backend/engine/agents changes. Builds directly on 6.1.1's already-merged app shell.",
+  "rollback": "Revert the single commit produced by this subtask; QueryView.tsx/App.test.tsx return to 6.1.1 placeholder state."
+}

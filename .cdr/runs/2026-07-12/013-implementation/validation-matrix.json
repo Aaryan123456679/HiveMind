@@ -1,0 +1,45 @@
+{
+  "subtask": "6.1.2",
+  "rows": [
+    {
+      "requirement": "Submitting a query calls the /query API",
+      "planned_check": "QueryView.test.tsx test 'submits query and renders answer + citations' asserts global fetch mock called once with URL '/query' and a JSON body containing the typed query text after form submit.",
+      "type": "component_test"
+    },
+    {
+      "requirement": "...and renders the returned answer",
+      "planned_check": "Same test: findByTestId('query-answer') contains the mocked response's answer string.",
+      "type": "component_test"
+    },
+    {
+      "requirement": "...with clickable/visible cited file paths",
+      "planned_check": "Same test: findByTestId('query-citations') present; getByRole('link', { name: <citation path> }) resolves for each mocked citation, confirming both visibility (text content) and clickability (anchor/Link role).",
+      "type": "component_test"
+    },
+    {
+      "requirement": "Test spec: component test mocking the /query response, asserting answer text and citation list render correctly",
+      "planned_check": "QueryView.test.tsx exists, uses vi.fn()/vi.stubGlobal to mock fetch (the /query response), and its assertions cover both answer text and citation list rendering -- satisfied by the two checks above.",
+      "type": "component_test"
+    },
+    {
+      "requirement": "Error path is handled gracefully (not in acceptance criteria explicitly but required for a usable submit flow / non-200 statuses documented in api/routes/query.go)",
+      "planned_check": "QueryView.test.tsx test 'renders an error message when the /query call fails' asserts data-testid='query-error' renders the failure message instead of throwing/crashing.",
+      "type": "component_test"
+    },
+    {
+      "requirement": "Empty query is not submitted (basic input validation, mirrors api/routes/query.go's 400 on empty query)",
+      "planned_check": "QueryView.test.tsx test 'does not submit an empty query' asserts fetch is not called when the form is submitted with blank/whitespace-only input.",
+      "type": "component_test"
+    },
+    {
+      "requirement": "No regression to already-verified 6.1.1 router test",
+      "planned_check": "App.test.tsx's /query row updated to assert data-testid='query-form' (always-rendered) instead of the removed on-mount 'query-status'; full App.test.tsx suite re-run in self-consistency.",
+      "type": "regression_test"
+    },
+    {
+      "requirement": "Project still builds (tsc + vite build)",
+      "planned_check": "self-consistency.json records `npm run build` output/exit code inside ui/.",
+      "type": "build"
+    }
+  ]
+}
