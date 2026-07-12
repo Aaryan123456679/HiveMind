@@ -1,0 +1,36 @@
+{
+  "subtask": "6.1.3",
+  "issue": 30,
+  "risk_level": "low",
+  "rationale": [
+    "Change is scoped to two files in ui/src/routes/, both already placeholders/non-existent from 6.1.1.",
+    "Follows an already-verified pattern (QueryView.tsx / QueryView.test.tsx from 6.1.2) for fetch, state machine, and test mocking -- no new architectural seam.",
+    "No backend (api/, engine/, agents/) files touched -- /graph has no Go handler yet, so nothing there is broken or depended upon by this change.",
+    "No new npm dependency added.",
+    "GraphView is only reachable via client-side routing already wired in App.tsx (6.1.1); no other component currently imports GraphView's internals, so no ripple effect."
+  ],
+  "affected_files": [
+    {
+      "path": "ui/src/routes/GraphView.tsx",
+      "change_type": "modified",
+      "description": "Replace 6.1.1 placeholder (mockClient.fetchGraphNeighbors stub) with real /graph fetch, file-path selector, and adjacency list rendering."
+    },
+    {
+      "path": "ui/src/routes/GraphView.test.tsx",
+      "change_type": "added",
+      "description": "Component test mocking global fetch's /graph response, asserting neighbor node count and adjacency details render."
+    },
+    {
+      "path": "ui/src/App.test.tsx",
+      "change_type": "modified",
+      "description": "Updated the /graph router-test row's statusTestId from graph-status to graph-form, following the exact precedent subtask 6.1.2 set for /query (query-status -> query-form) in commit 71cb1bb -- GraphView no longer renders an on-mount async status placeholder, so the router smoke test must assert against the always-synchronous form instead. Discovered only after running npm test (see self-consistency.json); not predicted in the original plan.md scope list but required to keep 6.1.1's already-verified router test green, matching how 6.1.2 handled the identical situation for QueryView."
+    }
+  ],
+  "unaffected_but_reviewed": [
+    "ui/src/api/mockClient.ts (fetchGraphNeighbors export left in place; QueryView.tsx already established the precedent of a view outgrowing its mock stub without deleting the stub, since App.test.tsx's 6.1.1 router test may still reference route-shell placeholders elsewhere -- verified FilesView/AdminView/IngestView still use it)",
+    "ui/src/App.tsx (no route shape change needed -- /graph stays a plain path, file selection carried via ?path= query string per architecture-discovery.md)",
+    "api/routes/ (no Go /graph handler exists; out of scope for this UI-only subtask)"
+  ],
+  "backward_compatibility": "GraphView's exported default component signature (no props) is unchanged; only internal implementation changes.",
+  "rollback": "Single commit; revertable independently of 6.1.1/6.1.2 commits."
+}

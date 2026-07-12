@@ -1,0 +1,27 @@
+{
+  "subtask": "6.1.3",
+  "checks": [
+    {
+      "check": "npm run build (tsc -b && vite build)",
+      "cwd": "ui/",
+      "result": "pass",
+      "output_summary": "tsc -b clean, vite build produced dist/ successfully (39 modules transformed, no errors)."
+    },
+    {
+      "check": "npm test (vitest run)",
+      "cwd": "ui/",
+      "result": "pass",
+      "output_summary": "3 test files, 14 tests, all passed. src/App.test.tsx (6 tests, incl. updated /graph row), src/routes/QueryView.test.tsx (3 tests, pre-existing, unaffected), src/routes/GraphView.test.tsx (5 tests, new: neighbor-count render, deep-link auto-fetch, empty-state, error-state, empty-path guard)."
+    }
+  ],
+  "matrix_coverage": {
+    "AC-1": "covered by GraphView.test.tsx 'renders the expected number of neighbor nodes after selecting a file' and 'auto-fetches via a ?path= deep link' tests",
+    "AC-2": "covered by the same test's screen.findAllByTestId('graph-neighbor') length assertion (3), plus the empty-state test asserting length 0",
+    "NFR-1": "no new npm dependency added (package.json diff is empty); fetch-mocking/state-machine/data-testid conventions mirror QueryView.test.tsx/QueryView.tsx",
+    "NFR-2": "covered by 'renders an error message when the /graph call fails' test"
+  },
+  "deviation_from_plan": [
+    "plan.md did not anticipate needing to touch ui/src/App.test.tsx. Running the full test suite (self-consistency step) surfaced a pre-existing failure: App.test.tsx's /graph router-test row still asserted the old on-mount 'graph-status' testid, which GraphView no longer renders now that graph fetching is user-triggered (same situation 6.1.2 hit and fixed for /query in commit 71cb1bb). Fixed by updating that one row to 'graph-form', following the exact precedent already documented in App.test.tsx's own comment for the /query row."
+  ],
+  "self_consistency_only_disclaimer": "This is internal build/test sanity only, run by the implementation agent. It is NOT the independent adversarial verification required by invariant I4 -- that is /cdr:verify's job."
+}
