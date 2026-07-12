@@ -11,6 +11,9 @@ export default mergeConfig(
       environment: "jsdom",
       globals: true,
       setupFiles: ["./src/setupTests.ts"],
+      // Exclude ui/e2e/ (subtask 6.1.5's Playwright specs) -- those are real-browser
+      // tests run via `npm run test:e2e` (playwright test), not jsdom component tests.
+      exclude: ["**/node_modules/**", "**/e2e/**"],
     },
   })
 );
